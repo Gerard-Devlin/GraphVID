@@ -518,6 +518,31 @@ def Qwen3VLModel_get_image_features(
     return image_embeds, deepstack_image_embeds, cls_attention
 
 
+def Qwen3VLModel_get_video_features(
+    self: Qwen3VLModel,
+    pixel_values_videos: torch.FloatTensor,
+    video_grid_thw: Optional[torch.LongTensor] = None,
+):
+    """
+    Encodes videos into continuous embeddings that can be forwarded to the language model.
+    Also returns deepstack visual features and cls-attention signals for FlashVID compression.
+
+    Args:
+        pixel_values_videos (`torch.FloatTensor`):
+            The tensors corresponding to the input videos.
+        video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
+            The temporal, height and width of feature shape of each video in LLM.
+    """
+    pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
+    video_embeds, deepstack_video_embeds, cls_attention = self.visual(
+        pixel_values_videos,
+        grid_thw=video_grid_thw,
+    )
+    split_sizes = (video_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+    video_embeds = torch.split(video_embeds, split_sizes)
+    return video_embeds, deepstack_video_embeds, cls_attention
+
+
 def Qwen3VLTextDecoderLayer_forward(
     self: Qwen3VLTextDecoderLayer,
     hidden_states: torch.Tensor,

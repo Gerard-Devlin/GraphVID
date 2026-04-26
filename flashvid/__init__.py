@@ -62,6 +62,7 @@ from .modeling_qwen3_vl import (
     Qwen3VLTextDecoderLayer_forward,
     Qwen3VLTextModel_forward,
     Qwen3VLModel_get_image_features,
+    Qwen3VLModel_get_video_features,
 )
 
 from .siglip_encoder import SigLipAttention_forward, SigLipVisionTower_forward
@@ -177,6 +178,7 @@ def flashvid(
         Qwen3VLTextDecoderLayer.forward = Qwen3VLTextDecoderLayer_forward
         Qwen3VLTextModel.forward = Qwen3VLTextModel_forward
         Qwen3VLModel.get_image_features = Qwen3VLModel_get_image_features
+        Qwen3VLModel.get_video_features = Qwen3VLModel_get_video_features
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
