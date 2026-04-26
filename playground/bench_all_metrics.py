@@ -239,6 +239,7 @@ def _prepare_llava_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, v
 def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, video_path: str):
     processor = model_bundle["processor"]
     model = model_bundle["model"]
+    backend = model_bundle.get("backend", "")
     try:
         from qwen_vl_utils import process_vision_info
     except ImportError as exc:
@@ -260,16 +261,42 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
         },
     ]
 
-    images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    video_kwargs: dict[str, Any] = {}
+    video_metadata = None
+    try:
+        # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
+        if backend == "qwen3_vl":
+            images, videos, video_kwargs = process_vision_info(
+                messages,
+                return_video_kwargs=True,
+                return_video_metadata=True,
+                image_patch_size=16,
+            )
+        else:
+            images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    except TypeError:
+        # Backward compatibility for older qwen_vl_utils versions.
+        images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+
+    # qwen_vl_utils may return [(video_tensor, metadata), ...] when return_video_metadata=True.
+    if videos is not None and len(videos) > 0 and isinstance(videos[0], tuple):
+        videos, video_metadata = zip(*videos)
+        videos = list(videos)
+        video_metadata = list(video_metadata)
+
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(
-        text=text,
-        images=images,
-        videos=videos,
-        padding=True,
-        return_tensors="pt",
+    processor_kwargs = {
+        "text": text,
+        "images": images,
+        "videos": videos,
+        "padding": True,
+        "return_tensors": "pt",
         **video_kwargs,
-    )
+    }
+    if video_metadata is not None:
+        processor_kwargs["video_metadata"] = video_metadata
+
+    inputs = processor(**processor_kwargs)
     if torch.cuda.is_available():
         inputs = inputs.to("cuda")
 
