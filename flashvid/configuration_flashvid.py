@@ -14,6 +14,15 @@ class FlashVidConfig:
 
     # 2) Tree-based Spatio-Temporal Token Merging.
     temporal_threshold: float = field(default=0.8)
+    dynamic_temporal_threshold: bool = field(default=False)
+    temporal_threshold_quantile: float = field(default=0.8)
+    temporal_threshold_min: float = field(default=0.0)
+    temporal_threshold_max: float = field(default=0.99)
+    last_dynamic_temporal_threshold: Optional[float] = field(default=None)
+    temporal_match_mode: str = field(default="global")  # global | local
+    temporal_local_radius: int = field(default=2)
+    temporal_hysteresis: float = field(default=0.0)
+    min_keep_per_frame: int = field(default=0)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
