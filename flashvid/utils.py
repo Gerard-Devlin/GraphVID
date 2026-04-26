@@ -830,7 +830,12 @@ def fastv_prune(
 
     # Filter
     hidden_states = hidden_states[:, keep_indices]
-    cache_position = keep_indices if cache_position is None else cache_position[keep_indices]
+    # Keep RoPE positions by selecting with keep_indices, but reset cache positions to
+    # contiguous range to avoid out-of-range indexing in cache update paths.
+    if cache_position is None:
+        cache_position = torch.arange(hidden_states.shape[1], device=device, dtype=torch.long)
+    else:
+        cache_position = torch.arange(hidden_states.shape[1], device=device, dtype=cache_position.dtype)
     position_ids = keep_indices.unsqueeze(0) if position_ids is None else position_ids[..., keep_indices].contiguous()
     position_embeddings = (
         position_embeddings[0][..., keep_indices, :].contiguous(),
@@ -839,7 +844,8 @@ def fastv_prune(
 
     new_seq_length = hidden_states.shape[1]
     if causal_mask is not None:
-        causal_mask = causal_mask[:, :, :new_seq_length, :new_seq_length]
+        # Use index-select instead of naive truncation because keep_indices is a sparse subset.
+        causal_mask = causal_mask.index_select(2, keep_indices).index_select(3, keep_indices)
     # Update flashvid config.
     flashvid_config.visual_token_length = num_retained_tokens
     return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices
