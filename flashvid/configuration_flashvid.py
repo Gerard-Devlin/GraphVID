@@ -31,3 +31,28 @@ class FlashVidConfig:
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
+
+    # Experimental compression variant.
+    # "flashvid": original ADTS + TSTM path.
+    # "graph": graph-based spatiotemporal merging path.
+    compression_variant: str = field(default="flashvid")
+
+    # Question-aware token reweighting.
+    question_aware_reweighting: bool = field(default=False)
+    question_reweight_beta: float = field(default=0.35)
+
+    # Graph-based spatiotemporal merging.
+    graph_topk: int = field(default=4)
+    graph_temporal_radius: int = field(default=1)
+
+    # Residual memory tokens.
+    memory_token_ratio: float = field(default=0.10)
+    memory_token_min: int = field(default=1)
+    memory_token_max: int = field(default=8)
+
+    # Adaptive token budget.
+    adaptive_token_budget: bool = field(default=False)
+    adaptive_budget_low: float = field(default=0.10)
+    adaptive_budget_mid: float = field(default=0.15)
+    adaptive_budget_high: float = field(default=0.20)
+    last_adaptive_retention_ratio: Optional[float] = field(default=None)

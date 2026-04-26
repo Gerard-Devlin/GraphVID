@@ -25,7 +25,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     repeat_kv,
 )
 from .configuration_flashvid import FlashVidConfig
-from .utils import fastv_prune, flashvid_compression
+from .utils import extract_question_features, fastv_prune, flashvid_compression
 
 
 def Qwen2_5_VLTextModel_forward(
@@ -459,14 +459,26 @@ def Qwen2_5_VLModel_forward(
             position_ids = position_ids + delta.to(position_ids.device)
 
     ### Applies FlashVid compression here.
-    if position_ids.shape[-1] > 1:
+    if position_ids.shape[-1] > 1 and pixel_values_videos is not None:
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
         video_features = video_embeds.view(num_frames, num_visual_tokens, -1)
+        question_features = extract_question_features(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            invalid_token_ids=[
+                getattr(self.config, "video_token_id", None),
+                getattr(self.config, "image_token_id", None),
+                getattr(self.config, "vision_start_token_id", None),
+                getattr(self.config, "vision_end_token_id", None),
+            ],
+        )
         compressed_video_tokens, keep_visual_global_indices = flashvid_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
+            question_features=question_features,
         )
         visual_start_index = torch.where(input_ids[0] == self.config.video_token_id)[0][0].item()
         visual_length = n_video_tokens

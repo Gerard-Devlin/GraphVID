@@ -27,7 +27,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 
 from .configuration_flashvid import FlashVidConfig
-from .utils import fastv_prune, flashvid_compression
+from .utils import extract_question_features, fastv_prune, flashvid_compression
 
 
 def Qwen3VLVisionAttention_forward(
@@ -296,17 +296,29 @@ def Qwen3VLModel_forward(
             position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
     ### ! Applies FlashVid compression here.
-    if position_ids.shape[-1] > 1:
+    if position_ids.shape[-1] > 1 and pixel_values_videos is not None:
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
         # Store feature map resolution.
         flashvid_config.H = video_grid_thw[0][1].item() // 2
         flashvid_config.W = video_grid_thw[0][2].item() // 2
         video_features = video_embeds.view(num_frames, num_visual_tokens, -1)
+        question_features = extract_question_features(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            invalid_token_ids=[
+                getattr(self.config, "video_token_id", None),
+                getattr(self.config, "image_token_id", None),
+                getattr(self.config, "vision_start_token_id", None),
+                getattr(self.config, "vision_end_token_id", None),
+            ],
+        )
         compressed_video_tokens, keep_visual_global_indices = flashvid_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
+            question_features=question_features,
         )
 
         non_visual_token_indexes = torch.where(

@@ -79,6 +79,27 @@ def flashvid(
     token_selection_method: str = "attn_div_v2",
     alpha: float = 0.7,
     temporal_threshold: float = 0.8,
+    dynamic_temporal_threshold: bool = False,
+    temporal_threshold_quantile: float = 0.8,
+    temporal_threshold_min: float = 0.0,
+    temporal_threshold_max: float = 0.99,
+    temporal_match_mode: str = "global",
+    temporal_local_radius: int = 2,
+    temporal_hysteresis: float = 0.0,
+    min_keep_per_frame: int = 0,
+    # 2.5) Graph-ST experimental params (for ablations)
+    compression_variant: str = "flashvid",
+    question_aware_reweighting: bool = False,
+    question_reweight_beta: float = 0.35,
+    graph_topk: int = 4,
+    graph_temporal_radius: int = 1,
+    memory_token_ratio: float = 0.10,
+    memory_token_min: int = 1,
+    memory_token_max: int = 8,
+    adaptive_token_budget: bool = False,
+    adaptive_budget_low: float = 0.10,
+    adaptive_budget_mid: float = 0.15,
+    adaptive_budget_high: float = 0.20,
     # 3) Inner-LLM Compression params
     expansion: float = 1.25,
     pruning_layer: int = 20,
@@ -96,6 +117,26 @@ def flashvid(
         token_selection_method (str, optional): The method for token selection. Defaults to "attn_div_v2".
         alpha (float, optional): The alpha for token selection. Defaults to 0.7.
         temporal_threshold (float, optional): The temporal threshold for token selection. Defaults to 0.8.
+        dynamic_temporal_threshold (bool, optional): Whether to use quantile-based dynamic thresholding.
+        temporal_threshold_quantile (float, optional): Quantile used when dynamic thresholding is enabled.
+        temporal_threshold_min (float, optional): Lower bound for dynamic temporal threshold.
+        temporal_threshold_max (float, optional): Upper bound for dynamic temporal threshold.
+        temporal_match_mode (str, optional): Temporal matching mode. "global" or "local".
+        temporal_local_radius (int, optional): Local matching radius when mode is "local".
+        temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
+        min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
+        compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM; "graph" enables graph-based merge.
+        question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
+        question_reweight_beta (float, optional): Strength of question-aware reweighting.
+        graph_topk (int, optional): Top-k graph neighbors for many-to-many token assignment.
+        graph_temporal_radius (int, optional): Temporal radius used for graph edge construction.
+        memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
+        memory_token_min (int, optional): Minimum residual memory tokens.
+        memory_token_max (int, optional): Maximum residual memory tokens.
+        adaptive_token_budget (bool, optional): Enable adaptive token budget {10%, 15%, 20%}.
+        adaptive_budget_low (float, optional): Low retention ratio candidate.
+        adaptive_budget_mid (float, optional): Mid retention ratio candidate.
+        adaptive_budget_high (float, optional): High retention ratio candidate.
         expansion (float, optional): The expansion ratio for inner-LLM compression. Defaults to 1.25.
         pruning_layer (int, optional): The layer to prune. Defaults to 20.
         llm_retention_ratio (float, optional): The retention ratio for inner-LLM compression. Defaults to 0.3.
@@ -149,6 +190,26 @@ def flashvid(
         alpha=alpha,
         token_selection_method=token_selection_method,
         temporal_threshold=temporal_threshold,
+        dynamic_temporal_threshold=dynamic_temporal_threshold,
+        temporal_threshold_quantile=temporal_threshold_quantile,
+        temporal_threshold_min=temporal_threshold_min,
+        temporal_threshold_max=temporal_threshold_max,
+        temporal_match_mode=temporal_match_mode,
+        temporal_local_radius=temporal_local_radius,
+        temporal_hysteresis=temporal_hysteresis,
+        min_keep_per_frame=min_keep_per_frame,
+        compression_variant=compression_variant,
+        question_aware_reweighting=question_aware_reweighting,
+        question_reweight_beta=question_reweight_beta,
+        graph_topk=graph_topk,
+        graph_temporal_radius=graph_temporal_radius,
+        memory_token_ratio=memory_token_ratio,
+        memory_token_min=memory_token_min,
+        memory_token_max=memory_token_max,
+        adaptive_token_budget=adaptive_token_budget,
+        adaptive_budget_low=adaptive_budget_low,
+        adaptive_budget_mid=adaptive_budget_mid,
+        adaptive_budget_high=adaptive_budget_high,
         expansion=expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,

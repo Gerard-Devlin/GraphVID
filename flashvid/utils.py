@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union, List
+from typing import Optional, Tuple, Union, List, Iterable
 
 import math
 import torch
@@ -20,12 +20,362 @@ ALL_TOKEN_SELECTION_METHOD = {
 }
 
 
+def _normalize_scores(scores: torch.Tensor) -> torch.Tensor:
+    scores = scores.float()
+    if scores.numel() == 0:
+        return scores
+    min_score = scores.min()
+    max_score = scores.max()
+    return (scores - min_score) / (max_score - min_score + 1e-6)
+
+
+def extract_question_features(
+    input_ids: Optional[torch.Tensor],
+    inputs_embeds: Optional[torch.Tensor],
+    attention_mask: Optional[torch.Tensor] = None,
+    invalid_token_ids: Optional[Iterable[int]] = None,
+    batch_index: int = 0,
+) -> Optional[torch.Tensor]:
+    """Extract text/question token embeddings for question-aware token reweighting."""
+    if input_ids is None or inputs_embeds is None:
+        return None
+    if input_ids.ndim != 2 or inputs_embeds.ndim != 3:
+        return None
+    if batch_index >= input_ids.shape[0] or batch_index >= inputs_embeds.shape[0]:
+        return None
+
+    token_ids = input_ids[batch_index]
+    token_mask = torch.ones_like(token_ids, dtype=torch.bool)
+
+    if attention_mask is not None and attention_mask.ndim == 2:
+        attn = attention_mask[batch_index]
+        token_mask &= attn.bool() if attn.dtype == torch.bool else attn > 0
+
+    if invalid_token_ids is not None:
+        invalid_mask = torch.zeros_like(token_mask)
+        for token_id in invalid_token_ids:
+            if token_id is None:
+                continue
+            invalid_mask |= token_ids == int(token_id)
+        token_mask &= ~invalid_mask
+
+    if not token_mask.any():
+        return None
+    return inputs_embeds[batch_index, token_mask]
+
+
+def _estimate_video_complexity(video_features: torch.Tensor) -> float:
+    """Estimate video complexity in [0, 1] from temporal change + spatial dispersion."""
+    num_frames = video_features.shape[0]
+    normed_tokens = F.normalize(video_features.float(), p=2, dim=-1, eps=1e-6)
+
+    frame_centers = F.normalize(normed_tokens.mean(dim=1), p=2, dim=-1, eps=1e-6)
+    if num_frames > 1:
+        temporal_sim = torch.sum(frame_centers[:-1] * frame_centers[1:], dim=-1)
+        temporal_complexity = ((1.0 - temporal_sim).clamp(min=0.0, max=2.0) * 0.5).mean()
+    else:
+        temporal_complexity = torch.tensor(0.0, device=video_features.device)
+
+    center_per_token = frame_centers.unsqueeze(1).expand_as(normed_tokens)
+    spatial_sim = torch.sum(normed_tokens * center_per_token, dim=-1)
+    spatial_complexity = ((1.0 - spatial_sim).clamp(min=0.0, max=2.0) * 0.5).mean()
+
+    return float((0.6 * temporal_complexity + 0.4 * spatial_complexity).item())
+
+
+def _estimate_question_difficulty(question_features: Optional[torch.Tensor]) -> float:
+    """Estimate question difficulty in [0, 1] from length + semantic dispersion."""
+    if question_features is None or question_features.numel() == 0:
+        return 0.5
+
+    q = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
+    q_center = F.normalize(q.mean(dim=0), p=2, dim=-1, eps=1e-6)
+    q_dispersion = 1.0 - torch.matmul(q, q_center).clamp(min=-1.0, max=1.0)
+    semantic_difficulty = (q_dispersion.clamp(min=0.0, max=2.0) * 0.5).mean()
+    length_difficulty = min(1.0, q.shape[0] / 32.0)
+
+    return float(0.5 * semantic_difficulty.item() + 0.5 * length_difficulty)
+
+
+def _resolve_effective_retention_ratio(
+    video_features: torch.Tensor,
+    question_features: Optional[torch.Tensor],
+    flashvid_config: FlashVidConfig,
+) -> float:
+    base_ratio = float(flashvid_config.retention_ratio)
+    if not bool(getattr(flashvid_config, "adaptive_token_budget", False)):
+        flashvid_config.last_adaptive_retention_ratio = base_ratio
+        return base_ratio
+
+    candidate_ratios = sorted(
+        [
+            max(0.01, min(1.0, float(getattr(flashvid_config, "adaptive_budget_low", 0.10)))),
+            max(0.01, min(1.0, float(getattr(flashvid_config, "adaptive_budget_mid", 0.15)))),
+            max(0.01, min(1.0, float(getattr(flashvid_config, "adaptive_budget_high", 0.20)))),
+        ]
+    )
+
+    video_complexity = _estimate_video_complexity(video_features)
+    question_difficulty = _estimate_question_difficulty(question_features)
+    complexity_score = 0.7 * video_complexity + 0.3 * question_difficulty
+    level = min(len(candidate_ratios) - 1, int(complexity_score * len(candidate_ratios)))
+    adaptive_ratio = candidate_ratios[level]
+
+    flashvid_config.last_adaptive_retention_ratio = adaptive_ratio
+    return adaptive_ratio
+
+
+def _question_aware_scores(
+    flat_features: torch.Tensor,
+    flat_attention: torch.Tensor,
+    question_features: Optional[torch.Tensor],
+    flashvid_config: FlashVidConfig,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    visual_scores = _normalize_scores(flat_attention)
+    if not bool(getattr(flashvid_config, "question_aware_reweighting", False)):
+        return visual_scores, None
+    if question_features is None or question_features.numel() == 0:
+        return visual_scores, None
+
+    token_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
+    question_proto = F.normalize(question_features.float().mean(dim=0), p=2, dim=-1, eps=1e-6)
+    question_scores = _normalize_scores(torch.matmul(token_features, question_proto))
+
+    beta = float(getattr(flashvid_config, "question_reweight_beta", 0.35))
+    beta = min(max(beta, 0.0), 1.0)
+    fused_scores = (1.0 - beta) * visual_scores + beta * question_scores
+    return fused_scores, question_scores
+
+
+def _resolve_memory_budget(
+    num_tokens: int,
+    target_budget: int,
+    flashvid_config: FlashVidConfig,
+) -> int:
+    dropped_tokens = max(0, num_tokens - target_budget)
+    if dropped_tokens == 0:
+        return 0
+
+    ratio = max(0.0, float(getattr(flashvid_config, "memory_token_ratio", 0.10)))
+    memory_min = max(0, int(getattr(flashvid_config, "memory_token_min", 1)))
+    memory_max = max(memory_min, int(getattr(flashvid_config, "memory_token_max", 8)))
+
+    memory_budget = int(round(target_budget * ratio))
+    memory_budget = max(memory_min, memory_budget)
+    memory_budget = min(memory_budget, memory_max, dropped_tokens)
+    memory_budget = min(memory_budget, max(0, target_budget - 1))
+    return max(0, memory_budget)
+
+
+def _build_residual_memory_tokens(
+    flat_features: torch.Tensor,
+    dropped_indices: torch.Tensor,
+    residual_vectors: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    memory_budget: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    feat_dim = flat_features.shape[-1]
+    if memory_budget <= 0 or dropped_indices.numel() == 0:
+        return (
+            flat_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=flat_features.device),
+        )
+
+    priorities = residual_vectors.float().norm(p=2, dim=-1)
+    if question_scores is not None:
+        priorities = priorities * (1.0 + question_scores[dropped_indices].float())
+
+    order = torch.argsort(priorities, descending=True)
+    sorted_dropped = dropped_indices[order]
+    sorted_priorities = priorities[order]
+    sorted_features = flat_features[sorted_dropped]
+
+    num_mem_tokens = min(memory_budget, sorted_dropped.numel())
+    split_indices = torch.chunk(torch.arange(sorted_dropped.numel(), device=flat_features.device), num_mem_tokens)
+
+    memory_tokens = []
+    memory_indices = []
+    for split in split_indices:
+        if split.numel() == 0:
+            continue
+        split_weights = sorted_priorities[split].to(flat_features.dtype).clamp_min(1e-6)
+        split_features = sorted_features[split]
+        merged_token = torch.sum(split_features * split_weights.unsqueeze(-1), dim=0) / split_weights.sum()
+        memory_tokens.append(merged_token)
+        memory_indices.append(sorted_dropped[split[0]])
+
+    if not memory_tokens:
+        return (
+            flat_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=flat_features.device),
+        )
+    return torch.stack(memory_tokens, dim=0), torch.stack(memory_indices, dim=0)
+
+
+def _segment_graph_compression(
+    segment_features: torch.Tensor,
+    segment_global_indices: torch.Tensor,
+    cls_attention: torch.Tensor,
+    retention_ratio: float,
+    flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Graph-based many-to-many spatiotemporal compression with residual memory tokens."""
+    num_frames, num_visual_tokens, feat_dim = segment_features.shape
+    num_tokens = num_frames * num_visual_tokens
+    device = segment_features.device
+
+    if num_tokens == 0:
+        return (
+            segment_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=device),
+        )
+
+    flat_features = segment_features.reshape(num_tokens, feat_dim)
+    flat_attention = cls_attention.reshape(num_tokens).float()
+    flat_global_indices = segment_global_indices.reshape(num_tokens)
+
+    effective_ratio = min(1.0, max(0.01, retention_ratio * float(getattr(flashvid_config, "expansion", 1.0))))
+    target_budget = max(1, min(num_tokens, math.ceil(num_tokens * effective_ratio)))
+    memory_budget = _resolve_memory_budget(
+        num_tokens=num_tokens,
+        target_budget=target_budget,
+        flashvid_config=flashvid_config,
+    )
+    keep_budget = max(1, target_budget - memory_budget)
+
+    visual_scores = _normalize_scores(flat_attention)
+    fused_scores, question_scores = _question_aware_scores(
+        flat_features=flat_features,
+        flat_attention=flat_attention,
+        question_features=question_features,
+        flashvid_config=flashvid_config,
+    )
+
+    base_budget = max(1, min(keep_budget, math.ceil(keep_budget * float(flashvid_config.alpha))))
+    base_indices = torch.topk(visual_scores, k=base_budget, dim=0).indices
+    if base_indices.numel() >= keep_budget:
+        survivor_indices = base_indices[:keep_budget]
+    else:
+        remaining_mask = torch.ones(num_tokens, dtype=torch.bool, device=device)
+        remaining_mask[base_indices] = False
+        candidate_scores = fused_scores.masked_fill(~remaining_mask, -1.0)
+        extra_k = keep_budget - base_indices.numel()
+        extra_indices = torch.topk(candidate_scores, k=extra_k, dim=0).indices
+        survivor_indices = torch.cat([base_indices, extra_indices], dim=0)
+    survivor_indices = survivor_indices.unique(sorted=True)
+    if survivor_indices.numel() < keep_budget:
+        refill_scores = fused_scores.clone()
+        refill_scores[survivor_indices] = -1.0
+        refill = torch.topk(refill_scores, k=keep_budget - survivor_indices.numel(), dim=0).indices
+        survivor_indices = torch.cat([survivor_indices, refill], dim=0).unique(sorted=True)
+    elif survivor_indices.numel() > keep_budget:
+        ranked_local = torch.topk(fused_scores[survivor_indices], k=keep_budget, dim=0).indices
+        survivor_indices = survivor_indices[ranked_local].sort().values
+
+    keep_mask = torch.zeros(num_tokens, dtype=torch.bool, device=device)
+    keep_mask[survivor_indices] = True
+
+    num_survivors = survivor_indices.numel()
+    survivor_features = flat_features[survivor_indices]
+    aggregated_sum = survivor_features.clone()
+    aggregated_weight = torch.ones((num_survivors, 1), dtype=flat_features.dtype, device=device)
+
+    flat_to_survivor = torch.full((num_tokens,), -1, dtype=torch.long, device=device)
+    flat_to_survivor[survivor_indices] = torch.arange(num_survivors, dtype=torch.long, device=device)
+
+    normed_flat = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
+    survivor_frame_ids = survivor_indices // num_visual_tokens
+
+    radius = max(0, int(getattr(flashvid_config, "graph_temporal_radius", 1)))
+    graph_topk = max(1, int(getattr(flashvid_config, "graph_topk", 4)))
+
+    assignment_records: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+    for frame_idx in range(num_frames):
+        frame_start = frame_idx * num_visual_tokens
+        frame_end = frame_start + num_visual_tokens
+        frame_token_indices = torch.arange(frame_start, frame_end, device=device)
+        dropped_in_frame = frame_token_indices[~keep_mask[frame_start:frame_end]]
+        if dropped_in_frame.numel() == 0:
+            continue
+
+        candidate_mask = (survivor_frame_ids >= (frame_idx - radius)) & (survivor_frame_ids <= (frame_idx + radius))
+        candidate_survivor_indices = survivor_indices[candidate_mask]
+        if candidate_survivor_indices.numel() == 0:
+            candidate_survivor_indices = survivor_indices
+
+        token_sims = torch.matmul(
+            normed_flat[dropped_in_frame],
+            normed_flat[candidate_survivor_indices].transpose(0, 1),
+        )
+        k = min(graph_topk, candidate_survivor_indices.numel())
+        topk_sims, topk_local_indices = torch.topk(token_sims, k=k, dim=-1)
+        weights = torch.softmax(topk_sims, dim=-1).to(flat_features.dtype)
+
+        anchor_flat_indices = candidate_survivor_indices[topk_local_indices]
+        anchor_positions = flat_to_survivor[anchor_flat_indices]
+
+        expanded_tokens = flat_features[dropped_in_frame].unsqueeze(1).expand(-1, k, -1)
+        weighted_tokens = expanded_tokens * weights.unsqueeze(-1)
+        aggregated_sum.scatter_add_(
+            dim=0,
+            index=anchor_positions.reshape(-1, 1).expand(-1, feat_dim),
+            src=weighted_tokens.reshape(-1, feat_dim),
+        )
+        aggregated_weight.scatter_add_(
+            dim=0,
+            index=anchor_positions.reshape(-1, 1),
+            src=weights.reshape(-1, 1),
+        )
+        assignment_records.append((dropped_in_frame, anchor_positions, weights))
+
+    merged_survivor_tokens = aggregated_sum / aggregated_weight.clamp_min(1e-6)
+
+    dropped_indices_list = []
+    residual_vectors_list = []
+    for dropped_indices, anchor_positions, weights in assignment_records:
+        reconstructed = torch.sum(merged_survivor_tokens[anchor_positions] * weights.unsqueeze(-1), dim=1)
+        residual_vectors = flat_features[dropped_indices] - reconstructed
+        dropped_indices_list.append(dropped_indices)
+        residual_vectors_list.append(residual_vectors)
+
+    if dropped_indices_list:
+        dropped_indices = torch.cat(dropped_indices_list, dim=0)
+        residual_vectors = torch.cat(residual_vectors_list, dim=0)
+    else:
+        dropped_indices = torch.empty((0,), dtype=torch.long, device=device)
+        residual_vectors = flat_features.new_zeros((0, feat_dim))
+
+    memory_tokens, memory_token_indices = _build_residual_memory_tokens(
+        flat_features=flat_features,
+        dropped_indices=dropped_indices,
+        residual_vectors=residual_vectors,
+        question_scores=question_scores,
+        memory_budget=memory_budget,
+    )
+
+    all_tokens = [merged_survivor_tokens]
+    all_indices = [flat_global_indices[survivor_indices]]
+    if memory_tokens.shape[0] > 0:
+        all_tokens.append(memory_tokens)
+        all_indices.append(flat_global_indices[memory_token_indices])
+
+    return torch.cat(all_tokens, dim=0), torch.cat(all_indices, dim=0)
+
+
 def flashvid_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
+    compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
+    retention_ratio = _resolve_effective_retention_ratio(
+        video_features=video_features,
+        question_features=question_features,
+        flashvid_config=flashvid_config,
+    )
 
     # 1. Partition the video frames into segments based on transition similarities.
     if flashvid_config.do_segment:
@@ -43,7 +393,7 @@ def flashvid_compression(
     global_indices = torch.arange(num_frames * num_visual_tokens, dtype=torch.long, device=video_features.device)
 
     # 2. Apply Attention and Diversity-based Token Selection(ADTS).
-    token_budget = math.ceil(num_visual_tokens * flashvid_config.retention_ratio * flashvid_config.expansion)
+    token_budget = math.ceil(num_visual_tokens * retention_ratio * flashvid_config.expansion)
     num_attn_div_tokens = math.ceil(token_budget * flashvid_config.alpha)
     num_sttm_tokens = token_budget - num_attn_div_tokens
     # store in the config.
@@ -54,16 +404,26 @@ def flashvid_compression(
     all_segment_indices = []
     offset = 0
     for seg_idx in range(num_segments):
-        seg_len = segment_lengths[seg_idx]
+        seg_len = int(segment_lengths[seg_idx].item())
         segment_features = video_features[offset : offset + seg_len]
         segment_cls_attention = cls_attention[offset : offset + seg_len]
         segment_global_indices = global_indices.view(num_frames, num_visual_tokens)[offset : offset + seg_len]
-        segment_features, segment_global_indices = segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=segment_cls_attention,
-            flashvid_config=flashvid_config,
-        )
+        if compression_variant == "graph":
+            segment_features, segment_global_indices = _segment_graph_compression(
+                segment_features=segment_features,
+                segment_global_indices=segment_global_indices,
+                cls_attention=segment_cls_attention,
+                retention_ratio=retention_ratio,
+                flashvid_config=flashvid_config,
+                question_features=question_features,
+            )
+        else:
+            segment_features, segment_global_indices = segment_compression(
+                segment_features=segment_features,
+                segment_global_indices=segment_global_indices,
+                cls_attention=segment_cls_attention,
+                flashvid_config=flashvid_config,
+            )
         all_segment_features.append(segment_features)
         all_segment_indices.append(segment_global_indices)
         offset += seg_len
