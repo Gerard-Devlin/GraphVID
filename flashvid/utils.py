@@ -530,7 +530,26 @@ def segment_compression(
                     aggregated_tokens = torch.zeros((num_clusters, feat_dim), dtype=segment_features.dtype, device=segment_features.device)
                     aggregated_tokens.scatter_add_(0, cluster_indices.unsqueeze(-1).expand(-1, feat_dim), temp_merged_tokens)
                     cluster_counts = torch.bincount(cluster_indices, minlength=num_clusters).unsqueeze(-1).to(segment_features.dtype)
-                    aggregated_tokens = aggregated_tokens / cluster_counts
+                    aggregated_tokens = aggregated_tokens / cluster_counts.clamp_min(1)
+
+                    # Guard against rare invalid center indices from padded/batched clustering.
+                    if temp_merged_global_indices.numel() > 0:
+                        max_valid_center = temp_merged_global_indices.shape[0] - 1
+                        cluster_center_indices = cluster_center_indices.clamp(min=0, max=max_valid_center)
+                    else:
+                        global_token_indices = torch.zeros((num_clusters,), dtype=torch.long, device=segment_features.device)
+                        all_tokens.append(aggregated_tokens)
+                        all_global_indices.append(global_token_indices)
+                        continue
+
+                    if cluster_center_indices.numel() < num_clusters:
+                        pad_num = num_clusters - cluster_center_indices.numel()
+                        pad_value = cluster_center_indices[-1] if cluster_center_indices.numel() > 0 else torch.tensor(0, device=segment_features.device)
+                        pad_tensor = pad_value.repeat(pad_num)
+                        cluster_center_indices = torch.cat([cluster_center_indices, pad_tensor], dim=0)
+                    elif cluster_center_indices.numel() > num_clusters:
+                        cluster_center_indices = cluster_center_indices[:num_clusters]
+
                     global_token_indices = temp_merged_global_indices[cluster_center_indices]
                 else:
                     aggregated_tokens = temp_merged_tokens
@@ -779,7 +798,6 @@ def fastv_prune(
     visual_token_end_index = visual_token_start_index + visual_token_length
 
     retention_ratio = flashvid_config.llm_retention_ratio
-    num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
 
     # Compatible to LLaVA-OneVision.
     if visual_pos_masks is None:
@@ -790,6 +808,11 @@ def fastv_prune(
     visual_features = hidden_states[visual_pos_masks, :]
     visual_global_indices = torch.where(visual_pos_masks[0])[0]
     non_visual_global_indices = torch.where(non_visual_pos_masks[0])[0]
+    if visual_features.numel() == 0 or visual_global_indices.numel() == 0:
+        return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
+
+    num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
+    num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
     attn = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
 
     _, topk_indices = attn_based_token_selection(
@@ -798,8 +821,12 @@ def fastv_prune(
         num_retained_tokens=num_retained_tokens,
     )
     topk_indices = topk_indices.squeeze(0)
+    topk_indices = topk_indices.clamp(min=0, max=max(0, int(visual_global_indices.numel()) - 1))
     all_global_indices = [non_visual_global_indices, visual_global_indices[topk_indices]]
-    keep_indices = torch.sort(torch.cat(all_global_indices)).values
+    keep_indices = torch.sort(torch.cat(all_global_indices).unique()).values
+    keep_indices = keep_indices[keep_indices < seq_length]
+    if keep_indices.numel() == 0:
+        keep_indices = torch.arange(seq_length, device=device)
 
     # Filter
     hidden_states = hidden_states[:, keep_indices]

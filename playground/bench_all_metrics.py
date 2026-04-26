@@ -40,6 +40,10 @@ class BenchmarkArgs:
     num_runs: int = field(default=3)
     max_new_tokens: int = field(default=16)
 
+    # Which phases to run
+    run_flashvid: bool = field(default=True)
+    run_ours: bool = field(default=True)
+
     # FlashVID settings for phase-2
     retention_ratio: float = field(default=0.10)
     do_segment: bool = field(default=True)
@@ -54,9 +58,9 @@ class BenchmarkArgs:
     llm_retention_ratio: float = field(default=0.3)
 
     # New experimental knobs (optional)
-    compression_variant: str = field(default="flashvid")
-    question_aware_reweighting: bool = field(default=False)
-    adaptive_token_budget: bool = field(default=False)
+    compression_variant: str = field(default="graph")
+    question_aware_reweighting: bool = field(default=True)
+    adaptive_token_budget: bool = field(default=True)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
@@ -67,6 +71,7 @@ class BenchmarkArgs:
     # Outputs
     baseline_output: str = field(default="logs/efficiency/baseline_all_metrics.jsonl")
     flashvid_output: str = field(default="logs/efficiency/flashvid_all_metrics.jsonl")
+    ours_output: str = field(default="logs/efficiency/ours_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -335,8 +340,8 @@ def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) 
     return _extract_choice_letter(text[:8]), gen_tokens
 
 
-def _get_compressed_visual_tokens(model, raw_visual_tokens: int, use_flashvid: bool) -> int:
-    if not use_flashvid:
+def _get_compressed_visual_tokens(model, raw_visual_tokens: int, use_acceleration: bool) -> int:
+    if not use_acceleration:
         return raw_visual_tokens
     if not hasattr(model, "flashvid_config"):
         return raw_visual_tokens
@@ -350,7 +355,7 @@ def _get_compressed_visual_tokens(model, raw_visual_tokens: int, use_flashvid: b
         return raw_visual_tokens
 
 
-def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_flashvid: bool):
+def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
 
@@ -412,7 +417,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         latencies.append(float(latency_ms))
         gen_tokens_per_run.append(float(gen_tokens))
         compressed_tokens_per_run.append(
-            float(_get_compressed_visual_tokens(model, raw_visual_tokens, use_flashvid))
+            float(_get_compressed_visual_tokens(model, raw_visual_tokens, use_acceleration))
         )
 
     latency_ms = float(np.mean(latencies)) if latencies else None
@@ -432,7 +437,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     }
 
 
-def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str, Any], use_flashvid: bool):
+def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str, Any], use_acceleration: bool):
     record = {
         "question_id": sample.get("question_id"),
         "videoID": sample.get("videoID"),
@@ -450,7 +455,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
 
     try:
         prepared_inputs = _prepare_inputs(model_bundle, args, sample)
-        result = _run_benchmark_once(model_bundle, args, prepared_inputs, use_flashvid=use_flashvid)
+        result = _run_benchmark_once(model_bundle, args, prepared_inputs, use_acceleration=use_acceleration)
         raw_v = result["raw_visual_tokens"]
         compressed_v = result["compressed_visual_tokens"]
         reduction_ratio = None
@@ -475,14 +480,20 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     return record
 
 
-def _run_phase(model_bundle, args: BenchmarkArgs, samples: list[dict[str, Any]], use_flashvid: bool, output_path: str):
-    phase_name = "FlashVID" if use_flashvid else "Baseline"
+def _run_phase(
+    model_bundle,
+    args: BenchmarkArgs,
+    samples: list[dict[str, Any]],
+    phase_name: str,
+    use_acceleration: bool,
+    output_path: str,
+):
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     with out.open("w", encoding="utf-8") as f:
         for idx, sample in enumerate(samples, 1):
-            record = _benchmark_single_sample(model_bundle, args, sample, use_flashvid=use_flashvid)
+            record = _benchmark_single_sample(model_bundle, args, sample, use_acceleration=use_acceleration)
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             f.flush()
 
@@ -525,17 +536,23 @@ def _summarize_phase(records: list[dict[str, Any]]):
     }
 
 
-def _summarize_comparison(baseline_records: list[dict[str, Any]], flashvid_records: list[dict[str, Any]]):
-    flashvid_by_qid = {r["question_id"]: r for r in flashvid_records if r.get("question_id")}
+def _summarize_pairwise_comparison(
+    anchor_records: list[dict[str, Any]],
+    target_records: list[dict[str, Any]],
+    *,
+    anchor_name: str,
+    target_name: str,
+):
+    target_by_qid = {r["question_id"]: r for r in target_records if r.get("question_id")}
     matched = []
-    for b in baseline_records:
+    for b in anchor_records:
         qid = b.get("question_id")
-        if qid not in flashvid_by_qid:
+        if qid not in target_by_qid:
             continue
-        f = flashvid_by_qid[qid]
-        if b.get("error") or f.get("error"):
+        t = target_by_qid[qid]
+        if b.get("error") or t.get("error"):
             continue
-        matched.append((b, f))
+        matched.append((b, t))
 
     latency_ratios = []
     token_ratios = []
@@ -555,12 +572,34 @@ def _summarize_comparison(baseline_records: list[dict[str, Any]], flashvid_recor
     return {
         "matched_samples": len(matched),
         "latency_speedup_ratio": _stats(latency_ratios),
-        "visual_token_ratio_flashvid_over_baseline": _stats(token_ratios),
-        "visual_token_reduction_vs_baseline": _stats(reduction_gains),
+        f"visual_token_ratio_{target_name}_over_{anchor_name}": _stats(token_ratios),
+        f"visual_token_reduction_vs_{anchor_name}": _stats(reduction_gains),
     }
 
 
-def _apply_flashvid(model, args: BenchmarkArgs):
+def _apply_flashvid_original(model, args: BenchmarkArgs):
+    from flashvid import flashvid
+
+    return flashvid(
+        model=model,
+        retention_ratio=args.retention_ratio,
+        do_segment=args.do_segment,
+        segment_threshold=args.segment_threshold,
+        min_segment_num=args.min_segment_num,
+        complementary_segment=args.complementary_segment,
+        token_selection_method=args.token_selection_method,
+        alpha=args.alpha,
+        temporal_threshold=args.temporal_threshold,
+        expansion=args.expansion,
+        pruning_layer=args.pruning_layer,
+        llm_retention_ratio=args.llm_retention_ratio,
+        compression_variant="flashvid",
+        question_aware_reweighting=False,
+        adaptive_token_budget=False,
+    )
+
+
+def _apply_ours(model, args: BenchmarkArgs):
     from flashvid import flashvid
 
     return flashvid(
@@ -601,6 +640,13 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Frames        : {args.num_frames}")
     print(f"Warmup/Runs   : {args.num_warmup}/{args.num_runs}")
     print(f"Max new tokens: {args.max_new_tokens}")
+    print(f"Run phases    : baseline, flashvid={args.run_flashvid}, ours={args.run_ours}")
+    if args.run_ours:
+        print(
+            "Ours config   : "
+            f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
+            f"adaptive={args.adaptive_token_budget}"
+        )
     print(SEPARATOR)
 
 
@@ -608,8 +654,10 @@ def _print_summary(summary: dict[str, Any]):
     print(SEPARATOR)
     print("Summary")
     print(SEPARATOR)
-    for phase_name in ("baseline", "flashvid"):
-        phase = summary[phase_name]
+    for phase_name in ("baseline", "flashvid", "ours"):
+        phase = summary.get(phase_name)
+        if phase is None:
+            continue
         acc = phase["accuracy"]
         acc_text = f"{acc * 100:.2f}%" if acc is not None else "N/A"
         print(f"[{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}")
@@ -623,15 +671,24 @@ def _print_summary(summary: dict[str, Any]):
         if red_mean is not None:
             print(f"  token reduction mean: {red_mean * 100:.2f}%")
 
-    comp = summary["comparison"]
-    lat_sp = comp["latency_speedup_ratio"]["mean"]
-    token_red = comp["visual_token_reduction_vs_baseline"]["mean"]
-    print("[comparison]")
-    print(f"  matched: {comp['matched_samples']}")
-    if lat_sp is not None:
-        print(f"  latency speedup (baseline/flashvid): {lat_sp:.3f}x")
-    if token_red is not None:
-        print(f"  visual token reduction vs baseline: {token_red * 100:.2f}%")
+    comparison = summary.get("comparison", {})
+    if comparison:
+        print("[comparison]")
+        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours"):
+            comp = comparison.get(key)
+            if comp is None:
+                continue
+            lat_sp = comp["latency_speedup_ratio"]["mean"]
+            ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
+            reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
+            token_red = comp[reduction_key]["mean"] if reduction_key else None
+            print(f"  [{key}] matched={comp['matched_samples']}")
+            if lat_sp is not None:
+                print(f"    latency speedup: {lat_sp:.3f}x")
+            if ratio_key and comp[ratio_key]["mean"] is not None:
+                print(f"    {ratio_key}: {comp[ratio_key]['mean']:.3f}")
+            if token_red is not None:
+                print(f"    token reduction: {token_red * 100:.2f}%")
     print(SEPARATOR)
 
 
@@ -645,32 +702,77 @@ def run(args: BenchmarkArgs):
     _print_header(args, backend)
     print(f"Loaded {len(samples)} samples.\n")
 
-    print("Phase 1/2: Baseline ...")
+    total_phases = 1 + int(args.run_flashvid) + int(args.run_ours)
+    phase_idx = 1
+
+    print(f"Phase {phase_idx}/{total_phases}: Baseline ...")
     _run_phase(
         model_bundle=model_bundle,
         args=args,
         samples=samples,
-        use_flashvid=False,
+        phase_name="Baseline",
+        use_acceleration=False,
         output_path=args.baseline_output,
     )
+    phase_idx += 1
 
-    print("\nPhase 2/2: FlashVID ...")
-    model_bundle["model"] = _apply_flashvid(model_bundle["model"], args)
-    _run_phase(
-        model_bundle=model_bundle,
-        args=args,
-        samples=samples,
-        use_flashvid=True,
-        output_path=args.flashvid_output,
-    )
+    if args.run_flashvid:
+        print(f"\nPhase {phase_idx}/{total_phases}: FlashVID ...")
+        model_bundle["model"] = _apply_flashvid_original(model_bundle["model"], args)
+        _run_phase(
+            model_bundle=model_bundle,
+            args=args,
+            samples=samples,
+            phase_name="FlashVID",
+            use_acceleration=True,
+            output_path=args.flashvid_output,
+        )
+        phase_idx += 1
+
+    if args.run_ours:
+        print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
+        model_bundle["model"] = _apply_ours(model_bundle["model"], args)
+        _run_phase(
+            model_bundle=model_bundle,
+            args=args,
+            samples=samples,
+            phase_name="Ours",
+            use_acceleration=True,
+            output_path=args.ours_output,
+        )
 
     baseline_records = _read_jsonl(args.baseline_output)
-    flashvid_records = _read_jsonl(args.flashvid_output)
-    summary = {
+    summary: dict[str, Any] = {
         "baseline": _summarize_phase(baseline_records),
-        "flashvid": _summarize_phase(flashvid_records),
-        "comparison": _summarize_comparison(baseline_records, flashvid_records),
+        "comparison": {},
     }
+    flashvid_records = None
+    ours_records = None
+    if args.run_flashvid:
+        flashvid_records = _read_jsonl(args.flashvid_output)
+        summary["flashvid"] = _summarize_phase(flashvid_records)
+        summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
+            baseline_records,
+            flashvid_records,
+            anchor_name="baseline",
+            target_name="flashvid",
+        )
+    if args.run_ours:
+        ours_records = _read_jsonl(args.ours_output)
+        summary["ours"] = _summarize_phase(ours_records)
+        summary["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
+            baseline_records,
+            ours_records,
+            anchor_name="baseline",
+            target_name="ours",
+        )
+    if flashvid_records is not None and ours_records is not None:
+        summary["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
+            flashvid_records,
+            ours_records,
+            anchor_name="flashvid",
+            target_name="ours",
+        )
 
     summary_path = Path(args.summary_output_json)
     summary_path.parent.mkdir(parents=True, exist_ok=True)

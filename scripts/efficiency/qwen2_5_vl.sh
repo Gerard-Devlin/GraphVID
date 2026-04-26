@@ -16,9 +16,7 @@ python playground/bench_all_metrics.py \
     --num_runs 3 \
     --max_new_tokens 16 \
     --retention_ratio 0.10 \
-    --compression_variant "flashvid" \
-    --question_aware_reweighting False \
-    --adaptive_token_budget False \
     --baseline_output "logs/efficiency/baseline_qwen2_5_all_metrics.jsonl" \
     --flashvid_output "logs/efficiency/flashvid_qwen2_5_all_metrics.jsonl" \
+    --ours_output "logs/efficiency/ours_qwen2_5_all_metrics.jsonl" \
     --summary_output_json "logs/efficiency/summary_qwen2_5_all_metrics.json"
