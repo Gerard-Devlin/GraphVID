@@ -563,7 +563,11 @@ def Qwen2_5_VLVisionAttention_forward(
     if self.config._attn_implementation != "eager":
         attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
-    assert self.config._attn_implementation == "flash_attention_2"
+    if self.config._attn_implementation != "flash_attention_2":
+        raise RuntimeError(
+            "Qwen2.5 FlashVID vision path requires attn_implementation=flash_attention_2; "
+            f"got {self.config._attn_implementation!r}."
+        )
     # Flash Attention 2: Use cu_seqlens for variable length attention
     max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max()
     attn_output, _ = attention_interface(

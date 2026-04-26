@@ -4,6 +4,7 @@ import os
 import random
 import re
 import time
+import traceback
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -478,6 +479,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "compressed_visual_tokens": None,
         "visual_token_reduction_ratio": None,
         "error": None,
+        "error_traceback": None,
     }
 
     try:
@@ -502,7 +504,9 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
             }
         )
     except Exception as exc:  # pragma: no cover - runtime path
-        record["error"] = str(exc)
+        err_text = str(exc).strip()
+        record["error"] = f"{type(exc).__name__}: {err_text}" if err_text else f"{type(exc).__name__}"
+        record["error_traceback"] = traceback.format_exc(limit=20)
 
     return record
 
