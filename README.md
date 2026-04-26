@@ -35,9 +35,9 @@
 
 - [2026.02.10] 🚀Release our paper on arXiv.
 - [2026.02.06] 🍾Our paper has been selected as an **Oral Presentation** at **ICLR 2026**.
-- [2026.02.01] ✨Release FlashVID code and inference demos on *Qwen2.5-VL* and *Qwen3-VL*.
+- [2026.02.01] ✨Release FlashVID code and inference demos on _Qwen2.5-VL_ and _Qwen3-VL_.
 - [2026.01.31] 🚀Release this repository to the public.
-- [2026.01.30] ✨Release FlashVID code and inference demos on *LLaVA-OneVision* and *LLaVA-Video*.
+- [2026.01.30] ✨Release FlashVID code and inference demos on _LLaVA-OneVision_ and _LLaVA-Video_.
 - [2026.01.30] 👏Initialize this GitHub repository.
 - [2026.01.26] 🎉Our training-free inference acceleration method [FlashVID](https://openreview.net/forum?id=H6rDX4w6Al) has been accepted at **ICLR 2026**.
 - [2025.12.06] 🌟Release the GitHub repository of [DyTok](https://github.com/yu-lin-li/DyToK).
@@ -79,7 +79,6 @@ To achieve better spatiotemporal redundancy compression, we present a **simple y
 
 1. **Attention and Diversity-based Token Selection (ADTS)** prioritizes spatiotemporally informative tokens while ensuring feature diversity by solving a calibrated Max-Min Diversity Problem (MMDP);
 2. **Tree-based Saptiotemporal Token Merging (TSTM)** models redundancy by spatiotemporal redundancy trees, which effectively capture fine-grained video dynamics. Each redundancy tree will be aggregated into a single token representation.
-
 
 ## 📦Installation
 
@@ -156,5 +155,6 @@ If you find this project useful in your research, please consider citing:
 ## ⭐️Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Fanziyang-v/FlashVID&type=Date)](https://star-history.com/#Fanziyang-v/FlashVID&Date)
-#   G r a p h V I D  
+#   G r a p h V I D 
+ 
  
