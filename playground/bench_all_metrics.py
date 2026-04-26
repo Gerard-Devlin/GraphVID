@@ -521,16 +521,35 @@ def _run_phase(
     with out.open("w", encoding="utf-8") as f:
         for idx, sample in enumerate(samples, 1):
             record = _benchmark_single_sample(model_bundle, args, sample, use_acceleration=use_acceleration)
+
+            # Normalize edge cases so logging/summary is robust:
+            # - some exceptions may stringify to empty text;
+            # - occasionally metrics can be missing even without an explicit error.
+            err = record.get("error")
+            if err == "":
+                record["error"] = "unknown runtime error"
+            if not record.get("error"):
+                missing = [
+                    key
+                    for key in ("latency_ms", "compressed_visual_tokens", "raw_visual_tokens")
+                    if record.get(key) is None
+                ]
+                if missing:
+                    record["error"] = f"missing metrics: {', '.join(missing)}"
+
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             f.flush()
 
             if record["error"]:
                 print(f"[{phase_name}] {idx}/{len(samples)} {record.get('question_id')} error: {record['error']}")
             else:
+                latency_ms = float(record["latency_ms"])
+                compressed_v = float(record["compressed_visual_tokens"])
+                raw_v = float(record["raw_visual_tokens"])
                 print(
                     f"[{phase_name}] {idx}/{len(samples)} {record.get('question_id')} "
-                    f"acc={record['correct']} latency={record['latency_ms']:.2f}ms "
-                    f"vtoken={record['compressed_visual_tokens']:.1f}/{record['raw_visual_tokens']:.1f}"
+                    f"acc={record['correct']} latency={latency_ms:.2f}ms "
+                    f"vtoken={compressed_v:.1f}/{raw_v:.1f}"
                 )
 
 
