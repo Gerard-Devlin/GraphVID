@@ -16,9 +16,48 @@ from .utils import extract_question_features, flashvid_compression
 
 
 def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch.Tensor):
-    image_features, cls_attentions = self.get_model().get_vision_tower()(images)
+    vision_outputs = self.get_model().get_vision_tower()(images)
+
+    # Compatible with multiple vision tower output formats:
+    # 1) tensor: image_features
+    # 2) tuple/list: (image_features, cls_attentions, ...)
+    # 3) dict-like outputs with feature keys
+    if torch.is_tensor(vision_outputs):
+        image_features = vision_outputs
+        cls_attentions = None
+    elif isinstance(vision_outputs, (tuple, list)):
+        image_features = vision_outputs[0]
+        cls_attentions = vision_outputs[1] if len(vision_outputs) > 1 and torch.is_tensor(vision_outputs[1]) else None
+    elif hasattr(vision_outputs, "last_hidden_state"):
+        image_features = vision_outputs.last_hidden_state
+        cls_attentions = getattr(vision_outputs, "attentions", None)
+    elif isinstance(vision_outputs, dict):
+        image_features = vision_outputs.get("image_features", None) or vision_outputs.get("last_hidden_state", None)
+        cls_attentions = vision_outputs.get("cls_attentions", None) or vision_outputs.get("attentions", None)
+    else:
+        raise ValueError(f"Unsupported vision tower output type: {type(vision_outputs)}")
+
     image_features = self.get_model().mm_projector(image_features)
-    return image_features, cls_attentions
+
+    # Fallback token importance proxy when cls attentions are unavailable.
+    if cls_attentions is None:
+        cls_attentions = image_features.float().norm(dim=-1)
+    else:
+        if cls_attentions.ndim == 4:
+            cls_attentions = cls_attentions.mean(dim=1).mean(dim=1)
+        elif cls_attentions.ndim == 3:
+            cls_attentions = cls_attentions.mean(dim=1)
+        elif cls_attentions.ndim != 2:
+            cls_attentions = image_features.float().norm(dim=-1)
+
+        if (
+            cls_attentions.ndim != 2
+            or cls_attentions.shape[0] != image_features.shape[0]
+            or cls_attentions.shape[-1] != image_features.shape[-2]
+        ):
+            cls_attentions = image_features.float().norm(dim=-1)
+
+    return image_features, cls_attentions.to(image_features.dtype)
 
 
 def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
@@ -227,7 +266,7 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
         else:
             raise ValueError(f"Unexpected mm_patch_merge_type: {self.config.mm_patch_merge_type}")
     else:
-        image_features = self.encode_images(images)
+        image_features, _ = self.encode_images(images)
 
     # TODO: image start / end is not implemented here to support pretraining.
     if getattr(self.config, "tune_mm_mlp_adapter", False) and getattr(self.config, "mm_use_im_start_end", False):
