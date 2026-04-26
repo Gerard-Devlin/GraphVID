@@ -577,8 +577,17 @@ def _summarize_pairwise_comparison(
     }
 
 
-def _apply_flashvid_original(model, args: BenchmarkArgs):
+def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
+    # LLaVA backend currently has instability in inner-LLM token pruning path.
+    # Keep visual-side compression enabled, but disable LLM pruning for stable benchmarking.
+    if backend == "llava":
+        return 10**9, 1.0
+    return args.pruning_layer, args.llm_retention_ratio
+
+
+def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
     from flashvid import flashvid
+    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
 
     return flashvid(
         model=model,
@@ -591,16 +600,17 @@ def _apply_flashvid_original(model, args: BenchmarkArgs):
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
         expansion=args.expansion,
-        pruning_layer=args.pruning_layer,
-        llm_retention_ratio=args.llm_retention_ratio,
+        pruning_layer=pruning_layer,
+        llm_retention_ratio=llm_retention_ratio,
         compression_variant="flashvid",
         question_aware_reweighting=False,
         adaptive_token_budget=False,
     )
 
 
-def _apply_ours(model, args: BenchmarkArgs):
+def _apply_ours(model, args: BenchmarkArgs, backend: str):
     from flashvid import flashvid
+    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
 
     return flashvid(
         model=model,
@@ -613,8 +623,8 @@ def _apply_ours(model, args: BenchmarkArgs):
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
         expansion=args.expansion,
-        pruning_layer=args.pruning_layer,
-        llm_retention_ratio=args.llm_retention_ratio,
+        pruning_layer=pruning_layer,
+        llm_retention_ratio=llm_retention_ratio,
         compression_variant=args.compression_variant,
         question_aware_reweighting=args.question_aware_reweighting,
         adaptive_token_budget=args.adaptive_token_budget,
@@ -700,6 +710,8 @@ def run(args: BenchmarkArgs):
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
     _print_header(args, backend)
+    if backend == "llava":
+        print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
     print(f"Loaded {len(samples)} samples.\n")
 
     total_phases = 1 + int(args.run_flashvid) + int(args.run_ours)
@@ -718,7 +730,7 @@ def run(args: BenchmarkArgs):
 
     if args.run_flashvid:
         print(f"\nPhase {phase_idx}/{total_phases}: FlashVID ...")
-        model_bundle["model"] = _apply_flashvid_original(model_bundle["model"], args)
+        model_bundle["model"] = _apply_flashvid_original(model_bundle["model"], args, backend)
         _run_phase(
             model_bundle=model_bundle,
             args=args,
@@ -731,7 +743,7 @@ def run(args: BenchmarkArgs):
 
     if args.run_ours:
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
-        model_bundle["model"] = _apply_ours(model_bundle["model"], args)
+        model_bundle["model"] = _apply_ours(model_bundle["model"], args, backend)
         _run_phase(
             model_bundle=model_bundle,
             args=args,

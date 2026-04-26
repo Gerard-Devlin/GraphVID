@@ -792,6 +792,11 @@ def fastv_prune(
 ):
     bsz, seq_length, _ = hidden_states.shape
     device = hidden_states.device
+    # No-op shortcut: disable inner-LLM pruning when retention ratio is >= 1.
+    if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) >= 0.9999:
+        keep_indices = torch.arange(seq_length, device=device, dtype=torch.long)
+        return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices
+
     # Obtain FlashVid arguments.
     visual_token_start_index = flashvid_config.visual_token_start_index
     visual_token_length = flashvid_config.visual_token_length
