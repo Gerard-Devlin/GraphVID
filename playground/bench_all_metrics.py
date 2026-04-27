@@ -26,6 +26,7 @@ class BenchmarkArgs:
     model_path: str = field(default="Qwen/Qwen2.5-VL-7B-Instruct")
     model_backend: str = field(default="auto")  # auto | qwen2_5_vl | qwen3_vl | llava
     attn_implementation: str = field(default="flash_attention_2")
+    local_files_only: bool = field(default=False)
 
     # Data
     dataset_jsonl: str = field(default="videomme.jsonl")
@@ -190,13 +191,21 @@ def _load_qwen_model(args: BenchmarkArgs, backend: str):
     else:
         raise ValueError(f"unsupported qwen backend: {backend}")
 
+    offline_env = str(os.getenv("HF_HUB_OFFLINE", "")).strip() == "1" or str(os.getenv("TRANSFORMERS_OFFLINE", "")).strip() == "1"
+    local_path = Path(args.model_path).exists()
+    local_files_only = bool(args.local_files_only or offline_env or local_path)
+
     model = QwenModel.from_pretrained(
         args.model_path,
         torch_dtype="auto",
         device_map="auto",
         attn_implementation=args.attn_implementation,
+        local_files_only=local_files_only,
     )
-    processor = AutoProcessor.from_pretrained(args.model_path)
+    processor = AutoProcessor.from_pretrained(
+        args.model_path,
+        local_files_only=local_files_only,
+    )
     model.eval()
     return {"model": model, "processor": processor}
 
