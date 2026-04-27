@@ -413,6 +413,7 @@ def _assign_tokens_to_slots(
     num_frames: int,
     num_visual_tokens: int,
     flashvid_config: FlashVidConfig,
+    flat_token_indices: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_tokens = flat_features.shape[0]
     num_slots = int(slot_anchor_indices.numel())
@@ -422,8 +423,13 @@ def _assign_tokens_to_slots(
             flat_features.new_zeros((0,)),
         )
 
-    token_frame_ids = torch.arange(num_frames, device=flat_features.device).repeat_interleave(num_visual_tokens)
-    token_local_ids = torch.arange(num_visual_tokens, device=flat_features.device).repeat(num_frames)
+    if flat_token_indices is None:
+        token_ids = torch.arange(num_frames * num_visual_tokens, device=flat_features.device)
+    else:
+        token_ids = flat_token_indices.to(device=flat_features.device, dtype=torch.long)
+
+    token_frame_ids = token_ids // max(1, num_visual_tokens)
+    token_local_ids = token_ids % max(1, num_visual_tokens)
     _, grid_w = _resolve_grid_hw(num_visual_tokens, flashvid_config)
     token_y = token_local_ids // max(1, grid_w)
     token_x = token_local_ids % max(1, grid_w)
@@ -484,13 +490,25 @@ def _assign_tokens_to_slots(
     return assigned_slots, token_weights
 
 
+def _select_passthrough_indices(
+    fused_scores: torch.Tensor,
+    budget: int,
+) -> torch.Tensor:
+    if budget <= 0 or fused_scores.numel() == 0:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+    budget = min(int(budget), int(fused_scores.numel()))
+    if budget <= 0:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+    return torch.topk(fused_scores, k=budget, dim=0).indices.to(dtype=torch.long)
+
+
 def _build_role_memory_tokens(
     flat_features: torch.Tensor,
     dropped_indices: torch.Tensor,
     residual_vectors: torch.Tensor,
     question_scores: Optional[torch.Tensor],
     memory_budget: int,
-    token_role_ids: torch.Tensor,
+    dropped_role_ids: torch.Tensor,
     num_roles: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     feat_dim = flat_features.shape[-1]
@@ -503,7 +521,7 @@ def _build_role_memory_tokens(
     priorities = residual_vectors.float().norm(p=2, dim=-1)
     if question_scores is not None:
         priorities = priorities * (1.0 + question_scores[dropped_indices].float())
-    role_ids = token_role_ids[dropped_indices]
+    role_ids = dropped_role_ids
 
     role_priority_sum = torch.zeros((num_roles,), dtype=torch.float32, device=flat_features.device)
     role_priority_sum.scatter_add_(0, role_ids, priorities)
@@ -592,12 +610,44 @@ def _segment_slot_memory_compression(
 
     effective_ratio = min(1.0, max(0.01, retention_ratio * float(getattr(flashvid_config, "expansion", 1.0))))
     target_budget = max(1, min(num_tokens, math.ceil(num_tokens * effective_ratio)))
+
+    fused_scores, question_scores = _question_aware_scores(
+        flat_features=flat_features,
+        flat_attention=flat_attention,
+        question_features=question_features,
+        flashvid_config=flashvid_config,
+    )
+
     memory_budget = _resolve_memory_budget(
         num_tokens=num_tokens,
         target_budget=target_budget,
         flashvid_config=flashvid_config,
     )
-    slot_budget = max(1, target_budget - memory_budget)
+    passthrough_ratio = float(getattr(flashvid_config, "slot_passthrough_ratio", 0.40))
+    passthrough_ratio = min(max(passthrough_ratio, 0.0), 0.90)
+    passthrough_min = max(0, int(getattr(flashvid_config, "slot_passthrough_min", 4)))
+    max_passthrough = max(0, target_budget - memory_budget - 1)
+    passthrough_budget = int(round(target_budget * passthrough_ratio))
+    passthrough_budget = min(max_passthrough, max(0, passthrough_budget))
+    if passthrough_budget > 0:
+        passthrough_budget = max(min(passthrough_min, max_passthrough), passthrough_budget)
+
+    passthrough_indices = _select_passthrough_indices(
+        fused_scores=fused_scores,
+        budget=passthrough_budget,
+    )
+    passthrough_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+    passthrough_mask[passthrough_indices] = True
+    passthrough_tokens = flat_features[passthrough_indices] if passthrough_indices.numel() > 0 else flat_features.new_zeros((0, feat_dim))
+    passthrough_global_indices = flat_global_indices[passthrough_indices] if passthrough_indices.numel() > 0 else torch.empty((0,), dtype=torch.long, device=device)
+
+    active_indices = torch.where(~passthrough_mask)[0]
+    if active_indices.numel() == 0:
+        return passthrough_tokens, passthrough_global_indices
+
+    active_features = flat_features[active_indices]
+    active_fused_scores = fused_scores[active_indices]
+    slot_budget = max(1, target_budget - memory_budget - int(passthrough_indices.numel()))
     requested_slot_cap = int(getattr(flashvid_config, "slot_max_per_segment", 0) or 0)
     if requested_slot_cap > 0:
         # Soft anti-collapse guard:
@@ -607,6 +657,7 @@ def _segment_slot_memory_compression(
         soft_floor = max(1, int(math.ceil(slot_budget * soft_fraction)))
         effective_cap = max(requested_slot_cap, soft_floor)
         slot_budget = min(slot_budget, effective_cap)
+    slot_budget = min(slot_budget, int(active_indices.numel()))
 
     role_names, slot_roles = _allocate_slot_roles(
         slot_budget=slot_budget,
@@ -615,49 +666,45 @@ def _segment_slot_memory_compression(
     if not slot_roles:
         slot_roles = [role_names[0]]
 
-    fused_scores, question_scores = _question_aware_scores(
-        flat_features=flat_features,
-        flat_attention=flat_attention,
-        question_features=question_features,
-        flashvid_config=flashvid_config,
-    )
-    role_scores = _build_slot_role_scores(
+    role_scores_all = _build_slot_role_scores(
         segment_features=segment_features,
         flat_features=flat_features,
         flat_attention=flat_attention,
         fused_scores=fused_scores,
         flashvid_config=flashvid_config,
     )
+    role_scores = {name: score[active_indices] for name, score in role_scores_all.items()}
     slot_anchor_indices = _select_slot_anchor_indices(
-        flat_features=flat_features,
+        flat_features=active_features,
         slot_roles=slot_roles,
         role_scores=role_scores,
-        fused_scores=fused_scores,
+        fused_scores=active_fused_scores,
         flashvid_config=flashvid_config,
     )
     if slot_anchor_indices.numel() == 0:
-        top1 = torch.topk(fused_scores, k=1, dim=0).indices
+        top1 = torch.topk(active_fused_scores, k=1, dim=0).indices
         slot_anchor_indices = top1.to(dtype=torch.long, device=device)
         slot_roles = [slot_roles[0]]
 
     assigned_slots, token_weights = _assign_tokens_to_slots(
-        flat_features=flat_features,
+        flat_features=active_features,
         slot_anchor_indices=slot_anchor_indices,
         slot_roles=slot_roles,
         role_scores=role_scores,
-        fused_scores=fused_scores,
+        fused_scores=active_fused_scores,
         num_frames=num_frames,
         num_visual_tokens=num_visual_tokens,
         flashvid_config=flashvid_config,
+        flat_token_indices=active_indices,
     )
 
     num_slots = int(slot_anchor_indices.numel())
-    slot_sum = torch.zeros((num_slots, feat_dim), dtype=flat_features.dtype, device=device)
-    slot_weight = torch.zeros((num_slots, 1), dtype=flat_features.dtype, device=device)
+    slot_sum = torch.zeros((num_slots, feat_dim), dtype=active_features.dtype, device=device)
+    slot_weight = torch.zeros((num_slots, 1), dtype=active_features.dtype, device=device)
     slot_sum.scatter_add_(
         dim=0,
         index=assigned_slots.unsqueeze(-1).expand(-1, feat_dim),
-        src=flat_features * token_weights.unsqueeze(-1),
+        src=active_features * token_weights.unsqueeze(-1),
     )
     slot_weight.scatter_add_(
         dim=0,
@@ -669,32 +716,39 @@ def _segment_slot_memory_compression(
     anchor_blend = float(getattr(flashvid_config, "slot_anchor_blend", 0.65))
     anchor_blend = min(max(anchor_blend, 0.0), 1.0)
     if anchor_blend > 0.0:
-        anchor_tokens = flat_features[slot_anchor_indices]
+        anchor_tokens = active_features[slot_anchor_indices]
         slot_tokens = (1.0 - anchor_blend) * slot_tokens + anchor_blend * anchor_tokens
-    slot_global_indices = flat_global_indices[slot_anchor_indices]
+    slot_global_indices = flat_global_indices[active_indices[slot_anchor_indices]]
 
-    reconstructed = slot_tokens[assigned_slots]
-    residual_vectors = flat_features - reconstructed
-    anchor_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+    reconstructed = slot_tokens[assigned_slots]  # active tokens only
+    residual_vectors = active_features - reconstructed
+    anchor_mask = torch.zeros((active_indices.shape[0],), dtype=torch.bool, device=device)
     anchor_mask[slot_anchor_indices.unique()] = True
-    dropped_indices = torch.where(~anchor_mask)[0]
+    dropped_local_indices = torch.where(~anchor_mask)[0]
+    dropped_global_indices = active_indices[dropped_local_indices]
 
     role_to_id = {role: idx for idx, role in enumerate(role_names)}
     slot_role_ids = torch.tensor([role_to_id.get(role, 0) for role in slot_roles], dtype=torch.long, device=device)
     token_role_ids = slot_role_ids[assigned_slots]
+    dropped_role_ids = token_role_ids[dropped_local_indices] if dropped_local_indices.numel() > 0 else torch.empty((0,), dtype=torch.long, device=device)
 
     memory_tokens, memory_token_indices = _build_role_memory_tokens(
         flat_features=flat_features,
-        dropped_indices=dropped_indices,
-        residual_vectors=residual_vectors[dropped_indices],
+        dropped_indices=dropped_global_indices,
+        residual_vectors=residual_vectors[dropped_local_indices],
         question_scores=question_scores,
         memory_budget=memory_budget,
-        token_role_ids=token_role_ids,
+        dropped_role_ids=dropped_role_ids,
         num_roles=max(1, len(role_names)),
     )
 
-    all_tokens = [slot_tokens]
-    all_indices = [slot_global_indices]
+    all_tokens = []
+    all_indices = []
+    if passthrough_tokens.shape[0] > 0:
+        all_tokens.append(passthrough_tokens)
+        all_indices.append(passthrough_global_indices)
+    all_tokens.append(slot_tokens)
+    all_indices.append(slot_global_indices)
     if memory_tokens.shape[0] > 0:
         all_tokens.append(memory_tokens)
         all_indices.append(flat_global_indices[memory_token_indices])
