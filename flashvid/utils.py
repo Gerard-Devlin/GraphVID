@@ -440,6 +440,12 @@ def _assign_tokens_to_slots(
 
     score_matrix = torch.stack([role_scores.get(role, fused_scores) for role in slot_roles], dim=1)
     score_matrix = score_matrix + 0.15 * fused_scores.unsqueeze(1)
+    fast_assignment = bool(getattr(flashvid_config, "slot_fast_assignment", True))
+    if fast_assignment:
+        assigned_slots = torch.argmax(score_matrix, dim=1)
+        selected_scores = score_matrix.gather(1, assigned_slots.unsqueeze(-1)).squeeze(-1)
+        token_weights = (0.45 + 0.55 * _normalize_scores(selected_scores)).to(flat_features.dtype)
+        return assigned_slots, token_weights
 
     overlap_radius = max(0, int(getattr(flashvid_config, "slot_overlap_radius", 1)))
     temporal_radius = max(

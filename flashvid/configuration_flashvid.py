@@ -64,8 +64,9 @@ class FlashVidConfig:
     slot_motion_window: int = field(default=1)
     slot_soft_cap_fraction: float = field(default=0.35)
     slot_anchor_blend: float = field(default=0.65)
-    slot_passthrough_ratio: float = field(default=0.40)
+    slot_passthrough_ratio: float = field(default=0.55)
     slot_passthrough_min: int = field(default=4)
+    slot_fast_assignment: bool = field(default=True)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

@@ -104,8 +104,9 @@ def flashvid(
     slot_motion_window: int = 1,
     slot_soft_cap_fraction: float = 0.35,
     slot_anchor_blend: float = 0.65,
-    slot_passthrough_ratio: float = 0.40,
+    slot_passthrough_ratio: float = 0.55,
     slot_passthrough_min: int = 4,
+    slot_fast_assignment: bool = True,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -160,6 +161,7 @@ def flashvid(
         slot_anchor_blend (float, optional): Blend ratio to preserve anchor semantics in slot aggregation.
         slot_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unmerged.
         slot_passthrough_min (int, optional): Minimum passthrough token count per segment when budget allows.
+        slot_fast_assignment (bool, optional): Enable lightweight slot assignment for lower compression overhead.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -254,6 +256,7 @@ def flashvid(
         slot_anchor_blend=slot_anchor_blend,
         slot_passthrough_ratio=slot_passthrough_ratio,
         slot_passthrough_min=slot_passthrough_min,
+        slot_fast_assignment=slot_fast_assignment,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

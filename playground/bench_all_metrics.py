@@ -76,8 +76,9 @@ class BenchmarkArgs:
     slot_motion_window: int = field(default=1)
     slot_soft_cap_fraction: float = field(default=0.35)
     slot_anchor_blend: float = field(default=0.65)
-    slot_passthrough_ratio: float = field(default=0.40)
+    slot_passthrough_ratio: float = field(default=0.55)
     slot_passthrough_min: int = field(default=4)
+    slot_fast_assignment: bool = field(default=True)
     memory_token_ratio: float = field(default=0.10)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
@@ -688,6 +689,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         slot_anchor_blend=args.slot_anchor_blend,
         slot_passthrough_ratio=args.slot_passthrough_ratio,
         slot_passthrough_min=args.slot_passthrough_min,
+        slot_fast_assignment=args.slot_fast_assignment,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -730,6 +732,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         slot_anchor_blend=args.slot_anchor_blend,
         slot_passthrough_ratio=args.slot_passthrough_ratio,
         slot_passthrough_min=args.slot_passthrough_min,
+        slot_fast_assignment=args.slot_fast_assignment,
         memory_token_ratio=args.memory_token_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
