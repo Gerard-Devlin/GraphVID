@@ -598,6 +598,16 @@ def _segment_slot_memory_compression(
         flashvid_config=flashvid_config,
     )
     slot_budget = max(1, target_budget - memory_budget)
+    requested_slot_cap = int(getattr(flashvid_config, "slot_max_per_segment", 0) or 0)
+    if requested_slot_cap > 0:
+        # Soft anti-collapse guard:
+        # keep user-provided cap, but avoid forcing very large segments into tiny slot budgets.
+        soft_fraction = float(getattr(flashvid_config, "slot_soft_cap_fraction", 0.35))
+        soft_fraction = min(max(soft_fraction, 0.0), 1.0)
+        soft_floor = max(1, int(math.ceil(slot_budget * soft_fraction)))
+        effective_cap = max(requested_slot_cap, soft_floor)
+        slot_budget = min(slot_budget, effective_cap)
+
     role_names, slot_roles = _allocate_slot_roles(
         slot_budget=slot_budget,
         flashvid_config=flashvid_config,
@@ -655,6 +665,12 @@ def _segment_slot_memory_compression(
         src=token_weights.unsqueeze(-1),
     )
     slot_tokens = slot_sum / slot_weight.clamp_min(1e-6)
+    # Precision-first: preserve slot anchors as a strong semantic prior.
+    anchor_blend = float(getattr(flashvid_config, "slot_anchor_blend", 0.65))
+    anchor_blend = min(max(anchor_blend, 0.0), 1.0)
+    if anchor_blend > 0.0:
+        anchor_tokens = flat_features[slot_anchor_indices]
+        slot_tokens = (1.0 - anchor_blend) * slot_tokens + anchor_blend * anchor_tokens
     slot_global_indices = flat_global_indices[slot_anchor_indices]
 
     reconstructed = slot_tokens[assigned_slots]

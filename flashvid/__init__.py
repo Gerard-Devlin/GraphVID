@@ -97,15 +97,17 @@ def flashvid(
     graph_temporal_radius: int = 1,
     # Slot-memory params.
     slot_base_roles: int = 5,
-    slot_max_per_segment: int = 24,
+    slot_max_per_segment: int = 64,
     slot_role_allocation: str = "motion,interaction,detail,scene,background",
     slot_overlap_radius: int = 1,
     slot_tiebreak_eps: float = 2e-2,
     slot_motion_window: int = 1,
+    slot_soft_cap_fraction: float = 0.35,
+    slot_anchor_blend: float = 0.65,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
-    memory_token_max: int = 8,
+    memory_token_max: int = 16,
     adaptive_token_budget: bool = False,
     adaptive_budget_low: float = 0.10,
     adaptive_budget_mid: float = 0.15,
@@ -152,6 +154,8 @@ def flashvid(
         slot_overlap_radius (int, optional): Temporal overlap radius for continuity-aware assignment.
         slot_tiebreak_eps (float, optional): Tie-break epsilon when assignment scores are close.
         slot_motion_window (int, optional): Temporal window used in non-learning motion/change score.
+        slot_soft_cap_fraction (float, optional): Soft lower-bound fraction to avoid segment budget collapse.
+        slot_anchor_blend (float, optional): Blend ratio to preserve anchor semantics in slot aggregation.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -242,6 +246,8 @@ def flashvid(
         slot_overlap_radius=slot_overlap_radius,
         slot_tiebreak_eps=slot_tiebreak_eps,
         slot_motion_window=slot_motion_window,
+        slot_soft_cap_fraction=slot_soft_cap_fraction,
+        slot_anchor_blend=slot_anchor_blend,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

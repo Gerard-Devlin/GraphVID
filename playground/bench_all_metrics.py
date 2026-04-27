@@ -69,11 +69,13 @@ class BenchmarkArgs:
     graph_topk: int = field(default=4)
     graph_temporal_radius: int = field(default=1)
     slot_base_roles: int = field(default=5)
-    slot_max_per_segment: int = field(default=24)
+    slot_max_per_segment: int = field(default=64)
     slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
     slot_overlap_radius: int = field(default=1)
     slot_tiebreak_eps: float = field(default=2e-2)
     slot_motion_window: int = field(default=1)
+    slot_soft_cap_fraction: float = field(default=0.35)
+    slot_anchor_blend: float = field(default=0.65)
     memory_token_ratio: float = field(default=0.10)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
@@ -680,6 +682,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         slot_overlap_radius=args.slot_overlap_radius,
         slot_tiebreak_eps=args.slot_tiebreak_eps,
         slot_motion_window=args.slot_motion_window,
+        slot_soft_cap_fraction=args.slot_soft_cap_fraction,
+        slot_anchor_blend=args.slot_anchor_blend,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -718,6 +722,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         slot_overlap_radius=args.slot_overlap_radius,
         slot_tiebreak_eps=args.slot_tiebreak_eps,
         slot_motion_window=args.slot_motion_window,
+        slot_soft_cap_fraction=args.slot_soft_cap_fraction,
+        slot_anchor_blend=args.slot_anchor_blend,
         memory_token_ratio=args.memory_token_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,

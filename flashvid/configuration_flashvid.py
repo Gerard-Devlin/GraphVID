@@ -57,16 +57,18 @@ class FlashVidConfig:
 
     # Slot-memory token aggregation.
     slot_base_roles: int = field(default=5)  # scene, motion, interaction, background, detail
-    slot_max_per_segment: int = field(default=24)
+    slot_max_per_segment: int = field(default=64)
     slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
     slot_overlap_radius: int = field(default=1)
     slot_tiebreak_eps: float = field(default=2e-2)
     slot_motion_window: int = field(default=1)
+    slot_soft_cap_fraction: float = field(default=0.35)
+    slot_anchor_blend: float = field(default=0.65)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)
     memory_token_min: int = field(default=1)
-    memory_token_max: int = field(default=8)
+    memory_token_max: int = field(default=16)
 
     # Adaptive token budget.
     adaptive_token_budget: bool = field(default=False)
