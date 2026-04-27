@@ -88,12 +88,21 @@ def flashvid(
     temporal_local_radius: int = 2,
     temporal_hysteresis: float = 0.0,
     min_keep_per_frame: int = 0,
-    # 2.5) Graph-ST experimental params (for ablations)
+    # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
     question_reweight_beta: float = 0.35,
+    # Legacy graph params (kept for compatibility).
     graph_topk: int = 4,
     graph_temporal_radius: int = 1,
+    # Slot-memory params.
+    slot_base_roles: int = 5,
+    slot_max_per_segment: int = 24,
+    slot_role_allocation: str = "motion,interaction,detail,scene,background",
+    slot_overlap_radius: int = 1,
+    slot_tiebreak_eps: float = 1e-4,
+    slot_motion_window: int = 1,
+    # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
     memory_token_max: int = 8,
@@ -105,6 +114,11 @@ def flashvid(
     expansion: float = 1.25,
     pruning_layer: int = 20,
     llm_retention_ratio: float = 0.3,
+    # 4) Decode-stage policy scaffold (Route3, default no-op).
+    decode_policy: str = "none",
+    decode_kv_budget_ratio: float = 1.0,
+    decode_update_interval: int = 4,
+    decode_start_layer: int = 0,
 ) -> nn.Module:
     """Apply FlashVID to the model.
 
@@ -126,11 +140,18 @@ def flashvid(
         temporal_local_radius (int, optional): Local matching radius when mode is "local".
         temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
-        compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM; "graph" enables graph-based merge.
+        compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
+            "slot" enables slot-memory aggregation; "graph" is treated as an alias of "slot".
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
-        graph_topk (int, optional): Top-k graph neighbors for many-to-many token assignment.
-        graph_temporal_radius (int, optional): Temporal radius used for graph edge construction.
+        graph_topk (int, optional): Legacy graph setting; mapped to slot coverage behavior.
+        graph_temporal_radius (int, optional): Legacy temporal radius setting (kept for compatibility).
+        slot_base_roles (int, optional): Base semantic slot roles per segment (default: 5).
+        slot_max_per_segment (int, optional): Maximum total slots for one segment.
+        slot_role_allocation (str, optional): Priority order for additional slot allocation.
+        slot_overlap_radius (int, optional): Temporal overlap radius for continuity-aware assignment.
+        slot_tiebreak_eps (float, optional): Tie-break epsilon when assignment scores are close.
+        slot_motion_window (int, optional): Temporal window used in non-learning motion/change score.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -141,6 +162,10 @@ def flashvid(
         expansion (float, optional): The expansion ratio for inner-LLM compression. Defaults to 1.25.
         pruning_layer (int, optional): The layer to prune. Defaults to 20.
         llm_retention_ratio (float, optional): The retention ratio for inner-LLM compression. Defaults to 0.3.
+        decode_policy (str, optional): Decode policy scaffold. "none" is a no-op.
+        decode_kv_budget_ratio (float, optional): Reserved for future decode KV budgeting.
+        decode_update_interval (int, optional): Reserved update interval for decode policy.
+        decode_start_layer (int, optional): Reserved start layer for decode policy.
 
     Raises:
         NotImplementedError: If the model is not supported.
@@ -182,6 +207,12 @@ def flashvid(
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
+    variant = str(compression_variant).strip().lower()
+    if variant == "graph":
+        variant = "slot"
+    if variant not in ("flashvid", "slot"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|slot|graph")
+
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
         retention_ratio=retention_ratio,
@@ -200,11 +231,17 @@ def flashvid(
         temporal_local_radius=temporal_local_radius,
         temporal_hysteresis=temporal_hysteresis,
         min_keep_per_frame=min_keep_per_frame,
-        compression_variant=compression_variant,
+        compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,
         graph_topk=graph_topk,
         graph_temporal_radius=graph_temporal_radius,
+        slot_base_roles=slot_base_roles,
+        slot_max_per_segment=slot_max_per_segment,
+        slot_role_allocation=slot_role_allocation,
+        slot_overlap_radius=slot_overlap_radius,
+        slot_tiebreak_eps=slot_tiebreak_eps,
+        slot_motion_window=slot_motion_window,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,
@@ -215,6 +252,10 @@ def flashvid(
         expansion=expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
+        decode_policy=decode_policy,
+        decode_kv_budget_ratio=decode_kv_budget_ratio,
+        decode_update_interval=decode_update_interval,
+        decode_start_layer=decode_start_layer,
     )
 
     # Store FlashVid Config in the model.

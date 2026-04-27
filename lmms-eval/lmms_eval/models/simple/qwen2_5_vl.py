@@ -80,6 +80,12 @@ class Qwen2_5_VL(lmms):
         question_reweight_beta: float = 0.35,
         graph_topk: int = 4,
         graph_temporal_radius: int = 1,
+        slot_base_roles: int = 5,
+        slot_max_per_segment: int = 24,
+        slot_role_allocation: str = "motion,interaction,detail,scene,background",
+        slot_overlap_radius: int = 1,
+        slot_tiebreak_eps: float = 1e-4,
+        slot_motion_window: int = 1,
         memory_token_ratio: float = 0.10,
         memory_token_min: int = 1,
         memory_token_max: int = 8,
@@ -91,6 +97,11 @@ class Qwen2_5_VL(lmms):
         expansion: float = 1.25,
         pruning_layer: int = 20,
         llm_retention_ratio: float = 0.3,
+        # Decode-stage policy scaffold (default no-op)
+        decode_policy: str = "none",
+        decode_kv_budget_ratio: float = 1.0,
+        decode_update_interval: int = 4,
+        decode_start_layer: int = 0,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -160,6 +171,12 @@ class Qwen2_5_VL(lmms):
                 question_reweight_beta=question_reweight_beta,
                 graph_topk=graph_topk,
                 graph_temporal_radius=graph_temporal_radius,
+                slot_base_roles=slot_base_roles,
+                slot_max_per_segment=slot_max_per_segment,
+                slot_role_allocation=slot_role_allocation,
+                slot_overlap_radius=slot_overlap_radius,
+                slot_tiebreak_eps=slot_tiebreak_eps,
+                slot_motion_window=slot_motion_window,
                 memory_token_ratio=memory_token_ratio,
                 memory_token_min=memory_token_min,
                 memory_token_max=memory_token_max,
@@ -169,6 +186,10 @@ class Qwen2_5_VL(lmms):
                 adaptive_budget_high=adaptive_budget_high,
                 pruning_layer=pruning_layer,
                 llm_retention_ratio=llm_retention_ratio,
+                decode_policy=decode_policy,
+                decode_kv_budget_ratio=decode_kv_budget_ratio,
+                decode_update_interval=decode_update_interval,
+                decode_start_layer=decode_start_layer,
             )
             # print(f"[INFO] Enable FlashVID with retention_ratio={retention_ratio}, expansion={expansion}, do_segment={do_segment}, segment_threshold={segment_threshold}, min_segment_num={min_segment_num}, complementary_segment={complementary_segment}, token_selection_method={token_selection_method}, alpha={alpha}, temporal_threshold={temporal_threshold}, pruning_layer={pruning_layer}, llm_retention_ratio={llm_retention_ratio}")
 

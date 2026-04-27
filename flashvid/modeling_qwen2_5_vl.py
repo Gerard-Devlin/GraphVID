@@ -25,7 +25,12 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     repeat_kv,
 )
 from .configuration_flashvid import FlashVidConfig
-from .utils import extract_question_features, fastv_prune, flashvid_compression
+from .utils import (
+    extract_question_features,
+    fastv_prune,
+    flashvid_compression,
+    maybe_apply_decode_policy,
+)
 
 
 def Qwen2_5_VLTextModel_forward(
@@ -154,6 +159,24 @@ def Qwen2_5_VLTextModel_forward(
                 )
                 # Don't forget to update text_position_ids (otherwise may occur CUDA error)
                 text_position_ids = text_position_ids[..., keep_indices].contiguous()
+
+        (
+            hidden_states,
+            causal_mask,
+            text_position_ids,
+            cache_position,
+            position_embeddings,
+        ) = maybe_apply_decode_policy(
+            hidden_states=hidden_states,
+            causal_mask=causal_mask,
+            position_ids=text_position_ids,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            flashvid_config=flashvid_config,
+            layer_idx=layer_idx,
+            is_prefill=is_prefill,
+        )
+
         layer_outputs = decoder_layer(
             hidden_states,
             attention_mask=causal_mask,
@@ -462,6 +485,9 @@ def Qwen2_5_VLModel_forward(
     if position_ids.shape[-1] > 1 and pixel_values_videos is not None:
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
+        spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
+        flashvid_config.H = int(video_grid_thw[0][1].item() // spatial_merge)
+        flashvid_config.W = int(video_grid_thw[0][2].item() // spatial_merge)
         video_features = video_embeds.view(num_frames, num_visual_tokens, -1)
         question_features = extract_question_features(
             input_ids=input_ids,

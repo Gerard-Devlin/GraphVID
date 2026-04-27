@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union, List, Iterable
+from typing import Optional, Tuple, Union, List, Iterable, Dict
 
 import math
 import torch
@@ -212,7 +212,326 @@ def _build_residual_memory_tokens(
     return torch.stack(memory_tokens, dim=0), torch.stack(memory_indices, dim=0)
 
 
-def _segment_graph_compression(
+def _resolve_grid_hw(num_visual_tokens: int, flashvid_config: FlashVidConfig) -> Tuple[int, int]:
+    h = int(getattr(flashvid_config, "H", 0) or 0)
+    w = int(getattr(flashvid_config, "W", 0) or 0)
+    if h > 0 and w > 0 and h * w >= num_visual_tokens:
+        return h, w
+    h = max(1, int(round(math.sqrt(max(1, num_visual_tokens)))))
+    w = max(1, int(math.ceil(num_visual_tokens / h)))
+    return h, w
+
+
+def _resolve_slot_role_names(flashvid_config: FlashVidConfig) -> List[str]:
+    predefined = ["scene", "motion", "interaction", "background", "detail"]
+    role_count = max(1, int(getattr(flashvid_config, "slot_base_roles", 5)))
+    if role_count <= len(predefined):
+        return predefined[:role_count]
+    extras = [f"extra_{i + 1}" for i in range(role_count - len(predefined))]
+    return predefined + extras
+
+
+def _resolve_slot_priority(role_names: List[str], flashvid_config: FlashVidConfig) -> List[str]:
+    # Precision-oriented default priority.
+    default_priority = ["motion", "interaction", "detail", "scene", "background"]
+    raw = str(getattr(flashvid_config, "slot_role_allocation", "") or "")
+    parsed = [item.strip().lower() for item in raw.split(",") if item.strip()]
+    ordered: List[str] = []
+    for role in parsed + default_priority + role_names:
+        if role in role_names and role not in ordered:
+            ordered.append(role)
+    return ordered
+
+
+def _allocate_slot_roles(
+    slot_budget: int,
+    flashvid_config: FlashVidConfig,
+) -> Tuple[List[str], List[str]]:
+    role_names = _resolve_slot_role_names(flashvid_config)
+    if slot_budget <= 0:
+        return role_names, []
+
+    max_slots = int(getattr(flashvid_config, "slot_max_per_segment", slot_budget))
+    if max_slots > 0:
+        slot_budget = min(slot_budget, max_slots)
+    slot_budget = max(1, slot_budget)
+
+    priority = _resolve_slot_priority(role_names, flashvid_config)
+    counts: Dict[str, int] = {role: 0 for role in role_names}
+
+    # One slot per role first when budget allows.
+    for role in priority:
+        if sum(counts.values()) >= slot_budget:
+            break
+        if counts[role] == 0:
+            counts[role] = 1
+
+    # Allocate remaining slots in priority order (5 roles + expandable sub-slots).
+    while sum(counts.values()) < slot_budget:
+        for role in priority:
+            if sum(counts.values()) >= slot_budget:
+                break
+            counts[role] += 1
+
+    slot_roles: List[str] = []
+    for role in priority:
+        slot_roles.extend([role] * counts[role])
+    return role_names, slot_roles
+
+
+def _estimate_motion_score(
+    segment_features: torch.Tensor,
+    motion_window: int,
+) -> torch.Tensor:
+    num_frames, num_visual_tokens, _ = segment_features.shape
+    if num_frames <= 1:
+        return segment_features.new_zeros((num_frames * num_visual_tokens,))
+
+    normed = F.normalize(segment_features.float(), p=2, dim=-1, eps=1e-6)
+    motion = torch.zeros((num_frames, num_visual_tokens), dtype=torch.float32, device=segment_features.device)
+    counts = torch.zeros_like(motion)
+    max_window = max(1, min(int(motion_window), num_frames - 1))
+
+    for delta in range(1, max_window + 1):
+        sim = torch.sum(normed[delta:] * normed[:-delta], dim=-1)
+        change = ((1.0 - sim).clamp(min=0.0, max=2.0) * 0.5).float()
+        motion[delta:] += change
+        counts[delta:] += 1.0
+        motion[:-delta] += change
+        counts[:-delta] += 1.0
+
+    motion = motion / counts.clamp_min(1.0)
+    return motion.reshape(-1)
+
+
+def _build_slot_role_scores(
+    segment_features: torch.Tensor,
+    flat_features: torch.Tensor,
+    flat_attention: torch.Tensor,
+    fused_scores: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+) -> Dict[str, torch.Tensor]:
+    num_frames, num_visual_tokens, _ = segment_features.shape
+    normed_segment = F.normalize(segment_features.float(), p=2, dim=-1, eps=1e-6)
+    normed_flat = normed_segment.reshape(num_frames * num_visual_tokens, -1)
+
+    frame_centers = F.normalize(normed_segment.mean(dim=1), p=2, dim=-1, eps=1e-6)
+    frame_ids = torch.arange(num_frames, device=flat_features.device).repeat_interleave(num_visual_tokens)
+    frame_center_per_token = frame_centers[frame_ids]
+    scene_center = F.normalize(normed_flat.mean(dim=0), p=2, dim=-1, eps=1e-6)
+
+    scene_sim = torch.sum(normed_flat * scene_center.unsqueeze(0), dim=-1)
+    frame_sim = torch.sum(normed_flat * frame_center_per_token, dim=-1)
+    dispersion = ((1.0 - frame_sim).clamp(min=0.0, max=2.0) * 0.5).float()
+    motion = _estimate_motion_score(
+        segment_features=segment_features,
+        motion_window=int(getattr(flashvid_config, "slot_motion_window", 1)),
+    )
+
+    visual = _normalize_scores(flat_attention.float())
+    scene_core = _normalize_scores(scene_sim)
+    background_core = _normalize_scores(frame_sim)
+    motion_core = _normalize_scores(motion)
+    interaction_core = _normalize_scores(0.7 * dispersion + 0.3 * motion_core)
+    detail_core = _normalize_scores(dispersion)
+
+    # Base role-specific scores (non-learning deterministic composition).
+    role_scores: Dict[str, torch.Tensor] = {
+        "scene": _normalize_scores(0.70 * scene_core + 0.30 * visual),
+        "motion": _normalize_scores(0.65 * motion_core + 0.35 * visual),
+        "interaction": _normalize_scores(0.50 * interaction_core + 0.30 * motion_core + 0.20 * visual),
+        "background": _normalize_scores(0.70 * background_core + 0.30 * (1.0 - motion_core)),
+        "detail": _normalize_scores(0.60 * detail_core + 0.40 * visual),
+    }
+
+    # Inject question-aware signal as a secondary term (never dominant).
+    for role, score in role_scores.items():
+        role_scores[role] = _normalize_scores(0.85 * score + 0.15 * fused_scores)
+    return role_scores
+
+
+def _select_slot_anchor_indices(
+    flat_features: torch.Tensor,
+    slot_roles: List[str],
+    role_scores: Dict[str, torch.Tensor],
+    fused_scores: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+) -> torch.Tensor:
+    num_tokens = flat_features.shape[0]
+    if num_tokens == 0 or not slot_roles:
+        return torch.empty((0,), dtype=torch.long, device=flat_features.device)
+
+    normed_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
+    used = torch.zeros(num_tokens, dtype=torch.bool, device=flat_features.device)
+    selected: List[int] = []
+    coverage_gain = min(0.45, 0.08 * max(1, int(getattr(flashvid_config, "graph_topk", 4))))
+
+    for role in slot_roles:
+        score = role_scores.get(role, fused_scores).clone()
+        score = score + 0.20 * fused_scores
+        if selected:
+            selected_tensor = torch.tensor(selected, dtype=torch.long, device=flat_features.device)
+            min_dist = (
+                1.0 - torch.matmul(normed_features, normed_features[selected_tensor].transpose(0, 1))
+            ).clamp(min=0.0).min(dim=1).values
+            score = score + coverage_gain * _normalize_scores(min_dist)
+        score = score.masked_fill(used, -1e9)
+        if torch.all(score <= -1e8):
+            # Fallback: allow reused anchors only when no available candidates remain.
+            score = role_scores.get(role, fused_scores) + 0.20 * fused_scores
+        anchor_idx = int(torch.argmax(score).item())
+        selected.append(anchor_idx)
+        used[anchor_idx] = True
+    return torch.tensor(selected, dtype=torch.long, device=flat_features.device)
+
+
+def _assign_tokens_to_slots(
+    flat_features: torch.Tensor,
+    slot_anchor_indices: torch.Tensor,
+    slot_roles: List[str],
+    role_scores: Dict[str, torch.Tensor],
+    fused_scores: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    flashvid_config: FlashVidConfig,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    num_tokens = flat_features.shape[0]
+    num_slots = int(slot_anchor_indices.numel())
+    if num_slots == 0:
+        return (
+            torch.empty((0,), dtype=torch.long, device=flat_features.device),
+            flat_features.new_zeros((0,)),
+        )
+
+    token_frame_ids = torch.arange(num_frames, device=flat_features.device).repeat_interleave(num_visual_tokens)
+    token_local_ids = torch.arange(num_visual_tokens, device=flat_features.device).repeat(num_frames)
+    _, grid_w = _resolve_grid_hw(num_visual_tokens, flashvid_config)
+    token_y = token_local_ids // max(1, grid_w)
+    token_x = token_local_ids % max(1, grid_w)
+
+    slot_frame_ids = token_frame_ids[slot_anchor_indices]
+    slot_y = token_y[slot_anchor_indices]
+    slot_x = token_x[slot_anchor_indices]
+
+    score_matrix = torch.stack([role_scores.get(role, fused_scores) for role in slot_roles], dim=1)
+    score_matrix = score_matrix + 0.15 * fused_scores.unsqueeze(1)
+
+    overlap_radius = max(0, int(getattr(flashvid_config, "slot_overlap_radius", 1)))
+    if overlap_radius > 0:
+        dt = torch.abs(token_frame_ids.unsqueeze(1) - slot_frame_ids.unsqueeze(0))
+        dy = torch.abs(token_y.unsqueeze(1) - slot_y.unsqueeze(0))
+        dx = torch.abs(token_x.unsqueeze(1) - slot_x.unsqueeze(0))
+        temporal_bonus = (dt <= overlap_radius).float() * 0.12
+        spatial_bonus = ((dy <= overlap_radius) & (dx <= overlap_radius)).float() * 0.10
+        drift_penalty = (dt.float() / max(1, num_frames - 1)) * 0.02
+        score_matrix = score_matrix + temporal_bonus + spatial_bonus - drift_penalty
+
+    k = 2 if num_slots > 1 else 1
+    top_vals, top_indices = torch.topk(score_matrix, k=k, dim=1)
+    assigned_slots = top_indices[:, 0]
+
+    if num_slots > 1:
+        tie_eps = max(0.0, float(getattr(flashvid_config, "slot_tiebreak_eps", 1e-4)))
+        tie_mask = (top_vals[:, 0] - top_vals[:, 1]).abs() <= tie_eps
+        if tie_mask.any():
+            tied_rows = torch.where(tie_mask)[0]
+            normed_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
+            anchor_features = normed_features[slot_anchor_indices]
+            cand0 = top_indices[tied_rows, 0]
+            cand1 = top_indices[tied_rows, 1]
+            sim0 = torch.sum(normed_features[tied_rows] * anchor_features[cand0], dim=-1)
+            sim1 = torch.sum(normed_features[tied_rows] * anchor_features[cand1], dim=-1)
+            assigned_slots[tied_rows] = torch.where(sim1 > sim0, cand1, cand0)
+
+    selected_scores = score_matrix.gather(1, assigned_slots.unsqueeze(-1)).squeeze(-1)
+    token_weights = (0.40 + 0.60 * _normalize_scores(selected_scores)).to(flat_features.dtype)
+    return assigned_slots, token_weights
+
+
+def _build_role_memory_tokens(
+    flat_features: torch.Tensor,
+    dropped_indices: torch.Tensor,
+    residual_vectors: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    memory_budget: int,
+    token_role_ids: torch.Tensor,
+    num_roles: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    feat_dim = flat_features.shape[-1]
+    if memory_budget <= 0 or dropped_indices.numel() == 0:
+        return (
+            flat_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=flat_features.device),
+        )
+
+    priorities = residual_vectors.float().norm(p=2, dim=-1)
+    if question_scores is not None:
+        priorities = priorities * (1.0 + question_scores[dropped_indices].float())
+    role_ids = token_role_ids[dropped_indices]
+
+    role_priority_sum = torch.zeros((num_roles,), dtype=torch.float32, device=flat_features.device)
+    role_priority_sum.scatter_add_(0, role_ids, priorities)
+    active_roles = torch.where(role_priority_sum > 0)[0]
+    if active_roles.numel() == 0:
+        return (
+            flat_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=flat_features.device),
+        )
+
+    alloc = torch.zeros((num_roles,), dtype=torch.long, device=flat_features.device)
+    remaining = int(memory_budget)
+
+    # Ensure role diversity first.
+    top_roles = active_roles[torch.argsort(role_priority_sum[active_roles], descending=True)]
+    for rid in top_roles:
+        if remaining <= 0:
+            break
+        alloc[rid] += 1
+        remaining -= 1
+
+    # Allocate extra memory slots by residual priority.
+    while remaining > 0:
+        gains = role_priority_sum / (alloc.float() + 1.0)
+        rid = int(torch.argmax(gains).item())
+        alloc[rid] += 1
+        remaining -= 1
+
+    memory_tokens = []
+    memory_indices = []
+    for rid in range(num_roles):
+        role_mem = int(alloc[rid].item())
+        if role_mem <= 0:
+            continue
+        role_mask = role_ids == rid
+        role_indices = dropped_indices[role_mask]
+        if role_indices.numel() == 0:
+            continue
+        role_priorities = priorities[role_mask]
+        order = torch.argsort(role_priorities, descending=True)
+        role_indices = role_indices[order]
+        role_priorities = role_priorities[order]
+        role_features = flat_features[role_indices]
+
+        num_chunks = min(role_mem, role_indices.numel())
+        chunk_indices = torch.chunk(torch.arange(role_indices.numel(), device=flat_features.device), num_chunks)
+        for split in chunk_indices:
+            if split.numel() == 0:
+                continue
+            weights = role_priorities[split].to(flat_features.dtype).clamp_min(1e-6)
+            feats = role_features[split]
+            merged = torch.sum(feats * weights.unsqueeze(-1), dim=0) / weights.sum()
+            memory_tokens.append(merged)
+            memory_indices.append(role_indices[split[0]])
+
+    if not memory_tokens:
+        return (
+            flat_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=flat_features.device),
+        )
+    return torch.stack(memory_tokens, dim=0), torch.stack(memory_indices, dim=0)
+
+
+def _segment_slot_memory_compression(
     segment_features: torch.Tensor,
     segment_global_indices: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -220,7 +539,7 @@ def _segment_graph_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Graph-based many-to-many spatiotemporal compression with residual memory tokens."""
+    """Slot-memory token->slot aggregation with role-aware residual memory tokens."""
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     num_tokens = num_frames * num_visual_tokens
     device = segment_features.device
@@ -242,125 +561,112 @@ def _segment_graph_compression(
         target_budget=target_budget,
         flashvid_config=flashvid_config,
     )
-    keep_budget = max(1, target_budget - memory_budget)
+    slot_budget = max(1, target_budget - memory_budget)
+    role_names, slot_roles = _allocate_slot_roles(
+        slot_budget=slot_budget,
+        flashvid_config=flashvid_config,
+    )
+    if not slot_roles:
+        slot_roles = [role_names[0]]
 
-    visual_scores = _normalize_scores(flat_attention)
     fused_scores, question_scores = _question_aware_scores(
         flat_features=flat_features,
         flat_attention=flat_attention,
         question_features=question_features,
         flashvid_config=flashvid_config,
     )
-
-    base_budget = max(1, min(keep_budget, math.ceil(keep_budget * float(flashvid_config.alpha))))
-    base_indices = torch.topk(visual_scores, k=base_budget, dim=0).indices
-    if base_indices.numel() >= keep_budget:
-        survivor_indices = base_indices[:keep_budget]
-    else:
-        remaining_mask = torch.ones(num_tokens, dtype=torch.bool, device=device)
-        remaining_mask[base_indices] = False
-        candidate_scores = fused_scores.masked_fill(~remaining_mask, -1.0)
-        extra_k = keep_budget - base_indices.numel()
-        extra_indices = torch.topk(candidate_scores, k=extra_k, dim=0).indices
-        survivor_indices = torch.cat([base_indices, extra_indices], dim=0)
-    survivor_indices = survivor_indices.unique(sorted=True)
-    if survivor_indices.numel() < keep_budget:
-        refill_scores = fused_scores.clone()
-        refill_scores[survivor_indices] = -1.0
-        refill = torch.topk(refill_scores, k=keep_budget - survivor_indices.numel(), dim=0).indices
-        survivor_indices = torch.cat([survivor_indices, refill], dim=0).unique(sorted=True)
-    elif survivor_indices.numel() > keep_budget:
-        ranked_local = torch.topk(fused_scores[survivor_indices], k=keep_budget, dim=0).indices
-        survivor_indices = survivor_indices[ranked_local].sort().values
-
-    keep_mask = torch.zeros(num_tokens, dtype=torch.bool, device=device)
-    keep_mask[survivor_indices] = True
-
-    num_survivors = survivor_indices.numel()
-    survivor_features = flat_features[survivor_indices]
-    aggregated_sum = survivor_features.clone()
-    aggregated_weight = torch.ones((num_survivors, 1), dtype=flat_features.dtype, device=device)
-
-    flat_to_survivor = torch.full((num_tokens,), -1, dtype=torch.long, device=device)
-    flat_to_survivor[survivor_indices] = torch.arange(num_survivors, dtype=torch.long, device=device)
-
-    normed_flat = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
-    survivor_frame_ids = survivor_indices // num_visual_tokens
-
-    radius = max(0, int(getattr(flashvid_config, "graph_temporal_radius", 1)))
-    graph_topk = max(1, int(getattr(flashvid_config, "graph_topk", 4)))
-
-    assignment_records: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
-    for frame_idx in range(num_frames):
-        frame_start = frame_idx * num_visual_tokens
-        frame_end = frame_start + num_visual_tokens
-        frame_token_indices = torch.arange(frame_start, frame_end, device=device)
-        dropped_in_frame = frame_token_indices[~keep_mask[frame_start:frame_end]]
-        if dropped_in_frame.numel() == 0:
-            continue
-
-        candidate_mask = (survivor_frame_ids >= (frame_idx - radius)) & (survivor_frame_ids <= (frame_idx + radius))
-        candidate_survivor_indices = survivor_indices[candidate_mask]
-        if candidate_survivor_indices.numel() == 0:
-            candidate_survivor_indices = survivor_indices
-
-        token_sims = torch.matmul(
-            normed_flat[dropped_in_frame],
-            normed_flat[candidate_survivor_indices].transpose(0, 1),
-        )
-        k = min(graph_topk, candidate_survivor_indices.numel())
-        topk_sims, topk_local_indices = torch.topk(token_sims, k=k, dim=-1)
-        weights = torch.softmax(topk_sims, dim=-1).to(flat_features.dtype)
-
-        anchor_flat_indices = candidate_survivor_indices[topk_local_indices]
-        anchor_positions = flat_to_survivor[anchor_flat_indices]
-
-        expanded_tokens = flat_features[dropped_in_frame].unsqueeze(1).expand(-1, k, -1)
-        weighted_tokens = expanded_tokens * weights.unsqueeze(-1)
-        aggregated_sum.scatter_add_(
-            dim=0,
-            index=anchor_positions.reshape(-1, 1).expand(-1, feat_dim),
-            src=weighted_tokens.reshape(-1, feat_dim),
-        )
-        aggregated_weight.scatter_add_(
-            dim=0,
-            index=anchor_positions.reshape(-1, 1),
-            src=weights.reshape(-1, 1),
-        )
-        assignment_records.append((dropped_in_frame, anchor_positions, weights))
-
-    merged_survivor_tokens = aggregated_sum / aggregated_weight.clamp_min(1e-6)
-
-    dropped_indices_list = []
-    residual_vectors_list = []
-    for dropped_indices, anchor_positions, weights in assignment_records:
-        reconstructed = torch.sum(merged_survivor_tokens[anchor_positions] * weights.unsqueeze(-1), dim=1)
-        residual_vectors = flat_features[dropped_indices] - reconstructed
-        dropped_indices_list.append(dropped_indices)
-        residual_vectors_list.append(residual_vectors)
-
-    if dropped_indices_list:
-        dropped_indices = torch.cat(dropped_indices_list, dim=0)
-        residual_vectors = torch.cat(residual_vectors_list, dim=0)
-    else:
-        dropped_indices = torch.empty((0,), dtype=torch.long, device=device)
-        residual_vectors = flat_features.new_zeros((0, feat_dim))
-
-    memory_tokens, memory_token_indices = _build_residual_memory_tokens(
+    role_scores = _build_slot_role_scores(
+        segment_features=segment_features,
         flat_features=flat_features,
-        dropped_indices=dropped_indices,
-        residual_vectors=residual_vectors,
-        question_scores=question_scores,
-        memory_budget=memory_budget,
+        flat_attention=flat_attention,
+        fused_scores=fused_scores,
+        flashvid_config=flashvid_config,
+    )
+    slot_anchor_indices = _select_slot_anchor_indices(
+        flat_features=flat_features,
+        slot_roles=slot_roles,
+        role_scores=role_scores,
+        fused_scores=fused_scores,
+        flashvid_config=flashvid_config,
+    )
+    if slot_anchor_indices.numel() == 0:
+        top1 = torch.topk(fused_scores, k=1, dim=0).indices
+        slot_anchor_indices = top1.to(dtype=torch.long, device=device)
+        slot_roles = [slot_roles[0]]
+
+    assigned_slots, token_weights = _assign_tokens_to_slots(
+        flat_features=flat_features,
+        slot_anchor_indices=slot_anchor_indices,
+        slot_roles=slot_roles,
+        role_scores=role_scores,
+        fused_scores=fused_scores,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        flashvid_config=flashvid_config,
     )
 
-    all_tokens = [merged_survivor_tokens]
-    all_indices = [flat_global_indices[survivor_indices]]
+    num_slots = int(slot_anchor_indices.numel())
+    slot_sum = torch.zeros((num_slots, feat_dim), dtype=flat_features.dtype, device=device)
+    slot_weight = torch.zeros((num_slots, 1), dtype=flat_features.dtype, device=device)
+    slot_sum.scatter_add_(
+        dim=0,
+        index=assigned_slots.unsqueeze(-1).expand(-1, feat_dim),
+        src=flat_features * token_weights.unsqueeze(-1),
+    )
+    slot_weight.scatter_add_(
+        dim=0,
+        index=assigned_slots.unsqueeze(-1),
+        src=token_weights.unsqueeze(-1),
+    )
+    slot_tokens = slot_sum / slot_weight.clamp_min(1e-6)
+    slot_global_indices = flat_global_indices[slot_anchor_indices]
+
+    reconstructed = slot_tokens[assigned_slots]
+    residual_vectors = flat_features - reconstructed
+    anchor_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+    anchor_mask[slot_anchor_indices.unique()] = True
+    dropped_indices = torch.where(~anchor_mask)[0]
+
+    role_to_id = {role: idx for idx, role in enumerate(role_names)}
+    slot_role_ids = torch.tensor([role_to_id.get(role, 0) for role in slot_roles], dtype=torch.long, device=device)
+    token_role_ids = slot_role_ids[assigned_slots]
+
+    memory_tokens, memory_token_indices = _build_role_memory_tokens(
+        flat_features=flat_features,
+        dropped_indices=dropped_indices,
+        residual_vectors=residual_vectors[dropped_indices],
+        question_scores=question_scores,
+        memory_budget=memory_budget,
+        token_role_ids=token_role_ids,
+        num_roles=max(1, len(role_names)),
+    )
+
+    all_tokens = [slot_tokens]
+    all_indices = [slot_global_indices]
     if memory_tokens.shape[0] > 0:
         all_tokens.append(memory_tokens)
         all_indices.append(flat_global_indices[memory_token_indices])
 
     return torch.cat(all_tokens, dim=0), torch.cat(all_indices, dim=0)
+
+
+def _segment_graph_compression(
+    segment_features: torch.Tensor,
+    segment_global_indices: torch.Tensor,
+    cls_attention: torch.Tensor,
+    retention_ratio: float,
+    flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # Legacy entrypoint kept for compatibility; graph is now an alias of slot-memory.
+    return _segment_slot_memory_compression(
+        segment_features=segment_features,
+        segment_global_indices=segment_global_indices,
+        cls_attention=cls_attention,
+        retention_ratio=retention_ratio,
+        flashvid_config=flashvid_config,
+        question_features=question_features,
+    )
 
 
 def flashvid_compression(
@@ -371,6 +677,8 @@ def flashvid_compression(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
+    if compression_variant == "graph":
+        compression_variant = "slot"
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
         question_features=question_features,
@@ -408,8 +716,8 @@ def flashvid_compression(
         segment_features = video_features[offset : offset + seg_len]
         segment_cls_attention = cls_attention[offset : offset + seg_len]
         segment_global_indices = global_indices.view(num_frames, num_visual_tokens)[offset : offset + seg_len]
-        if compression_variant == "graph":
-            segment_features, segment_global_indices = _segment_graph_compression(
+        if compression_variant == "slot":
+            segment_features, segment_global_indices = _segment_slot_memory_compression(
                 segment_features=segment_features,
                 segment_global_indices=segment_global_indices,
                 cls_attention=segment_cls_attention,
@@ -778,6 +1086,43 @@ def spatiotemporal_compression(
         retained_token_indices.append(frame_retained_indices)
 
     return final_tokens, retained_token_indices
+
+
+def maybe_apply_decode_policy(
+    hidden_states: torch.Tensor,
+    causal_mask: Optional[torch.Tensor],
+    position_ids: Optional[torch.Tensor],
+    cache_position: Optional[torch.Tensor],
+    position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+    flashvid_config: FlashVidConfig,
+    layer_idx: int,
+    is_prefill: bool,
+):
+    """Decode-stage scaffold for Route3; default policy keeps behavior unchanged."""
+    if is_prefill:
+        return hidden_states, causal_mask, position_ids, cache_position, position_embeddings
+
+    policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
+    if policy in ("none", "off", "disabled"):
+        return hidden_states, causal_mask, position_ids, cache_position, position_embeddings
+
+    # Reserved policy name for future implementation; currently no-op with strict validation.
+    if policy == "static_kv_budget":
+        budget = float(getattr(flashvid_config, "decode_kv_budget_ratio", 1.0))
+        update_interval = int(getattr(flashvid_config, "decode_update_interval", 4))
+        start_layer = int(getattr(flashvid_config, "decode_start_layer", 0))
+        if not (0.0 < budget <= 1.0):
+            raise ValueError(f"decode_kv_budget_ratio must be in (0, 1], got {budget}")
+        if update_interval <= 0:
+            raise ValueError(f"decode_update_interval must be > 0, got {update_interval}")
+        if start_layer < 0:
+            raise ValueError(f"decode_start_layer must be >= 0, got {start_layer}")
+        return hidden_states, causal_mask, position_ids, cache_position, position_embeddings
+
+    raise ValueError(
+        f"Unsupported decode_policy={policy!r}. "
+        "Supported policies: none, static_kv_budget (scaffold/no-op)."
+    )
 
 
 def fastv_prune(

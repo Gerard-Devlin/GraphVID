@@ -43,7 +43,8 @@ class FlashVidConfig:
 
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
-    # "graph": graph-based spatiotemporal merging path.
+    # "slot": slot-memory token->slot aggregation path.
+    # "graph": legacy alias mapped to "slot" for compatibility.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
@@ -53,6 +54,14 @@ class FlashVidConfig:
     # Graph-based spatiotemporal merging.
     graph_topk: int = field(default=4)
     graph_temporal_radius: int = field(default=1)
+
+    # Slot-memory token aggregation.
+    slot_base_roles: int = field(default=5)  # scene, motion, interaction, background, detail
+    slot_max_per_segment: int = field(default=24)
+    slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
+    slot_overlap_radius: int = field(default=1)
+    slot_tiebreak_eps: float = field(default=1e-4)
+    slot_motion_window: int = field(default=1)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)
@@ -65,3 +74,13 @@ class FlashVidConfig:
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
     last_adaptive_retention_ratio: Optional[float] = field(default=None)
+
+    # Spatial grid metadata (set by model hooks when available).
+    H: Optional[int] = field(default=None)
+    W: Optional[int] = field(default=None)
+
+    # Decode-stage policy scaffold (Route3 hook, default no-op).
+    decode_policy: str = field(default="none")
+    decode_kv_budget_ratio: float = field(default=1.0)
+    decode_update_interval: int = field(default=4)
+    decode_start_layer: int = field(default=0)

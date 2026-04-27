@@ -67,7 +67,17 @@ class BenchmarkArgs:
     adaptive_budget_high: float = field(default=0.20)
     graph_topk: int = field(default=4)
     graph_temporal_radius: int = field(default=1)
+    slot_base_roles: int = field(default=5)
+    slot_max_per_segment: int = field(default=24)
+    slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
+    slot_overlap_radius: int = field(default=1)
+    slot_tiebreak_eps: float = field(default=1e-4)
+    slot_motion_window: int = field(default=1)
     memory_token_ratio: float = field(default=0.10)
+    decode_policy: str = field(default="none")
+    decode_kv_budget_ratio: float = field(default=1.0)
+    decode_update_interval: int = field(default=4)
+    decode_start_layer: int = field(default=0)
 
     # Outputs
     baseline_output: str = field(default="logs/efficiency/baseline_all_metrics.jsonl")
@@ -655,6 +665,16 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         compression_variant="flashvid",
         question_aware_reweighting=False,
         adaptive_token_budget=False,
+        slot_base_roles=args.slot_base_roles,
+        slot_max_per_segment=args.slot_max_per_segment,
+        slot_role_allocation=args.slot_role_allocation,
+        slot_overlap_radius=args.slot_overlap_radius,
+        slot_tiebreak_eps=args.slot_tiebreak_eps,
+        slot_motion_window=args.slot_motion_window,
+        decode_policy=args.decode_policy,
+        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
+        decode_update_interval=args.decode_update_interval,
+        decode_start_layer=args.decode_start_layer,
     )
 
 
@@ -683,7 +703,17 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         adaptive_budget_high=args.adaptive_budget_high,
         graph_topk=args.graph_topk,
         graph_temporal_radius=args.graph_temporal_radius,
+        slot_base_roles=args.slot_base_roles,
+        slot_max_per_segment=args.slot_max_per_segment,
+        slot_role_allocation=args.slot_role_allocation,
+        slot_overlap_radius=args.slot_overlap_radius,
+        slot_tiebreak_eps=args.slot_tiebreak_eps,
+        slot_motion_window=args.slot_motion_window,
         memory_token_ratio=args.memory_token_ratio,
+        decode_policy=args.decode_policy,
+        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
+        decode_update_interval=args.decode_update_interval,
+        decode_start_layer=args.decode_start_layer,
     )
 
 

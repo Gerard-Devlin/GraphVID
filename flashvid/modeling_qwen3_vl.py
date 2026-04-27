@@ -27,7 +27,12 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 
 from .configuration_flashvid import FlashVidConfig
-from .utils import extract_question_features, fastv_prune, flashvid_compression
+from .utils import (
+    extract_question_features,
+    fastv_prune,
+    flashvid_compression,
+    maybe_apply_decode_policy,
+)
 
 
 def Qwen3VLVisionAttention_forward(
@@ -304,8 +309,9 @@ def Qwen3VLModel_forward(
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
         # Store feature map resolution.
-        flashvid_config.H = video_grid_thw[0][1].item() // 2
-        flashvid_config.W = video_grid_thw[0][2].item() // 2
+        spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
+        flashvid_config.H = int(video_grid_thw[0][1].item() // spatial_merge)
+        flashvid_config.W = int(video_grid_thw[0][2].item() // spatial_merge)
         video_features = video_embeds.view(num_frames, num_visual_tokens, -1)
         question_features = extract_question_features(
             input_ids=input_ids,
@@ -473,6 +479,23 @@ def Qwen3VLTextModel_forward(
                     flashvid_config=flashvid_config,
                     visual_pos_masks=visual_pos_masks,
                 )
+
+        (
+            hidden_states,
+            attention_mask,
+            text_position_ids,
+            cache_position,
+            position_embeddings,
+        ) = maybe_apply_decode_policy(
+            hidden_states=hidden_states,
+            causal_mask=attention_mask,
+            position_ids=text_position_ids,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            flashvid_config=flashvid_config,
+            layer_idx=layer_idx,
+            is_prefill=is_prefill,
+        )
 
         layer_outputs = decoder_layer(
             hidden_states,
