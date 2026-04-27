@@ -100,7 +100,7 @@ def flashvid(
     slot_max_per_segment: int = 24,
     slot_role_allocation: str = "motion,interaction,detail,scene,background",
     slot_overlap_radius: int = 1,
-    slot_tiebreak_eps: float = 1e-4,
+    slot_tiebreak_eps: float = 2e-2,
     slot_motion_window: int = 1,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,

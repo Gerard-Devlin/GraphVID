@@ -263,15 +263,30 @@ def _allocate_slot_roles(
     for role in priority:
         if sum(counts.values()) >= slot_budget:
             break
-        if counts[role] == 0:
-            counts[role] = 1
+        counts[role] = 1
 
-    # Allocate remaining slots in priority order (5 roles + expandable sub-slots).
-    while sum(counts.values()) < slot_budget:
-        for role in priority:
-            if sum(counts.values()) >= slot_budget:
+    remaining = slot_budget - sum(counts.values())
+    if remaining > 0:
+        # Precision-first weighted allocation:
+        # motion > interaction > detail > scene > background (and then extras).
+        # We avoid round-robin here because it over-allocates low-priority roles.
+        weight_map: Dict[str, float] = {}
+        rank_count = len(priority)
+        for rank, role in enumerate(priority):
+            weight_map[role] = float(rank_count - rank)
+
+        for _ in range(remaining):
+            best_role = None
+            best_gain = None
+            for role in priority:
+                # Diminishing return: keep growing top roles, but prevent single-role collapse.
+                gain = weight_map[role] / (1.0 + float(counts[role]))
+                if best_gain is None or gain > best_gain:
+                    best_gain = gain
+                    best_role = role
+            if best_role is None:
                 break
-            counts[role] += 1
+            counts[best_role] += 1
 
     slot_roles: List[str] = []
     for role in priority:
@@ -365,16 +380,13 @@ def _select_slot_anchor_indices(
     used = torch.zeros(num_tokens, dtype=torch.bool, device=flat_features.device)
     selected: List[int] = []
     coverage_gain = min(0.45, 0.08 * max(1, int(getattr(flashvid_config, "graph_topk", 4))))
+    min_dist_to_selected: Optional[torch.Tensor] = None
 
     for role in slot_roles:
         score = role_scores.get(role, fused_scores).clone()
         score = score + 0.20 * fused_scores
-        if selected:
-            selected_tensor = torch.tensor(selected, dtype=torch.long, device=flat_features.device)
-            min_dist = (
-                1.0 - torch.matmul(normed_features, normed_features[selected_tensor].transpose(0, 1))
-            ).clamp(min=0.0).min(dim=1).values
-            score = score + coverage_gain * _normalize_scores(min_dist)
+        if min_dist_to_selected is not None:
+            score = score + coverage_gain * _normalize_scores(min_dist_to_selected)
         score = score.masked_fill(used, -1e9)
         if torch.all(score <= -1e8):
             # Fallback: allow reused anchors only when no available candidates remain.
@@ -382,6 +394,13 @@ def _select_slot_anchor_indices(
         anchor_idx = int(torch.argmax(score).item())
         selected.append(anchor_idx)
         used[anchor_idx] = True
+
+        anchor_feature = normed_features[anchor_idx]
+        dist_new = (1.0 - torch.matmul(normed_features, anchor_feature)).clamp(min=0.0)
+        if min_dist_to_selected is None:
+            min_dist_to_selected = dist_new
+        else:
+            min_dist_to_selected = torch.minimum(min_dist_to_selected, dist_new)
     return torch.tensor(selected, dtype=torch.long, device=flat_features.device)
 
 
@@ -417,8 +436,20 @@ def _assign_tokens_to_slots(
     score_matrix = score_matrix + 0.15 * fused_scores.unsqueeze(1)
 
     overlap_radius = max(0, int(getattr(flashvid_config, "slot_overlap_radius", 1)))
+    temporal_radius = max(
+        1,
+        overlap_radius,
+        int(getattr(flashvid_config, "graph_temporal_radius", 1)),
+    )
+    dt = torch.abs(token_frame_ids.unsqueeze(1) - slot_frame_ids.unsqueeze(0))
+
+    # Hard temporal continuity mask: reduce position-token mismatch and improve answer stability.
+    candidate_mask = dt <= temporal_radius
+    has_candidate = candidate_mask.any(dim=1, keepdim=True)
+    candidate_mask = torch.where(has_candidate, candidate_mask, torch.ones_like(candidate_mask))
+    score_matrix = score_matrix.masked_fill(~candidate_mask, -1e9)
+
     if overlap_radius > 0:
-        dt = torch.abs(token_frame_ids.unsqueeze(1) - slot_frame_ids.unsqueeze(0))
         dy = torch.abs(token_y.unsqueeze(1) - slot_y.unsqueeze(0))
         dx = torch.abs(token_x.unsqueeze(1) - slot_x.unsqueeze(0))
         temporal_bonus = (dt <= overlap_radius).float() * 0.12
@@ -426,22 +457,27 @@ def _assign_tokens_to_slots(
         drift_penalty = (dt.float() / max(1, num_frames - 1)) * 0.02
         score_matrix = score_matrix + temporal_bonus + spatial_bonus - drift_penalty
 
-    k = 2 if num_slots > 1 else 1
+    k = min(4, num_slots)
     top_vals, top_indices = torch.topk(score_matrix, k=k, dim=1)
     assigned_slots = top_indices[:, 0]
 
     if num_slots > 1:
         tie_eps = max(0.0, float(getattr(flashvid_config, "slot_tiebreak_eps", 1e-4)))
-        tie_mask = (top_vals[:, 0] - top_vals[:, 1]).abs() <= tie_eps
+        tie_mask = (top_vals[:, 0] - top_vals[:, 1]).abs() <= tie_eps if k > 1 else torch.zeros_like(top_vals[:, 0], dtype=torch.bool)
         if tie_mask.any():
             tied_rows = torch.where(tie_mask)[0]
             normed_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
             anchor_features = normed_features[slot_anchor_indices]
-            cand0 = top_indices[tied_rows, 0]
-            cand1 = top_indices[tied_rows, 1]
-            sim0 = torch.sum(normed_features[tied_rows] * anchor_features[cand0], dim=-1)
-            sim1 = torch.sum(normed_features[tied_rows] * anchor_features[cand1], dim=-1)
-            assigned_slots[tied_rows] = torch.where(sim1 > sim0, cand1, cand0)
+            row_top_vals = top_vals[tied_rows]
+            row_top_idx = top_indices[tied_rows]
+            row_best = row_top_vals[:, :1]
+            near_mask = (row_best - row_top_vals) <= tie_eps
+            token_feat = normed_features[tied_rows].unsqueeze(1)  # (m,1,d)
+            cand_feat = anchor_features[row_top_idx]  # (m,k,d)
+            sims = torch.sum(token_feat * cand_feat, dim=-1)  # (m,k)
+            sims = sims.masked_fill(~near_mask, -1e9)
+            best_local = torch.argmax(sims, dim=-1)
+            assigned_slots[tied_rows] = row_top_idx[torch.arange(best_local.shape[0], device=flat_features.device), best_local]
 
     selected_scores = score_matrix.gather(1, assigned_slots.unsqueeze(-1)).squeeze(-1)
     token_weights = (0.40 + 0.60 * _normalize_scores(selected_scores)).to(flat_features.dtype)

@@ -60,7 +60,7 @@ class FlashVidConfig:
     slot_max_per_segment: int = field(default=24)
     slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
     slot_overlap_radius: int = field(default=1)
-    slot_tiebreak_eps: float = field(default=1e-4)
+    slot_tiebreak_eps: float = field(default=2e-2)
     slot_motion_window: int = field(default=1)
 
     # Residual memory tokens.
