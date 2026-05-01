@@ -267,20 +267,26 @@ def _talon_rank_split(per_frame_budget: int, num_visual_tokens: int, flashvid_co
 def _talon_transport_align(
     segment_features: torch.Tensor,
     flashvid_config: FlashVidConfig,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    need_slot_to_source: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     if num_frames <= 1:
         identity = torch.arange(num_visual_tokens, device=segment_features.device, dtype=torch.long)
         source_to_slot = identity.unsqueeze(0).repeat(num_frames, 1)
-        slot_to_source = identity.unsqueeze(0).repeat(num_frames, 1)
+        slot_to_source = identity.unsqueeze(0).repeat(num_frames, 1) if need_slot_to_source else None
         return segment_features, source_to_slot, slot_to_source
 
     aligned = segment_features.clone()
     source_to_slot_map = torch.zeros((num_frames, num_visual_tokens), dtype=torch.long, device=segment_features.device)
-    slot_to_source_map = torch.zeros((num_frames, num_visual_tokens), dtype=torch.long, device=segment_features.device)
+    slot_to_source_map = (
+        torch.zeros((num_frames, num_visual_tokens), dtype=torch.long, device=segment_features.device)
+        if need_slot_to_source
+        else None
+    )
     identity = torch.arange(num_visual_tokens, device=segment_features.device, dtype=torch.long)
     source_to_slot_map[0] = identity
-    slot_to_source_map[0] = identity
+    if slot_to_source_map is not None:
+        slot_to_source_map[0] = identity
     grid_h, grid_w = _resolve_grid_hw(num_visual_tokens, flashvid_config)
     local_radius = max(0, int(getattr(flashvid_config, "talon_transport_radius", 1)))
 
@@ -311,18 +317,19 @@ def _talon_transport_align(
         # Source token index -> aligned slot index.
         source_to_slot_map[t] = best_prev
 
-        # Aligned slot index -> representative source token index.
-        rep_source = torch.empty((num_visual_tokens,), dtype=torch.long, device=segment_features.device)
-        for slot_idx in range(num_visual_tokens):
-            assigned = torch.where(best_prev == slot_idx)[0]
-            if assigned.numel() == 0:
-                rep_source[slot_idx] = slot_idx
-            elif assigned.numel() == 1:
-                rep_source[slot_idx] = assigned[0]
-            else:
-                local_scores = sim[assigned, slot_idx]
-                rep_source[slot_idx] = assigned[torch.argmax(local_scores)]
-        slot_to_source_map[t] = rep_source
+        if slot_to_source_map is not None:
+            # Aligned slot index -> representative source token index.
+            rep_source = torch.empty((num_visual_tokens,), dtype=torch.long, device=segment_features.device)
+            for slot_idx in range(num_visual_tokens):
+                assigned = torch.where(best_prev == slot_idx)[0]
+                if assigned.numel() == 0:
+                    rep_source[slot_idx] = slot_idx
+                elif assigned.numel() == 1:
+                    rep_source[slot_idx] = assigned[0]
+                else:
+                    local_scores = sim[assigned, slot_idx]
+                    rep_source[slot_idx] = assigned[torch.argmax(local_scores)]
+            slot_to_source_map[t] = rep_source
 
         aligned_t = torch.zeros((num_visual_tokens, feat_dim), dtype=cur.dtype, device=cur.device)
         aligned_t.scatter_add_(0, best_prev.unsqueeze(-1).expand(-1, feat_dim), cur)
@@ -407,12 +414,15 @@ def _segment_talon_compression(
     rank_sparse = [_talon_rank_split(b, num_visual_tokens, flashvid_config) for b in frame_budgets]
     max_rank = max((r for r, _ in rank_sparse), default=0)
 
-    aligned_features, source_to_slot_map, slot_to_source_map = _talon_transport_align(segment_features, flashvid_config)
-    basis_max = _talon_compute_lowrank_basis(aligned_features, max_rank)
-
     fused_grid = fused_scores.view(num_frames, num_visual_tokens)
     output_mode = str(getattr(flashvid_config, "talon_output_mode", "manifold") or "manifold").strip().lower()
     coefficient_output = output_mode in ("coefficient", "coeff", "strict")
+    aligned_features, source_to_slot_map, slot_to_source_map = _talon_transport_align(
+        segment_features,
+        flashvid_config,
+        need_slot_to_source=coefficient_output,
+    )
+    basis_max = _talon_compute_lowrank_basis(aligned_features, max_rank)
     reconstruction_blend = float(getattr(flashvid_config, "talon_reconstruction_blend", 0.25))
     reconstruction_blend = min(max(reconstruction_blend, 0.0), 1.0)
     anchor_score_weight = float(getattr(flashvid_config, "talon_anchor_score_weight", 0.35))
@@ -429,7 +439,7 @@ def _segment_talon_compression(
         rank_t, sparse_t = rank_sparse[t]
         y_t = aligned_features[t]
         source_to_slot_t = source_to_slot_map[t]
-        slot_to_source_t = slot_to_source_map[t]
+        slot_to_source_t = slot_to_source_map[t] if slot_to_source_map is not None else None
         frame_selected = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=device)
         frame_selected_slot = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=device)
 
@@ -440,29 +450,34 @@ def _segment_talon_compression(
             # TALON's low-rank coefficients are not tokens the frozen VLM was trained to read.
             # Use the low-rank basis to pick representative background anchors, then keep their
             # embeddings close to the original visual-token manifold.
-            # Frame-aware anchor quality: prefer positions that carry stronger
-            # reconstructed background energy in this frame.
-            background_energy = _normalize_scores(torch.norm(b_t.float(), p=2, dim=-1))
-            anchor_score = (1.0 - anchor_score_weight) * background_energy + anchor_score_weight * fused_grid[t]
-            anchor_idx = torch.topk(anchor_score, k=rank_t, dim=0).indices
+            b_src_t = b_t[source_to_slot_t]
+            # Frame-aware anchor quality in source-token order.
+            background_energy_src = _normalize_scores(torch.norm(b_src_t.float(), p=2, dim=-1))
+            anchor_score_src = (1.0 - anchor_score_weight) * background_energy_src + anchor_score_weight * fused_grid[t]
+
             if coefficient_output:
+                anchor_slot_idx = torch.topk(anchor_score_src[source_to_slot_t], k=rank_t, dim=0).indices
                 background_tokens = c_t
-                anchor_source_idx = slot_to_source_t[anchor_idx]
+                if slot_to_source_t is None:
+                    anchor_source_idx = anchor_slot_idx
+                else:
+                    anchor_source_idx = slot_to_source_t[anchor_slot_idx]
+                frame_selected_slot[anchor_slot_idx] = True
             else:
-                # In manifold mode, emit original visual tokens (selection from TALON path,
-                # representation from pretrained-token manifold) to reduce distribution shift.
-                anchor_source_idx = slot_to_source_t[anchor_idx]
-                background_tokens = segment_features[t, anchor_source_idx]
+                # In manifold mode, emit original visual tokens from source-space anchors.
+                anchor_source_idx = torch.topk(anchor_score_src, k=rank_t, dim=0).indices
+                anchor_raw = segment_features[t, anchor_source_idx]
+                anchor_recon = b_src_t[anchor_source_idx]
+                background_tokens = (1.0 - reconstruction_blend) * anchor_raw + reconstruction_blend * anchor_recon
             core_tokens.append(background_tokens)
             core_indices.append(segment_global_indices[t, anchor_source_idx])
             frame_selected[anchor_source_idx] = True
-            frame_selected_slot[anchor_idx] = True
             selected_mask[t * num_visual_tokens + anchor_source_idx] = True
         else:
             b_t = torch.zeros_like(y_t)
+            b_src_t = b_t[source_to_slot_t]
 
         # Map aligned reconstruction back to source-token order.
-        b_src_t = b_t[source_to_slot_t]
         reconstructed_source[t] = b_src_t
 
         r_t = y_t - b_t
@@ -482,7 +497,10 @@ def _segment_talon_compression(
             top_s = torch.topk(innovation_score, k=min(sparse_t, num_visual_tokens), dim=0).indices
             if coefficient_output:
                 innovation_tokens = r_t[top_s]
-                innovation_source_idx = slot_to_source_t[top_s]
+                if slot_to_source_t is None:
+                    innovation_source_idx = top_s
+                else:
+                    innovation_source_idx = slot_to_source_t[top_s]
             else:
                 innovation_tokens = segment_features[t, top_s]
                 innovation_source_idx = top_s
