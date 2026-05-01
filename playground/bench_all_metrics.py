@@ -130,6 +130,28 @@ def _infer_backend(model_backend: str, model_path: str) -> str:
     return "llava"
 
 
+def _resolve_attn_implementation(attn_implementation: str) -> str:
+    if attn_implementation == "flash_attention_2" and not torch.cuda.is_available():
+        print("[warn] CUDA is not available; fallback attn_implementation: flash_attention_2 -> eager")
+        return "eager"
+    return attn_implementation
+
+
+def _assert_flash_attn_placement(model: Any, attn_implementation: str):
+    if attn_implementation != "flash_attention_2":
+        return
+    device_map = getattr(model, "hf_device_map", None)
+    if not isinstance(device_map, dict):
+        return
+    has_cpu_or_disk = any(str(dev) in ("cpu", "disk") for dev in device_map.values())
+    if has_cpu_or_disk:
+        raise RuntimeError(
+            "flash_attention_2 requires all attention compute on CUDA, but current "
+            "device_map contains CPU/DISK offload. Please use a smaller model / fewer frames, "
+            "or set --attn_implementation sdpa (or eager)."
+        )
+
+
 def _timed_call(fn):
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -230,16 +252,18 @@ def _load_llava_model(args: BenchmarkArgs):
         if args.model_path == "lmms-lab/LLaVA-Video-7B-Qwen2"
         else {}
     )
+    attn_impl = _resolve_attn_implementation(args.attn_implementation)
     tokenizer, model, image_processor, _ = load_pretrained_model(
         args.model_path,
         None,
         model_name,
         device_map="auto",
-        attn_implementation=args.attn_implementation,
+        attn_implementation=attn_impl,
         overwrite_config=overwrite_config,
         multimodal=True,
     )
     model.eval()
+    _assert_flash_attn_placement(model, attn_impl)
     return {"model": model, "tokenizer": tokenizer, "image_processor": image_processor}
 
 
@@ -257,11 +281,12 @@ def _load_qwen_model(args: BenchmarkArgs, backend: str):
     local_path = Path(args.model_path).exists()
     local_files_only = bool(args.local_files_only or offline_env or local_path)
 
+    attn_impl = _resolve_attn_implementation(args.attn_implementation)
     model = QwenModel.from_pretrained(
         args.model_path,
         torch_dtype="auto",
         device_map="auto",
-        attn_implementation=args.attn_implementation,
+        attn_implementation=attn_impl,
         local_files_only=local_files_only,
     )
     processor = AutoProcessor.from_pretrained(
@@ -269,6 +294,7 @@ def _load_qwen_model(args: BenchmarkArgs, backend: str):
         local_files_only=local_files_only,
     )
     model.eval()
+    _assert_flash_attn_placement(model, attn_impl)
     return {"model": model, "processor": processor}
 
 
@@ -290,18 +316,27 @@ def _prepare_llava_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, v
     from llava.mm_utils import tokenizer_image_token
 
     tokenizer = model_bundle["tokenizer"]
+    model = model_bundle["model"]
+    target_device = _resolve_generation_device(model)
     image_processor = model_bundle["image_processor"]
     vr = VideoReader(video_path, ctx=cpu(0))
     total_frames = len(vr)
     frame_idx = np.linspace(0, total_frames - 1, args.num_frames, dtype=int)
     video_frames = vr.get_batch(frame_idx.tolist()).asnumpy()
-    frames = image_processor.preprocess(video_frames, return_tensors="pt")["pixel_values"].half().cuda()
+    frames = image_processor.preprocess(video_frames, return_tensors="pt")["pixel_values"]
+    if target_device.type == "cuda":
+        frames = frames.half()
+    frames = frames.to(target_device)
 
     conv = copy.deepcopy(conv_templates["qwen_1_5"])
     conv.append_message(conv.roles[0], f"{DEFAULT_IMAGE_TOKEN}\n{prompt_text}")
     conv.append_message(conv.roles[1], None)
     prompt = conv.get_prompt()
-    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to("cuda")
+    input_ids = (
+        tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
+        .unsqueeze(0)
+        .to(target_device)
+    )
     attention_mask = torch.ones_like(input_ids)
     image_sizes = [frame.size for frame in video_frames]
 
@@ -823,11 +858,13 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
 
 
 def _print_header(args: BenchmarkArgs, backend: str):
+    effective_attn = _resolve_attn_implementation(args.attn_implementation)
     print(SEPARATOR)
     print("Unified Benchmark: Accuracy + Token + Latency + Speedup")
     print(SEPARATOR)
     print(f"Model path    : {args.model_path}")
     print(f"Backend       : {backend}")
+    print(f"Attention impl: {effective_attn} (requested: {args.attn_implementation})")
     print(f"Dataset       : {args.dataset_jsonl}")
     print(f"HF_HOME       : {args.hf_home or os.getenv('HF_HOME', '~/.cache/huggingface')}")
     print(f"Limit         : {args.limit}")
