@@ -73,6 +73,7 @@ class FlashVidConfig:
     talon_rank_ratio: float = field(default=0.6)
     talon_rank_min: int = field(default=4)
     talon_rank_max: int = field(default=32)
+    talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
 

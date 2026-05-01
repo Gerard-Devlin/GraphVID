@@ -222,7 +222,7 @@ def _resolve_grid_hw(num_visual_tokens: int, flashvid_config: FlashVidConfig) ->
     return h, w
 
 
-def _talon_allocate_frame_budget(core_budget: int, frame_importance: torch.Tensor) -> List[int]:
+def _talon_allocate_frame_budget(core_budget: int, frame_importance: torch.Tensor, budget_mode: str = "uniform") -> List[int]:
     num_frames = int(frame_importance.shape[0])
     if num_frames <= 0:
         return []
@@ -233,7 +233,10 @@ def _talon_allocate_frame_budget(core_budget: int, frame_importance: torch.Tenso
     budgets = [base for _ in range(num_frames)]
     remaining = int(core_budget - base * num_frames)
     if remaining > 0:
-        order = torch.argsort(frame_importance.float(), descending=True)
+        if str(budget_mode).strip().lower() == "attention":
+            order = torch.argsort(frame_importance.float(), descending=True)
+        else:
+            order = torch.arange(num_frames, device=frame_importance.device)
         for idx in order[:remaining]:
             budgets[int(idx.item())] += 1
     return budgets
@@ -371,7 +374,8 @@ def _segment_talon_compression(
     core_budget = max(1, target_budget - memory_budget)
 
     frame_importance = cls_attention.float().mean(dim=1)
-    frame_budgets = _talon_allocate_frame_budget(core_budget, frame_importance)
+    budget_mode = str(getattr(flashvid_config, "talon_budget_mode", "uniform") or "uniform")
+    frame_budgets = _talon_allocate_frame_budget(core_budget, frame_importance, budget_mode=budget_mode)
     rank_sparse = [_talon_rank_split(b, num_visual_tokens, flashvid_config) for b in frame_budgets]
     max_rank = max((r for r, _ in rank_sparse), default=0)
 
@@ -400,7 +404,6 @@ def _segment_talon_compression(
             anchor_idx = torch.topk(anchor_strength, k=rank_t, dim=0).indices
             core_tokens.append(c_t)
             core_indices.append(segment_global_indices[t, anchor_idx])
-            selected_mask[t * num_visual_tokens + anchor_idx] = True
         else:
             b_t = torch.zeros_like(y_t)
 
@@ -412,11 +415,11 @@ def _segment_talon_compression(
                 q_weight = min(max(q_weight, 0.0), 1.0)
                 innovation_score = (1.0 - q_weight) * _normalize_scores(innovation_score) + q_weight * fused_grid[t]
             top_s = torch.topk(innovation_score, k=min(sparse_t, num_visual_tokens), dim=0).indices
-            innovation_tokens = y_t[top_s]
+            innovation_tokens = r_t[top_s]
             core_tokens.append(innovation_tokens)
             core_indices.append(segment_global_indices[t, top_s])
             selected_mask[t * num_visual_tokens + top_s] = True
-            b_t[top_s] = y_t[top_s]  # Keep innovations exact in reconstruction.
+            b_t[top_s] = b_t[top_s] + r_t[top_s]  # Keep selected innovations exact in reconstruction.
 
         reconstructed[t] = b_t
 

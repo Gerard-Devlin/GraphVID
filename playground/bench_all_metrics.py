@@ -83,6 +83,7 @@ class BenchmarkArgs:
     talon_rank_ratio: float = field(default=0.6)
     talon_rank_min: int = field(default=4)
     talon_rank_max: int = field(default=32)
+    talon_budget_mode: str = field(default="uniform")
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
     memory_token_ratio: float = field(default=0.10)
@@ -751,6 +752,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
+        talon_budget_mode=args.talon_budget_mode,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
         decode_policy=args.decode_policy,
@@ -800,6 +802,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
+        talon_budget_mode=args.talon_budget_mode,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
         memory_token_ratio=args.memory_token_ratio,
