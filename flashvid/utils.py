@@ -352,6 +352,7 @@ def _segment_talon_compression(
             torch.empty((0,), dtype=torch.long, device=device),
         )
 
+    # Keep original visual-token manifold for emitted tokens.
     flat_features = segment_features.reshape(num_tokens, feat_dim)
     flat_attention = cls_attention.reshape(num_tokens).float()
     flat_global_indices = segment_global_indices.reshape(num_tokens)
@@ -415,9 +416,9 @@ def _segment_talon_compression(
             if coefficient_output:
                 background_tokens = c_t
             else:
-                original_anchors = y_t[anchor_idx]
-                reconstructed_anchors = b_t[anchor_idx]
-                background_tokens = (1.0 - reconstruction_blend) * original_anchors + reconstruction_blend * reconstructed_anchors
+                # In manifold mode, emit original visual tokens (selection from TALON path,
+                # representation from pretrained-token manifold) to reduce distribution shift.
+                background_tokens = segment_features[t, anchor_idx]
             core_tokens.append(background_tokens)
             core_indices.append(segment_global_indices[t, anchor_idx])
             frame_selected[anchor_idx] = True
@@ -435,7 +436,7 @@ def _segment_talon_compression(
             if frame_selected.any() and int((~frame_selected).sum().item()) >= min(sparse_t, num_visual_tokens):
                 innovation_score = innovation_score.masked_fill(frame_selected, -1e9)
             top_s = torch.topk(innovation_score, k=min(sparse_t, num_visual_tokens), dim=0).indices
-            innovation_tokens = r_t[top_s] if coefficient_output else y_t[top_s]
+            innovation_tokens = r_t[top_s] if coefficient_output else segment_features[t, top_s]
             core_tokens.append(innovation_tokens)
             core_indices.append(segment_global_indices[t, top_s])
             selected_mask[t * num_visual_tokens + top_s] = True
@@ -456,7 +457,8 @@ def _segment_talon_compression(
     aligned_flat = aligned_features.reshape(num_tokens, feat_dim)
     residual_vectors = aligned_flat - reconstructed.reshape(num_tokens, feat_dim)
     memory_tokens, memory_local_indices = _build_residual_memory_tokens(
-        flat_features=aligned_flat,
+        # Keep memory tokens in original manifold as well.
+        flat_features=flat_features,
         dropped_indices=dropped_indices,
         residual_vectors=residual_vectors[dropped_indices] if dropped_indices.numel() > 0 else aligned_flat.new_zeros((0, feat_dim)),
         question_scores=question_scores,
