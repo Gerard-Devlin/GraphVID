@@ -136,6 +136,53 @@ def _timed_call(fn):
     return out, (time.perf_counter() - t0) * 1000.0
 
 
+def _resolve_generation_device(model: Any) -> torch.device:
+    # Prefer language embedding device for generation inputs.
+    try:
+        emb = model.get_input_embeddings()
+        if emb is not None and hasattr(emb, "weight"):
+            dev = emb.weight.device
+            if str(dev) != "meta":
+                return dev
+    except Exception:
+        pass
+
+    # Fallbacks for different wrapped model layouts.
+    for path in (
+        ("model", "embed_tokens", "weight"),
+        ("language_model", "model", "embed_tokens", "weight"),
+        ("model", "language_model", "model", "embed_tokens", "weight"),
+    ):
+        cur = model
+        try:
+            for p in path:
+                cur = getattr(cur, p)
+            dev = cur.device
+            if str(dev) != "meta":
+                return dev
+        except Exception:
+            continue
+
+    if hasattr(model, "device"):
+        dev = model.device
+        if str(dev) != "meta":
+            return dev
+
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _move_structure_to_device(obj: Any, device: torch.device) -> Any:
+    if torch.is_tensor(obj):
+        return obj.to(device)
+    if isinstance(obj, dict):
+        return {k: _move_structure_to_device(v, device) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_move_structure_to_device(v, device) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_move_structure_to_device(v, device) for v in obj)
+    return obj
+
+
 def _resolve_video_path(video_id: str, hf_home_override: str | None) -> str:
     if hf_home_override:
         hf_home = Path(hf_home_override)
@@ -322,8 +369,8 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
         processor_kwargs["video_metadata"] = video_metadata
 
     inputs = processor(**processor_kwargs)
-    if torch.cuda.is_available():
-        inputs = inputs.to("cuda")
+    target_device = _resolve_generation_device(model)
+    inputs = _move_structure_to_device(inputs, target_device)
 
     video_token_id = getattr(model.config, "video_token_id", None)
     if video_token_id is None:
@@ -414,6 +461,8 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     # Warmup
     for _ in range(args.num_warmup):
         inputs = _clone_inputs(backend, prepared_inputs)
+        if backend != "llava":
+            inputs = _move_structure_to_device(inputs, _resolve_generation_device(model))
         if backend == "llava":
             model.generate(
                 inputs["input_ids"],
@@ -443,6 +492,8 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
 
     for run_idx in range(args.num_runs):
         inputs = _clone_inputs(backend, prepared_inputs)
+        if backend != "llava":
+            inputs = _move_structure_to_device(inputs, _resolve_generation_device(model))
 
         def _generate():
             if backend == "llava":
