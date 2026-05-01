@@ -222,6 +222,232 @@ def _resolve_grid_hw(num_visual_tokens: int, flashvid_config: FlashVidConfig) ->
     return h, w
 
 
+def _talon_allocate_frame_budget(core_budget: int, frame_importance: torch.Tensor) -> List[int]:
+    num_frames = int(frame_importance.shape[0])
+    if num_frames <= 0:
+        return []
+    if core_budget <= 0:
+        return [0 for _ in range(num_frames)]
+
+    base = int(core_budget // num_frames)
+    budgets = [base for _ in range(num_frames)]
+    remaining = int(core_budget - base * num_frames)
+    if remaining > 0:
+        order = torch.argsort(frame_importance.float(), descending=True)
+        for idx in order[:remaining]:
+            budgets[int(idx.item())] += 1
+    return budgets
+
+
+def _talon_rank_split(per_frame_budget: int, num_visual_tokens: int, flashvid_config: FlashVidConfig) -> Tuple[int, int]:
+    if per_frame_budget <= 0:
+        return 0, 0
+
+    rank_ratio = float(getattr(flashvid_config, "talon_rank_ratio", 0.6))
+    rank_ratio = min(max(rank_ratio, 0.05), 0.95)
+    rank_min = max(1, int(getattr(flashvid_config, "talon_rank_min", 4)))
+    rank_max = max(rank_min, int(getattr(flashvid_config, "talon_rank_max", 32)))
+
+    rank = int(round(per_frame_budget * rank_ratio))
+    rank = max(1, rank)
+    rank = min(rank, per_frame_budget, num_visual_tokens, rank_max)
+
+    if per_frame_budget >= (rank_min + 1):
+        rank = max(rank, min(rank_min, per_frame_budget - 1))
+    if per_frame_budget > 1:
+        rank = min(rank, per_frame_budget - 1)
+
+    sparse = max(0, per_frame_budget - rank)
+    return int(rank), int(sparse)
+
+
+def _talon_transport_align(segment_features: torch.Tensor, flashvid_config: FlashVidConfig) -> torch.Tensor:
+    num_frames, num_visual_tokens, feat_dim = segment_features.shape
+    if num_frames <= 1:
+        return segment_features
+
+    aligned = segment_features.clone()
+    grid_h, grid_w = _resolve_grid_hw(num_visual_tokens, flashvid_config)
+    local_radius = max(0, int(getattr(flashvid_config, "talon_transport_radius", 1)))
+
+    if local_radius <= 0:
+        local_mask = torch.eye(num_visual_tokens, dtype=torch.bool, device=segment_features.device)
+    else:
+        token_ids = torch.arange(num_visual_tokens, device=segment_features.device)
+        y = token_ids // max(1, grid_w)
+        x = token_ids % max(1, grid_w)
+        dy = torch.abs(y.unsqueeze(1) - y.unsqueeze(0))
+        dx = torch.abs(x.unsqueeze(1) - x.unsqueeze(0))
+        local_mask = (dy <= local_radius) & (dx <= local_radius)
+
+    for t in range(1, num_frames):
+        prev = segment_features[t - 1]
+        cur = segment_features[t]
+        prev_norm = F.normalize(prev.float(), p=2, dim=-1, eps=1e-6)
+        cur_norm = F.normalize(cur.float(), p=2, dim=-1, eps=1e-6)
+        sim = torch.matmul(cur_norm, prev_norm.transpose(0, 1))
+        sim = sim.masked_fill(~local_mask, -1e9)
+        best_prev = torch.argmax(sim, dim=1)
+
+        row_has_candidate = local_mask.any(dim=1)
+        if not row_has_candidate.all():
+            fallback = torch.arange(num_visual_tokens, device=segment_features.device).clamp_max(num_visual_tokens - 1)
+            best_prev = torch.where(row_has_candidate, best_prev, fallback)
+
+        aligned_t = torch.zeros((num_visual_tokens, feat_dim), dtype=cur.dtype, device=cur.device)
+        aligned_t.scatter_add_(0, best_prev.unsqueeze(-1).expand(-1, feat_dim), cur)
+
+        counts = torch.zeros((num_visual_tokens, 1), dtype=cur.dtype, device=cur.device)
+        counts.scatter_add_(
+            0,
+            best_prev.unsqueeze(-1),
+            torch.ones((num_visual_tokens, 1), dtype=cur.dtype, device=cur.device),
+        )
+        aligned_t = aligned_t / counts.clamp_min(1.0)
+        empty_slots = counts.squeeze(-1) <= 0
+        if empty_slots.any():
+            aligned_t[empty_slots] = cur[empty_slots]
+        aligned[t] = aligned_t
+
+    return aligned
+
+
+def _talon_compute_lowrank_basis(aligned_features: torch.Tensor, max_rank: int) -> torch.Tensor:
+    _, num_visual_tokens, _ = aligned_features.shape
+    if max_rank <= 0:
+        return aligned_features.new_zeros((num_visual_tokens, 0))
+    max_rank = min(int(max_rank), int(num_visual_tokens))
+    if max_rank <= 0:
+        return aligned_features.new_zeros((num_visual_tokens, 0))
+
+    cov = torch.matmul(aligned_features[0], aligned_features[0].transpose(0, 1)).float()
+    for t in range(1, aligned_features.shape[0]):
+        cov = cov + torch.matmul(aligned_features[t], aligned_features[t].transpose(0, 1)).float()
+
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    top_idx = torch.argsort(eigvals, descending=True)[:max_rank]
+    basis = eigvecs[:, top_idx]
+    return basis.to(dtype=aligned_features.dtype, device=aligned_features.device)
+
+
+def _segment_talon_compression(
+    segment_features: torch.Tensor,
+    segment_global_indices: torch.Tensor,
+    cls_attention: torch.Tensor,
+    retention_ratio: float,
+    flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """TALON: transport-aligned low-rank background + sparse innovation compression."""
+    num_frames, num_visual_tokens, feat_dim = segment_features.shape
+    num_tokens = num_frames * num_visual_tokens
+    device = segment_features.device
+
+    if num_tokens == 0:
+        return (
+            segment_features.new_zeros((0, feat_dim)),
+            torch.empty((0,), dtype=torch.long, device=device),
+        )
+
+    flat_features = segment_features.reshape(num_tokens, feat_dim)
+    flat_attention = cls_attention.reshape(num_tokens).float()
+    flat_global_indices = segment_global_indices.reshape(num_tokens)
+
+    effective_ratio = min(1.0, max(0.01, retention_ratio * float(getattr(flashvid_config, "expansion", 1.0))))
+    target_budget = max(1, min(num_tokens, math.ceil(num_tokens * effective_ratio)))
+
+    fused_scores, question_scores = _question_aware_scores(
+        flat_features=flat_features,
+        flat_attention=flat_attention,
+        question_features=question_features,
+        flashvid_config=flashvid_config,
+    )
+
+    memory_budget = _resolve_memory_budget(
+        num_tokens=num_tokens,
+        target_budget=target_budget,
+        flashvid_config=flashvid_config,
+    )
+    core_budget = max(1, target_budget - memory_budget)
+
+    frame_importance = cls_attention.float().mean(dim=1)
+    frame_budgets = _talon_allocate_frame_budget(core_budget, frame_importance)
+    rank_sparse = [_talon_rank_split(b, num_visual_tokens, flashvid_config) for b in frame_budgets]
+    max_rank = max((r for r, _ in rank_sparse), default=0)
+
+    aligned_features = _talon_transport_align(segment_features, flashvid_config)
+    basis_max = _talon_compute_lowrank_basis(aligned_features, max_rank)
+
+    fused_grid = fused_scores.view(num_frames, num_visual_tokens)
+    selected_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+    reconstructed = torch.zeros_like(aligned_features)
+
+    core_tokens: List[torch.Tensor] = []
+    core_indices: List[torch.Tensor] = []
+    for t in range(num_frames):
+        budget_t = int(frame_budgets[t])
+        if budget_t <= 0:
+            continue
+        rank_t, sparse_t = rank_sparse[t]
+        y_t = aligned_features[t]
+
+        if rank_t > 0:
+            u_t = basis_max[:, :rank_t]
+            c_t = torch.matmul(u_t.transpose(0, 1), y_t)  # (rank_t, feat_dim)
+            b_t = torch.matmul(u_t, c_t)  # (num_visual_tokens, feat_dim)
+            # Representative source indices for low-rank coefficients.
+            anchor_strength = torch.sum(torch.abs(u_t), dim=1)
+            anchor_idx = torch.topk(anchor_strength, k=rank_t, dim=0).indices
+            core_tokens.append(c_t)
+            core_indices.append(segment_global_indices[t, anchor_idx])
+            selected_mask[t * num_visual_tokens + anchor_idx] = True
+        else:
+            b_t = torch.zeros_like(y_t)
+
+        r_t = y_t - b_t
+        if sparse_t > 0:
+            innovation_score = torch.norm(r_t.float(), p=2, dim=-1)
+            if bool(getattr(flashvid_config, "talon_use_question_innovation", True)):
+                q_weight = float(getattr(flashvid_config, "talon_innovation_qweight", 0.25))
+                q_weight = min(max(q_weight, 0.0), 1.0)
+                innovation_score = (1.0 - q_weight) * _normalize_scores(innovation_score) + q_weight * fused_grid[t]
+            top_s = torch.topk(innovation_score, k=min(sparse_t, num_visual_tokens), dim=0).indices
+            innovation_tokens = y_t[top_s]
+            core_tokens.append(innovation_tokens)
+            core_indices.append(segment_global_indices[t, top_s])
+            selected_mask[t * num_visual_tokens + top_s] = True
+            b_t[top_s] = y_t[top_s]  # Keep innovations exact in reconstruction.
+
+        reconstructed[t] = b_t
+
+    if core_tokens:
+        core_token_tensor = torch.cat(core_tokens, dim=0)
+        core_index_tensor = torch.cat(core_indices, dim=0)
+    else:
+        top1 = torch.topk(fused_scores, k=1, dim=0).indices
+        core_token_tensor = flat_features[top1]
+        core_index_tensor = flat_global_indices[top1]
+        selected_mask[top1] = True
+
+    dropped_indices = torch.where(~selected_mask)[0]
+    aligned_flat = aligned_features.reshape(num_tokens, feat_dim)
+    residual_vectors = aligned_flat - reconstructed.reshape(num_tokens, feat_dim)
+    memory_tokens, memory_local_indices = _build_residual_memory_tokens(
+        flat_features=aligned_flat,
+        dropped_indices=dropped_indices,
+        residual_vectors=residual_vectors[dropped_indices] if dropped_indices.numel() > 0 else aligned_flat.new_zeros((0, feat_dim)),
+        question_scores=question_scores,
+        memory_budget=memory_budget,
+    )
+
+    if memory_tokens.shape[0] > 0:
+        memory_indices = flat_global_indices[memory_local_indices]
+        all_tokens = torch.cat([core_token_tensor, memory_tokens], dim=0)
+        all_indices = torch.cat([core_index_tensor, memory_indices], dim=0)
+        return all_tokens, all_indices
+    return core_token_tensor, core_index_tensor
+
+
 def _resolve_slot_role_names(flashvid_config: FlashVidConfig) -> List[str]:
     predefined = ["scene", "motion", "interaction", "background", "detail"]
     role_count = max(1, int(getattr(flashvid_config, "slot_base_roles", 5)))
@@ -799,8 +1025,8 @@ def _segment_graph_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    # Legacy entrypoint kept for compatibility; graph is now an alias of slot-memory.
-    return _segment_slot_memory_compression(
+    # Legacy entrypoint kept for compatibility; graph is now an alias of TALON.
+    return _segment_talon_compression(
         segment_features=segment_features,
         segment_global_indices=segment_global_indices,
         cls_attention=cls_attention,
@@ -818,8 +1044,8 @@ def flashvid_compression(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
-    if compression_variant == "graph":
-        compression_variant = "slot"
+    if compression_variant in ("graph", "slot"):
+        compression_variant = "talon"
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
         question_features=question_features,
@@ -857,8 +1083,8 @@ def flashvid_compression(
         segment_features = video_features[offset : offset + seg_len]
         segment_cls_attention = cls_attention[offset : offset + seg_len]
         segment_global_indices = global_indices.view(num_frames, num_visual_tokens)[offset : offset + seg_len]
-        if compression_variant == "slot":
-            segment_features, segment_global_indices = _segment_slot_memory_compression(
+        if compression_variant == "talon":
+            segment_features, segment_global_indices = _segment_talon_compression(
                 segment_features=segment_features,
                 segment_global_indices=segment_global_indices,
                 cls_attention=segment_cls_attention,

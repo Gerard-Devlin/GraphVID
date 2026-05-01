@@ -60,7 +60,7 @@ class BenchmarkArgs:
     llm_retention_ratio: float = field(default=0.3)
 
     # New experimental knobs (optional)
-    compression_variant: str = field(default="graph")
+    compression_variant: str = field(default="talon")
     question_aware_reweighting: bool = field(default=True)
     adaptive_token_budget: bool = field(default=True)
     adaptive_budget_low: float = field(default=0.10)
@@ -79,6 +79,12 @@ class BenchmarkArgs:
     slot_passthrough_ratio: float = field(default=0.55)
     slot_passthrough_min: int = field(default=4)
     slot_fast_assignment: bool = field(default=True)
+    talon_transport_radius: int = field(default=1)
+    talon_rank_ratio: float = field(default=0.6)
+    talon_rank_min: int = field(default=4)
+    talon_rank_max: int = field(default=32)
+    talon_use_question_innovation: bool = field(default=True)
+    talon_innovation_qweight: float = field(default=0.25)
     memory_token_ratio: float = field(default=0.10)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
@@ -741,6 +747,12 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         slot_passthrough_ratio=args.slot_passthrough_ratio,
         slot_passthrough_min=args.slot_passthrough_min,
         slot_fast_assignment=args.slot_fast_assignment,
+        talon_transport_radius=args.talon_transport_radius,
+        talon_rank_ratio=args.talon_rank_ratio,
+        talon_rank_min=args.talon_rank_min,
+        talon_rank_max=args.talon_rank_max,
+        talon_use_question_innovation=args.talon_use_question_innovation,
+        talon_innovation_qweight=args.talon_innovation_qweight,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -784,6 +796,12 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         slot_passthrough_ratio=args.slot_passthrough_ratio,
         slot_passthrough_min=args.slot_passthrough_min,
         slot_fast_assignment=args.slot_fast_assignment,
+        talon_transport_radius=args.talon_transport_radius,
+        talon_rank_ratio=args.talon_rank_ratio,
+        talon_rank_min=args.talon_rank_min,
+        talon_rank_max=args.talon_rank_max,
+        talon_use_question_innovation=args.talon_use_question_innovation,
+        talon_innovation_qweight=args.talon_innovation_qweight,
         memory_token_ratio=args.memory_token_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,

@@ -107,6 +107,13 @@ def flashvid(
     slot_passthrough_ratio: float = 0.55,
     slot_passthrough_min: int = 4,
     slot_fast_assignment: bool = True,
+    # TALON params.
+    talon_transport_radius: int = 1,
+    talon_rank_ratio: float = 0.6,
+    talon_rank_min: int = 4,
+    talon_rank_max: int = 32,
+    talon_use_question_innovation: bool = True,
+    talon_innovation_qweight: float = 0.25,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -146,7 +153,8 @@ def flashvid(
         temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
-            "slot" enables slot-memory aggregation; "graph" is treated as an alias of "slot".
+            "talon" enables transport-aligned low-rank + sparse innovation compression;
+            "slot"/"graph" are treated as aliases of "talon".
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
         graph_topk (int, optional): Legacy graph setting; mapped to slot coverage behavior.
@@ -162,6 +170,12 @@ def flashvid(
         slot_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unmerged.
         slot_passthrough_min (int, optional): Minimum passthrough token count per segment when budget allows.
         slot_fast_assignment (bool, optional): Enable lightweight slot assignment for lower compression overhead.
+        talon_transport_radius (int, optional): Local transport radius for frame-to-frame token alignment.
+        talon_rank_ratio (float, optional): Per-frame low-rank share in TALON token budget.
+        talon_rank_min (int, optional): Minimum TALON low-rank token count per frame when budget allows.
+        talon_rank_max (int, optional): Maximum TALON low-rank token count per frame.
+        talon_use_question_innovation (bool, optional): Reweight innovation selection with question cues.
+        talon_innovation_qweight (float, optional): Question-aware weight for innovation scoring.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -218,10 +232,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant == "graph":
-        variant = "slot"
-    if variant not in ("flashvid", "slot"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|slot|graph")
+    if variant in ("graph", "slot"):
+        variant = "talon"
+    if variant not in ("flashvid", "talon"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|slot|graph")
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -257,6 +271,12 @@ def flashvid(
         slot_passthrough_ratio=slot_passthrough_ratio,
         slot_passthrough_min=slot_passthrough_min,
         slot_fast_assignment=slot_fast_assignment,
+        talon_transport_radius=talon_transport_radius,
+        talon_rank_ratio=talon_rank_ratio,
+        talon_rank_min=talon_rank_min,
+        talon_rank_max=talon_rank_max,
+        talon_use_question_innovation=talon_use_question_innovation,
+        talon_innovation_qweight=talon_innovation_qweight,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

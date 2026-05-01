@@ -43,8 +43,8 @@ class FlashVidConfig:
 
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
-    # "slot": slot-memory token->slot aggregation path.
-    # "graph": legacy alias mapped to "slot" for compatibility.
+    # "talon": transport-aligned low-rank + sparse innovation path.
+    # "slot"/"graph": legacy aliases mapped to "talon" for compatibility.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
@@ -67,6 +67,14 @@ class FlashVidConfig:
     slot_passthrough_ratio: float = field(default=0.55)
     slot_passthrough_min: int = field(default=4)
     slot_fast_assignment: bool = field(default=True)
+
+    # TALON compression.
+    talon_transport_radius: int = field(default=1)
+    talon_rank_ratio: float = field(default=0.6)
+    talon_rank_min: int = field(default=4)
+    talon_rank_max: int = field(default=32)
+    talon_use_question_innovation: bool = field(default=True)
+    talon_innovation_qweight: float = field(default=0.25)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)
