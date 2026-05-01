@@ -326,6 +326,22 @@ def _build_slot_role_scores(
     fused_scores: torch.Tensor,
     flashvid_config: FlashVidConfig,
 ) -> Dict[str, torch.Tensor]:
+    if bool(getattr(flashvid_config, "slot_fast_assignment", True)):
+        visual = _normalize_scores(flat_attention.float())
+        motion = _estimate_motion_score(
+            segment_features=segment_features,
+            motion_window=int(getattr(flashvid_config, "slot_motion_window", 1)),
+        )
+        motion_core = _normalize_scores(motion)
+        role_scores = {
+            "scene": _normalize_scores(0.85 * fused_scores + 0.15 * visual),
+            "motion": _normalize_scores(0.55 * motion_core + 0.45 * fused_scores),
+            "interaction": _normalize_scores(0.60 * fused_scores + 0.40 * motion_core),
+            "background": _normalize_scores(0.70 * (1.0 - motion_core) + 0.30 * (1.0 - fused_scores)),
+            "detail": _normalize_scores(0.75 * fused_scores + 0.25 * visual),
+        }
+        return role_scores
+
     num_frames, num_visual_tokens, _ = segment_features.shape
     normed_segment = F.normalize(segment_features.float(), p=2, dim=-1, eps=1e-6)
     normed_flat = normed_segment.reshape(num_frames * num_visual_tokens, -1)
@@ -375,6 +391,19 @@ def _select_slot_anchor_indices(
     num_tokens = flat_features.shape[0]
     if num_tokens == 0 or not slot_roles:
         return torch.empty((0,), dtype=torch.long, device=flat_features.device)
+
+    if bool(getattr(flashvid_config, "slot_fast_assignment", True)):
+        used = torch.zeros(num_tokens, dtype=torch.bool, device=flat_features.device)
+        selected: List[int] = []
+        for role in slot_roles:
+            score = role_scores.get(role, fused_scores) + 0.20 * fused_scores
+            score = score.masked_fill(used, -1e9)
+            if torch.all(score <= -1e8):
+                score = role_scores.get(role, fused_scores) + 0.20 * fused_scores
+            anchor_idx = int(torch.argmax(score).item())
+            selected.append(anchor_idx)
+            used[anchor_idx] = True
+        return torch.tensor(selected, dtype=torch.long, device=flat_features.device)
 
     normed_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
     used = torch.zeros(num_tokens, dtype=torch.bool, device=flat_features.device)
