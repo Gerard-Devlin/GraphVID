@@ -410,8 +410,10 @@ def _segment_talon_compression(
             # TALON's low-rank coefficients are not tokens the frozen VLM was trained to read.
             # Use the low-rank basis to pick representative background anchors, then keep their
             # embeddings close to the original visual-token manifold.
-            leverage = _normalize_scores(torch.sum(u_t.float() ** 2, dim=1))
-            anchor_score = (1.0 - anchor_score_weight) * leverage + anchor_score_weight * fused_grid[t]
+            # Frame-aware anchor quality: prefer positions that carry stronger
+            # reconstructed background energy in this frame.
+            background_energy = _normalize_scores(torch.norm(b_t.float(), p=2, dim=-1))
+            anchor_score = (1.0 - anchor_score_weight) * background_energy + anchor_score_weight * fused_grid[t]
             anchor_idx = torch.topk(anchor_score, k=rank_t, dim=0).indices
             if coefficient_output:
                 background_tokens = c_t
