@@ -70,12 +70,15 @@ class FlashVidConfig:
 
     # TALON compression.
     talon_transport_radius: int = field(default=1)
-    talon_rank_ratio: float = field(default=0.6)
-    talon_rank_min: int = field(default=4)
+    talon_rank_ratio: float = field(default=0.40)
+    talon_rank_min: int = field(default=2)
     talon_rank_max: int = field(default=32)
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
+    talon_output_mode: str = field(default="manifold")  # manifold | coefficient
+    talon_reconstruction_blend: float = field(default=0.25)
+    talon_anchor_score_weight: float = field(default=0.35)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

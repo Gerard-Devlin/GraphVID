@@ -80,12 +80,15 @@ class BenchmarkArgs:
     slot_passthrough_min: int = field(default=4)
     slot_fast_assignment: bool = field(default=True)
     talon_transport_radius: int = field(default=1)
-    talon_rank_ratio: float = field(default=0.6)
-    talon_rank_min: int = field(default=4)
+    talon_rank_ratio: float = field(default=0.40)
+    talon_rank_min: int = field(default=2)
     talon_rank_max: int = field(default=32)
     talon_budget_mode: str = field(default="uniform")
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
+    talon_output_mode: str = field(default="manifold")
+    talon_reconstruction_blend: float = field(default=0.25)
+    talon_anchor_score_weight: float = field(default=0.35)
     memory_token_ratio: float = field(default=0.10)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
@@ -755,6 +758,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_budget_mode=args.talon_budget_mode,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
+        talon_output_mode=args.talon_output_mode,
+        talon_reconstruction_blend=args.talon_reconstruction_blend,
+        talon_anchor_score_weight=args.talon_anchor_score_weight,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -805,6 +811,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_budget_mode=args.talon_budget_mode,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
+        talon_output_mode=args.talon_output_mode,
+        talon_reconstruction_blend=args.talon_reconstruction_blend,
+        talon_anchor_score_weight=args.talon_anchor_score_weight,
         memory_token_ratio=args.memory_token_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,

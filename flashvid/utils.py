@@ -246,9 +246,9 @@ def _talon_rank_split(per_frame_budget: int, num_visual_tokens: int, flashvid_co
     if per_frame_budget <= 0:
         return 0, 0
 
-    rank_ratio = float(getattr(flashvid_config, "talon_rank_ratio", 0.6))
+    rank_ratio = float(getattr(flashvid_config, "talon_rank_ratio", 0.40))
     rank_ratio = min(max(rank_ratio, 0.05), 0.95)
-    rank_min = max(1, int(getattr(flashvid_config, "talon_rank_min", 4)))
+    rank_min = max(1, int(getattr(flashvid_config, "talon_rank_min", 2)))
     rank_max = max(rank_min, int(getattr(flashvid_config, "talon_rank_max", 32)))
 
     rank = int(round(per_frame_budget * rank_ratio))
@@ -383,6 +383,12 @@ def _segment_talon_compression(
     basis_max = _talon_compute_lowrank_basis(aligned_features, max_rank)
 
     fused_grid = fused_scores.view(num_frames, num_visual_tokens)
+    output_mode = str(getattr(flashvid_config, "talon_output_mode", "manifold") or "manifold").strip().lower()
+    coefficient_output = output_mode in ("coefficient", "coeff", "strict")
+    reconstruction_blend = float(getattr(flashvid_config, "talon_reconstruction_blend", 0.25))
+    reconstruction_blend = min(max(reconstruction_blend, 0.0), 1.0)
+    anchor_score_weight = float(getattr(flashvid_config, "talon_anchor_score_weight", 0.35))
+    anchor_score_weight = min(max(anchor_score_weight, 0.0), 1.0)
     selected_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
     reconstructed = torch.zeros_like(aligned_features)
 
@@ -394,16 +400,28 @@ def _segment_talon_compression(
             continue
         rank_t, sparse_t = rank_sparse[t]
         y_t = aligned_features[t]
+        frame_selected = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=device)
 
         if rank_t > 0:
             u_t = basis_max[:, :rank_t]
             c_t = torch.matmul(u_t.transpose(0, 1), y_t)  # (rank_t, feat_dim)
             b_t = torch.matmul(u_t, c_t)  # (num_visual_tokens, feat_dim)
-            # Representative source indices for low-rank coefficients.
-            anchor_strength = torch.sum(torch.abs(u_t), dim=1)
-            anchor_idx = torch.topk(anchor_strength, k=rank_t, dim=0).indices
-            core_tokens.append(c_t)
+            # TALON's low-rank coefficients are not tokens the frozen VLM was trained to read.
+            # Use the low-rank basis to pick representative background anchors, then keep their
+            # embeddings close to the original visual-token manifold.
+            leverage = _normalize_scores(torch.sum(u_t.float() ** 2, dim=1))
+            anchor_score = (1.0 - anchor_score_weight) * leverage + anchor_score_weight * fused_grid[t]
+            anchor_idx = torch.topk(anchor_score, k=rank_t, dim=0).indices
+            if coefficient_output:
+                background_tokens = c_t
+            else:
+                original_anchors = y_t[anchor_idx]
+                reconstructed_anchors = b_t[anchor_idx]
+                background_tokens = (1.0 - reconstruction_blend) * original_anchors + reconstruction_blend * reconstructed_anchors
+            core_tokens.append(background_tokens)
             core_indices.append(segment_global_indices[t, anchor_idx])
+            frame_selected[anchor_idx] = True
+            selected_mask[t * num_visual_tokens + anchor_idx] = True
         else:
             b_t = torch.zeros_like(y_t)
 
@@ -414,8 +432,10 @@ def _segment_talon_compression(
                 q_weight = float(getattr(flashvid_config, "talon_innovation_qweight", 0.25))
                 q_weight = min(max(q_weight, 0.0), 1.0)
                 innovation_score = (1.0 - q_weight) * _normalize_scores(innovation_score) + q_weight * fused_grid[t]
+            if frame_selected.any() and int((~frame_selected).sum().item()) >= min(sparse_t, num_visual_tokens):
+                innovation_score = innovation_score.masked_fill(frame_selected, -1e9)
             top_s = torch.topk(innovation_score, k=min(sparse_t, num_visual_tokens), dim=0).indices
-            innovation_tokens = r_t[top_s]
+            innovation_tokens = r_t[top_s] if coefficient_output else y_t[top_s]
             core_tokens.append(innovation_tokens)
             core_indices.append(segment_global_indices[t, top_s])
             selected_mask[t * num_visual_tokens + top_s] = True
