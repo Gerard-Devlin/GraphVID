@@ -92,21 +92,6 @@ def flashvid(
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
     question_reweight_beta: float = 0.35,
-    # Legacy graph params (kept for compatibility).
-    graph_topk: int = 4,
-    graph_temporal_radius: int = 1,
-    # Slot-memory params.
-    slot_base_roles: int = 5,
-    slot_max_per_segment: int = 64,
-    slot_role_allocation: str = "motion,interaction,detail,scene,background",
-    slot_overlap_radius: int = 1,
-    slot_tiebreak_eps: float = 2e-2,
-    slot_motion_window: int = 1,
-    slot_soft_cap_fraction: float = 0.35,
-    slot_anchor_blend: float = 0.65,
-    slot_passthrough_ratio: float = 0.55,
-    slot_passthrough_min: int = 4,
-    slot_fast_assignment: bool = True,
     # TALON params.
     talon_transport_radius: int = 1,
     talon_rank_ratio: float = 0.40,
@@ -114,6 +99,10 @@ def flashvid(
     talon_rank_max: int = 32,
     talon_budget_strategy: str = "marginal",
     talon_budget_mode: str = "uniform",
+    talon_transport_mode: str = "hard",
+    talon_transport_temperature: float = 0.07,
+    talon_rd_spectral_weight: float = 1.0,
+    talon_rd_innovation_weight: float = 1.0,
     talon_use_question_innovation: bool = True,
     talon_innovation_qweight: float = 0.25,
     talon_output_mode: str = "manifold",
@@ -162,29 +151,19 @@ def flashvid(
         temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
-            "talon" enables transport-aligned low-rank + sparse innovation compression;
-            "slot"/"graph" are treated as aliases of "talon".
+            "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
-        graph_topk (int, optional): Legacy graph setting; mapped to slot coverage behavior.
-        graph_temporal_radius (int, optional): Legacy temporal radius setting (kept for compatibility).
-        slot_base_roles (int, optional): Base semantic slot roles per segment (default: 5).
-        slot_max_per_segment (int, optional): Maximum total slots for one segment.
-        slot_role_allocation (str, optional): Priority order for additional slot allocation.
-        slot_overlap_radius (int, optional): Temporal overlap radius for continuity-aware assignment.
-        slot_tiebreak_eps (float, optional): Tie-break epsilon when assignment scores are close.
-        slot_motion_window (int, optional): Temporal window used in non-learning motion/change score.
-        slot_soft_cap_fraction (float, optional): Soft lower-bound fraction to avoid segment budget collapse.
-        slot_anchor_blend (float, optional): Blend ratio to preserve anchor semantics in slot aggregation.
-        slot_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unmerged.
-        slot_passthrough_min (int, optional): Minimum passthrough token count per segment when budget allows.
-        slot_fast_assignment (bool, optional): Enable lightweight slot assignment for lower compression overhead.
         talon_transport_radius (int, optional): Local transport radius for frame-to-frame token alignment.
         talon_rank_ratio (float, optional): Per-frame low-rank share in TALON token budget.
         talon_rank_min (int, optional): Minimum TALON low-rank token count per frame when budget allows.
         talon_rank_max (int, optional): Maximum TALON low-rank token count per frame.
         talon_budget_strategy (str, optional): Budget split policy, one of {"ratio","marginal"}.
         talon_budget_mode (str, optional): Frame budget policy, one of {"uniform","attention"}.
+        talon_transport_mode (str, optional): Local transport mode, one of {"hard","soft"}.
+        talon_transport_temperature (float, optional): Soft local-transport temperature.
+        talon_rd_spectral_weight (float, optional): Rate-distortion spectral-tail weight.
+        talon_rd_innovation_weight (float, optional): Rate-distortion innovation-tail weight.
         talon_use_question_innovation (bool, optional): Reweight innovation selection with question cues.
         talon_innovation_qweight (float, optional): Question-aware weight for innovation scoring.
         talon_output_mode (str, optional): "manifold" keeps outputs close to pretrained visual tokens;
@@ -251,10 +230,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant in ("graph", "slot"):
-        variant = "talon"
     if variant not in ("flashvid", "talon"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|slot|graph")
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon")
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -277,25 +254,16 @@ def flashvid(
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,
-        graph_topk=graph_topk,
-        graph_temporal_radius=graph_temporal_radius,
-        slot_base_roles=slot_base_roles,
-        slot_max_per_segment=slot_max_per_segment,
-        slot_role_allocation=slot_role_allocation,
-        slot_overlap_radius=slot_overlap_radius,
-        slot_tiebreak_eps=slot_tiebreak_eps,
-        slot_motion_window=slot_motion_window,
-        slot_soft_cap_fraction=slot_soft_cap_fraction,
-        slot_anchor_blend=slot_anchor_blend,
-        slot_passthrough_ratio=slot_passthrough_ratio,
-        slot_passthrough_min=slot_passthrough_min,
-        slot_fast_assignment=slot_fast_assignment,
         talon_transport_radius=talon_transport_radius,
         talon_rank_ratio=talon_rank_ratio,
         talon_rank_min=talon_rank_min,
         talon_rank_max=talon_rank_max,
         talon_budget_strategy=talon_budget_strategy,
         talon_budget_mode=talon_budget_mode,
+        talon_transport_mode=talon_transport_mode,
+        talon_transport_temperature=talon_transport_temperature,
+        talon_rd_spectral_weight=talon_rd_spectral_weight,
+        talon_rd_innovation_weight=talon_rd_innovation_weight,
         talon_use_question_innovation=talon_use_question_innovation,
         talon_innovation_qweight=talon_innovation_qweight,
         talon_output_mode=talon_output_mode,

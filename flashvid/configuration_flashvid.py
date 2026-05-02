@@ -44,29 +44,11 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
-    # "slot"/"graph": legacy aliases mapped to "talon" for compatibility.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
     question_aware_reweighting: bool = field(default=False)
     question_reweight_beta: float = field(default=0.35)
-
-    # Graph-based spatiotemporal merging.
-    graph_topk: int = field(default=4)
-    graph_temporal_radius: int = field(default=1)
-
-    # Slot-memory token aggregation.
-    slot_base_roles: int = field(default=5)  # scene, motion, interaction, background, detail
-    slot_max_per_segment: int = field(default=64)
-    slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
-    slot_overlap_radius: int = field(default=1)
-    slot_tiebreak_eps: float = field(default=2e-2)
-    slot_motion_window: int = field(default=1)
-    slot_soft_cap_fraction: float = field(default=0.35)
-    slot_anchor_blend: float = field(default=0.65)
-    slot_passthrough_ratio: float = field(default=0.55)
-    slot_passthrough_min: int = field(default=4)
-    slot_fast_assignment: bool = field(default=True)
 
     # TALON compression.
     talon_transport_radius: int = field(default=1)
@@ -75,6 +57,10 @@ class FlashVidConfig:
     talon_rank_max: int = field(default=32)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
+    talon_transport_mode: str = field(default="hard")  # hard | soft
+    talon_transport_temperature: float = field(default=0.07)
+    talon_rd_spectral_weight: float = field(default=1.0)
+    talon_rd_innovation_weight: float = field(default=1.0)
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
     talon_output_mode: str = field(default="manifold")  # manifold | coefficient

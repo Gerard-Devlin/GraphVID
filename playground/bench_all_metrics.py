@@ -67,25 +67,16 @@ class BenchmarkArgs:
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
-    graph_topk: int = field(default=4)
-    graph_temporal_radius: int = field(default=1)
-    slot_base_roles: int = field(default=5)
-    slot_max_per_segment: int = field(default=64)
-    slot_role_allocation: str = field(default="motion,interaction,detail,scene,background")
-    slot_overlap_radius: int = field(default=1)
-    slot_tiebreak_eps: float = field(default=2e-2)
-    slot_motion_window: int = field(default=1)
-    slot_soft_cap_fraction: float = field(default=0.35)
-    slot_anchor_blend: float = field(default=0.65)
-    slot_passthrough_ratio: float = field(default=0.55)
-    slot_passthrough_min: int = field(default=4)
-    slot_fast_assignment: bool = field(default=True)
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
     talon_rank_max: int = field(default=32)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
+    talon_transport_mode: str = field(default="hard")
+    talon_transport_temperature: float = field(default=0.07)
+    talon_rd_spectral_weight: float = field(default=1.0)
+    talon_rd_innovation_weight: float = field(default=1.0)
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
     talon_output_mode: str = field(default="manifold")
@@ -781,23 +772,16 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         compression_variant="flashvid",
         question_aware_reweighting=False,
         adaptive_token_budget=False,
-        slot_base_roles=args.slot_base_roles,
-        slot_max_per_segment=args.slot_max_per_segment,
-        slot_role_allocation=args.slot_role_allocation,
-        slot_overlap_radius=args.slot_overlap_radius,
-        slot_tiebreak_eps=args.slot_tiebreak_eps,
-        slot_motion_window=args.slot_motion_window,
-        slot_soft_cap_fraction=args.slot_soft_cap_fraction,
-        slot_anchor_blend=args.slot_anchor_blend,
-        slot_passthrough_ratio=args.slot_passthrough_ratio,
-        slot_passthrough_min=args.slot_passthrough_min,
-        slot_fast_assignment=args.slot_fast_assignment,
         talon_transport_radius=args.talon_transport_radius,
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
+        talon_transport_mode=args.talon_transport_mode,
+        talon_transport_temperature=args.talon_transport_temperature,
+        talon_rd_spectral_weight=args.talon_rd_spectral_weight,
+        talon_rd_innovation_weight=args.talon_rd_innovation_weight,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
         talon_output_mode=args.talon_output_mode,
@@ -837,25 +821,16 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
         adaptive_budget_high=args.adaptive_budget_high,
-        graph_topk=args.graph_topk,
-        graph_temporal_radius=args.graph_temporal_radius,
-        slot_base_roles=args.slot_base_roles,
-        slot_max_per_segment=args.slot_max_per_segment,
-        slot_role_allocation=args.slot_role_allocation,
-        slot_overlap_radius=args.slot_overlap_radius,
-        slot_tiebreak_eps=args.slot_tiebreak_eps,
-        slot_motion_window=args.slot_motion_window,
-        slot_soft_cap_fraction=args.slot_soft_cap_fraction,
-        slot_anchor_blend=args.slot_anchor_blend,
-        slot_passthrough_ratio=args.slot_passthrough_ratio,
-        slot_passthrough_min=args.slot_passthrough_min,
-        slot_fast_assignment=args.slot_fast_assignment,
         talon_transport_radius=args.talon_transport_radius,
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
+        talon_transport_mode=args.talon_transport_mode,
+        talon_transport_temperature=args.talon_transport_temperature,
+        talon_rd_spectral_weight=args.talon_rd_spectral_weight,
+        talon_rd_innovation_weight=args.talon_rd_innovation_weight,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
         talon_output_mode=args.talon_output_mode,
