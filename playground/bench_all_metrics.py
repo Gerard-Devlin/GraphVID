@@ -92,6 +92,8 @@ class BenchmarkArgs:
     talon_anchor_score_weight: float = field(default=0.35)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
+    talon_disable_oversegmentation: bool = field(default=True)
+    talon_max_segments: int = field(default=4)
     memory_token_ratio: float = field(default=0.10)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
@@ -801,6 +803,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_anchor_score_weight=args.talon_anchor_score_weight,
         talon_passthrough_ratio=args.talon_passthrough_ratio,
         talon_passthrough_min=args.talon_passthrough_min,
+        talon_disable_oversegmentation=args.talon_disable_oversegmentation,
+        talon_max_segments=args.talon_max_segments,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -856,6 +860,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_anchor_score_weight=args.talon_anchor_score_weight,
         talon_passthrough_ratio=args.talon_passthrough_ratio,
         talon_passthrough_min=args.talon_passthrough_min,
+        talon_disable_oversegmentation=args.talon_disable_oversegmentation,
+        talon_max_segments=args.talon_max_segments,
         memory_token_ratio=args.memory_token_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,

@@ -81,6 +81,8 @@ class FlashVidConfig:
     talon_anchor_score_weight: float = field(default=0.35)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
+    talon_disable_oversegmentation: bool = field(default=True)
+    talon_max_segments: int = field(default=4)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

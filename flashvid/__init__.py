@@ -120,6 +120,8 @@ def flashvid(
     talon_anchor_score_weight: float = 0.35,
     talon_passthrough_ratio: float = 0.15,
     talon_passthrough_min: int = 2,
+    talon_disable_oversegmentation: bool = True,
+    talon_max_segments: int = 4,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -189,6 +191,8 @@ def flashvid(
         talon_anchor_score_weight (float, optional): Mix question/attention score into low-rank anchor picking.
         talon_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unchanged in TALON.
         talon_passthrough_min (int, optional): Minimum TALON passthrough token count per segment when budget allows.
+        talon_disable_oversegmentation (bool, optional): Avoid excessive short segments for TALON path.
+        talon_max_segments (int, optional): Upper bound on TALON segment count when oversegmentation guard is enabled.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -296,6 +300,8 @@ def flashvid(
         talon_anchor_score_weight=talon_anchor_score_weight,
         talon_passthrough_ratio=talon_passthrough_ratio,
         talon_passthrough_min=talon_passthrough_min,
+        talon_disable_oversegmentation=talon_disable_oversegmentation,
+        talon_max_segments=talon_max_segments,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

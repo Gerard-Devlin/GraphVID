@@ -315,7 +315,7 @@ def _talon_transport_align(
         local_mask = (dy <= local_radius) & (dx <= local_radius)
 
     for t in range(1, num_frames):
-        prev = segment_features[t - 1]
+        prev = aligned[t - 1]
         cur = segment_features[t]
         prev_norm = F.normalize(prev.float(), p=2, dim=-1, eps=1e-6)
         cur_norm = F.normalize(cur.float(), p=2, dim=-1, eps=1e-6)
@@ -1202,11 +1202,20 @@ def flashvid_compression(
 
     # 1. Partition the video frames into segments based on transition similarities.
     if flashvid_config.do_segment:
+        seg_threshold = flashvid_config.segment_threshold
+        min_seg_num = flashvid_config.min_segment_num
+        complementary_seg = flashvid_config.complementary_segment
+        if compression_variant == "talon" and bool(getattr(flashvid_config, "talon_disable_oversegmentation", True)):
+            # TALON relies on temporal structure; excessive short segments hurt both
+            # low-rank background quality and runtime amortization.
+            max_seg = max(1, int(getattr(flashvid_config, "talon_max_segments", 4)))
+            min_seg_num = min(int(min_seg_num), max_seg, num_frames)
+            complementary_seg = False
         segment_lengths = segment(
             video_features=video_features.mean(1),
-            segment_threshold=flashvid_config.segment_threshold,
-            min_segment_num=flashvid_config.min_segment_num,
-            complementary_segment=flashvid_config.complementary_segment,
+            segment_threshold=seg_threshold,
+            min_segment_num=min_seg_num,
+            complementary_segment=complementary_seg,
         )
     else:
         # Treat the whole video as a single segment.
