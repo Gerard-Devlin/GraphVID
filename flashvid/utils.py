@@ -303,10 +303,13 @@ def _talon_rank_split_marginal(
     u_cap = basis_max[:, :rank_cap]
     if u_cap.numel() == 0:
         return 0, int(min(per_frame_budget, num_visual_tokens))
-    coeff = torch.matmul(u_cap.transpose(0, 1), y_t.float())  # (rank_cap, d)
+    # Budget split is a scoring step; run it in fp32 for numerical stability and dtype consistency.
+    u_cap_f = u_cap.float()
+    y_t_f = y_t.float()
+    coeff = torch.matmul(u_cap_f.transpose(0, 1), y_t_f)  # (rank_cap, d)
     rank_gains = torch.norm(coeff, p=2, dim=-1) ** 2
 
-    sparse_energies = torch.sort(torch.norm(y_t.float(), p=2, dim=-1) ** 2, descending=True).values
+    sparse_energies = torch.sort(torch.norm(y_t_f, p=2, dim=-1) ** 2, descending=True).values
     rank_ptr = 0
     sparse_ptr = 0
     rank = 0
