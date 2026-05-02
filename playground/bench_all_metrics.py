@@ -84,6 +84,7 @@ class BenchmarkArgs:
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
     talon_rank_max: int = field(default=32)
+    talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
@@ -795,6 +796,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
+        talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
@@ -852,6 +854,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
+        talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_use_question_innovation=args.talon_use_question_innovation,
         talon_innovation_qweight=args.talon_innovation_qweight,
@@ -893,7 +896,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
         print(
             "Ours config   : "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
-            f"adaptive={args.adaptive_token_budget}"
+            f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}"
         )
     print(SEPARATOR)
 

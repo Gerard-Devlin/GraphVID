@@ -278,6 +278,71 @@ def _talon_rank_split(per_frame_budget: int, num_visual_tokens: int, flashvid_co
     return int(rank), int(sparse)
 
 
+def _talon_rank_split_marginal(
+    per_frame_budget: int,
+    y_t: torch.Tensor,
+    basis_max: torch.Tensor,
+    num_visual_tokens: int,
+    flashvid_config: FlashVidConfig,
+) -> Tuple[int, int]:
+    """Rate-distortion inspired greedy split between low-rank and sparse budgets."""
+    if per_frame_budget <= 0:
+        return 0, 0
+
+    rank_min = max(1, int(getattr(flashvid_config, "talon_rank_min", 2)))
+    rank_max = max(rank_min, int(getattr(flashvid_config, "talon_rank_max", 32)))
+    rank_cap = min(per_frame_budget, num_visual_tokens, rank_max)
+    if per_frame_budget > 1:
+        rank_cap = min(rank_cap, per_frame_budget - 1)
+    if rank_cap <= 0:
+        return 0, int(min(per_frame_budget, num_visual_tokens))
+
+    # Marginal gain proxies:
+    # - low-rank: coefficient energy captured by each additional basis vector;
+    # - sparse: top residual/source token energies.
+    u_cap = basis_max[:, :rank_cap]
+    if u_cap.numel() == 0:
+        return 0, int(min(per_frame_budget, num_visual_tokens))
+    coeff = torch.matmul(u_cap.transpose(0, 1), y_t.float())  # (rank_cap, d)
+    rank_gains = torch.norm(coeff, p=2, dim=-1) ** 2
+
+    sparse_energies = torch.sort(torch.norm(y_t.float(), p=2, dim=-1) ** 2, descending=True).values
+    rank_ptr = 0
+    sparse_ptr = 0
+    rank = 0
+    sparse = 0
+    neg_inf = torch.tensor(float("-inf"), device=y_t.device)
+    for _ in range(int(per_frame_budget)):
+        gain_rank = rank_gains[rank_ptr] if rank_ptr < rank_cap else neg_inf
+        gain_sparse = sparse_energies[sparse_ptr] if sparse_ptr < sparse_energies.numel() else neg_inf
+        if gain_rank >= gain_sparse and rank_ptr < rank_cap:
+            rank += 1
+            rank_ptr += 1
+        else:
+            sparse += 1
+            sparse_ptr += 1
+
+    # Keep at least one sparse token when possible.
+    if per_frame_budget > 1 and sparse == 0 and rank > 0:
+        rank -= 1
+        sparse += 1
+
+    # Keep minimal background rank when budget allows.
+    if per_frame_budget >= (rank_min + 1):
+        required_rank = min(rank_min, per_frame_budget - 1, rank_cap)
+        if rank < required_rank:
+            delta = required_rank - rank
+            rank = required_rank
+            sparse = max(1, sparse - delta)
+
+    rank = min(rank, rank_cap)
+    sparse = max(0, int(per_frame_budget - rank))
+    if per_frame_budget > 1 and sparse <= 0:
+        rank = max(0, rank - 1)
+        sparse = int(per_frame_budget - rank)
+    return int(rank), int(sparse)
+
+
 def _talon_transport_align(
     segment_features: torch.Tensor,
     flashvid_config: FlashVidConfig,
@@ -441,8 +506,14 @@ def _segment_talon_compression(
     frame_importance = cls_attention.float().mean(dim=1)
     budget_mode = str(getattr(flashvid_config, "talon_budget_mode", "uniform") or "uniform")
     frame_budgets = _talon_allocate_frame_budget(core_budget_talon, frame_importance, budget_mode=budget_mode)
-    rank_sparse = [_talon_rank_split(b, num_visual_tokens, flashvid_config) for b in frame_budgets]
-    max_rank = max((r for r, _ in rank_sparse), default=0)
+    rank_max_cfg = max(1, int(getattr(flashvid_config, "talon_rank_max", 32)))
+    max_rank = max(
+        (
+            min(max(0, int(b) - 1), num_visual_tokens, rank_max_cfg)
+            for b in frame_budgets
+        ),
+        default=0,
+    )
 
     fused_grid = fused_scores.view(num_frames, num_visual_tokens)
     output_mode = str(getattr(flashvid_config, "talon_output_mode", "manifold") or "manifold").strip().lower()
@@ -453,6 +524,20 @@ def _segment_talon_compression(
         need_slot_to_source=coefficient_output,
     )
     basis_max = _talon_compute_lowrank_basis(aligned_features, max_rank)
+    budget_strategy = str(getattr(flashvid_config, "talon_budget_strategy", "marginal") or "marginal").strip().lower()
+    if budget_strategy == "marginal":
+        rank_sparse = [
+            _talon_rank_split_marginal(
+                per_frame_budget=int(frame_budgets[t]),
+                y_t=aligned_features[t],
+                basis_max=basis_max,
+                num_visual_tokens=num_visual_tokens,
+                flashvid_config=flashvid_config,
+            )
+            for t in range(num_frames)
+        ]
+    else:
+        rank_sparse = [_talon_rank_split(int(b), num_visual_tokens, flashvid_config) for b in frame_budgets]
     reconstruction_blend = float(getattr(flashvid_config, "talon_reconstruction_blend", 0.25))
     reconstruction_blend = min(max(reconstruction_blend, 0.0), 1.0)
     anchor_score_weight = float(getattr(flashvid_config, "talon_anchor_score_weight", 0.35))
@@ -1184,6 +1269,92 @@ def _segment_graph_compression(
     )
 
 
+def _resolve_talon_segment_lengths(
+    video_features: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+) -> torch.Tensor:
+    num_frames = int(video_features.shape[0])
+    if not bool(getattr(flashvid_config, "do_segment", True)):
+        return torch.tensor([num_frames], dtype=torch.long, device=video_features.device)
+
+    seg_threshold = float(getattr(flashvid_config, "segment_threshold", 0.9))
+    min_seg_num = int(getattr(flashvid_config, "min_segment_num", 8))
+    complementary_seg = bool(getattr(flashvid_config, "complementary_segment", True))
+    if bool(getattr(flashvid_config, "talon_disable_oversegmentation", True)):
+        # TALON benefits from longer temporal context for transport + low-rank fitting.
+        max_seg = max(1, int(getattr(flashvid_config, "talon_max_segments", 4)))
+        min_seg_num = min(min_seg_num, max_seg, num_frames)
+        complementary_seg = False
+
+    return segment(
+        video_features=video_features.mean(1),
+        segment_threshold=seg_threshold,
+        min_segment_num=min_seg_num,
+        complementary_segment=complementary_seg,
+    )
+
+
+def talon_compression(
+    video_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Pure TALON path: no ADTS/TSTM budgeting or flashvid-style merging."""
+    num_frames, num_visual_tokens, _ = video_features.shape
+    retention_ratio = _resolve_effective_retention_ratio(
+        video_features=video_features,
+        question_features=question_features,
+        flashvid_config=flashvid_config,
+    )
+
+    segment_lengths = _resolve_talon_segment_lengths(video_features, flashvid_config)
+    num_segments = int(segment_lengths.shape[0])
+    global_indices = torch.arange(num_frames * num_visual_tokens, dtype=torch.long, device=video_features.device)
+    global_grid = global_indices.view(num_frames, num_visual_tokens)
+
+    all_segment_features: List[torch.Tensor] = []
+    all_segment_indices: List[torch.Tensor] = []
+    offset = 0
+    for seg_idx in range(num_segments):
+        seg_len = int(segment_lengths[seg_idx].item())
+        segment_features = video_features[offset : offset + seg_len]
+        segment_cls_attention = cls_attention[offset : offset + seg_len]
+        segment_global_indices = global_grid[offset : offset + seg_len]
+        seg_tokens, seg_indices = _segment_talon_compression(
+            segment_features=segment_features,
+            segment_global_indices=segment_global_indices,
+            cls_attention=segment_cls_attention,
+            retention_ratio=retention_ratio,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
+        all_segment_features.append(seg_tokens)
+        all_segment_indices.append(seg_indices)
+        offset += seg_len
+
+    if all_segment_features:
+        final_tokens = torch.cat(all_segment_features, dim=0)
+        final_global_indices = torch.cat(all_segment_indices, dim=0)
+    else:
+        final_tokens = video_features.new_zeros((0, video_features.shape[-1]))
+        final_global_indices = torch.empty((0,), dtype=torch.long, device=video_features.device)
+
+    if final_global_indices.numel() > 0:
+        sorted_indices = final_global_indices.argsort()
+        sorted_tokens = final_tokens[sorted_indices]
+        sorted_global = final_global_indices[sorted_indices]
+    else:
+        sorted_tokens = final_tokens
+        sorted_global = final_global_indices
+
+    # TALON is independent from ADTS/TSTM budgets.
+    flashvid_config.num_attn_div_tokens = None
+    flashvid_config.num_sttm_tokens = None
+    flashvid_config.visual_token_length = int(sorted_tokens.shape[0])
+    return sorted_tokens, sorted_global
+
+
 def flashvid_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -1194,6 +1365,14 @@ def flashvid_compression(
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
     if compression_variant in ("graph", "slot"):
         compression_variant = "talon"
+    if compression_variant == "talon":
+        return talon_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
+
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
         question_features=question_features,
@@ -1202,20 +1381,11 @@ def flashvid_compression(
 
     # 1. Partition the video frames into segments based on transition similarities.
     if flashvid_config.do_segment:
-        seg_threshold = flashvid_config.segment_threshold
-        min_seg_num = flashvid_config.min_segment_num
-        complementary_seg = flashvid_config.complementary_segment
-        if compression_variant == "talon" and bool(getattr(flashvid_config, "talon_disable_oversegmentation", True)):
-            # TALON relies on temporal structure; excessive short segments hurt both
-            # low-rank background quality and runtime amortization.
-            max_seg = max(1, int(getattr(flashvid_config, "talon_max_segments", 4)))
-            min_seg_num = min(int(min_seg_num), max_seg, num_frames)
-            complementary_seg = False
         segment_lengths = segment(
             video_features=video_features.mean(1),
-            segment_threshold=seg_threshold,
-            min_segment_num=min_seg_num,
-            complementary_segment=complementary_seg,
+            segment_threshold=flashvid_config.segment_threshold,
+            min_segment_num=flashvid_config.min_segment_num,
+            complementary_segment=flashvid_config.complementary_segment,
         )
     else:
         # Treat the whole video as a single segment.
@@ -1240,22 +1410,12 @@ def flashvid_compression(
         segment_features = video_features[offset : offset + seg_len]
         segment_cls_attention = cls_attention[offset : offset + seg_len]
         segment_global_indices = global_indices.view(num_frames, num_visual_tokens)[offset : offset + seg_len]
-        if compression_variant == "talon":
-            segment_features, segment_global_indices = _segment_talon_compression(
-                segment_features=segment_features,
-                segment_global_indices=segment_global_indices,
-                cls_attention=segment_cls_attention,
-                retention_ratio=retention_ratio,
-                flashvid_config=flashvid_config,
-                question_features=question_features,
-            )
-        else:
-            segment_features, segment_global_indices = segment_compression(
-                segment_features=segment_features,
-                segment_global_indices=segment_global_indices,
-                cls_attention=segment_cls_attention,
-                flashvid_config=flashvid_config,
-            )
+        segment_features, segment_global_indices = segment_compression(
+            segment_features=segment_features,
+            segment_global_indices=segment_global_indices,
+            cls_attention=segment_cls_attention,
+            flashvid_config=flashvid_config,
+        )
         all_segment_features.append(segment_features)
         all_segment_indices.append(segment_global_indices)
         offset += seg_len

@@ -112,6 +112,7 @@ def flashvid(
     talon_rank_ratio: float = 0.40,
     talon_rank_min: int = 2,
     talon_rank_max: int = 32,
+    talon_budget_strategy: str = "marginal",
     talon_budget_mode: str = "uniform",
     talon_use_question_innovation: bool = True,
     talon_innovation_qweight: float = 0.25,
@@ -182,6 +183,7 @@ def flashvid(
         talon_rank_ratio (float, optional): Per-frame low-rank share in TALON token budget.
         talon_rank_min (int, optional): Minimum TALON low-rank token count per frame when budget allows.
         talon_rank_max (int, optional): Maximum TALON low-rank token count per frame.
+        talon_budget_strategy (str, optional): Budget split policy, one of {"ratio","marginal"}.
         talon_budget_mode (str, optional): Frame budget policy, one of {"uniform","attention"}.
         talon_use_question_innovation (bool, optional): Reweight innovation selection with question cues.
         talon_innovation_qweight (float, optional): Question-aware weight for innovation scoring.
@@ -292,6 +294,7 @@ def flashvid(
         talon_rank_ratio=talon_rank_ratio,
         talon_rank_min=talon_rank_min,
         talon_rank_max=talon_rank_max,
+        talon_budget_strategy=talon_budget_strategy,
         talon_budget_mode=talon_budget_mode,
         talon_use_question_innovation=talon_use_question_innovation,
         talon_innovation_qweight=talon_innovation_qweight,
