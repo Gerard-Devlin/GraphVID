@@ -63,6 +63,7 @@ class BenchmarkArgs:
     # New experimental knobs (optional)
     compression_variant: str = field(default="talon")
     question_aware_reweighting: bool = field(default=False)
+    question_reweight_beta: float = field(default=0.35)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
@@ -829,6 +830,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="flashvid",
         question_aware_reweighting=False,
+        question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=False,
         talon_transport_radius=args.talon_transport_radius,
         talon_rank_ratio=args.talon_rank_ratio,
@@ -892,6 +894,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         llm_retention_ratio=llm_retention_ratio,
         compression_variant=args.compression_variant,
         question_aware_reweighting=args.question_aware_reweighting,
+        question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
