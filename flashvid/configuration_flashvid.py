@@ -79,6 +79,8 @@ class FlashVidConfig:
     talon_output_mode: str = field(default="manifold")  # manifold | coefficient
     talon_reconstruction_blend: float = field(default=0.25)
     talon_anchor_score_weight: float = field(default=0.35)
+    talon_passthrough_ratio: float = field(default=0.15)
+    talon_passthrough_min: int = field(default=2)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

@@ -43,6 +43,7 @@ class BenchmarkArgs:
     max_new_tokens: int = field(default=16)
 
     # Which phases to run
+    run_baseline: bool = field(default=True)
     run_flashvid: bool = field(default=True)
     run_ours: bool = field(default=True)
 
@@ -89,6 +90,8 @@ class BenchmarkArgs:
     talon_output_mode: str = field(default="manifold")
     talon_reconstruction_blend: float = field(default=0.25)
     talon_anchor_score_weight: float = field(default=0.35)
+    talon_passthrough_ratio: float = field(default=0.15)
+    talon_passthrough_min: int = field(default=2)
     memory_token_ratio: float = field(default=0.10)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
@@ -796,6 +799,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_output_mode=args.talon_output_mode,
         talon_reconstruction_blend=args.talon_reconstruction_blend,
         talon_anchor_score_weight=args.talon_anchor_score_weight,
+        talon_passthrough_ratio=args.talon_passthrough_ratio,
+        talon_passthrough_min=args.talon_passthrough_min,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -849,6 +854,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_output_mode=args.talon_output_mode,
         talon_reconstruction_blend=args.talon_reconstruction_blend,
         talon_anchor_score_weight=args.talon_anchor_score_weight,
+        talon_passthrough_ratio=args.talon_passthrough_ratio,
+        talon_passthrough_min=args.talon_passthrough_min,
         memory_token_ratio=args.memory_token_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
@@ -872,7 +879,10 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Frames        : {args.num_frames}")
     print(f"Warmup/Runs   : {args.num_warmup}/{args.num_runs}")
     print(f"Max new tokens: {args.max_new_tokens}")
-    print(f"Run phases    : baseline, flashvid={args.run_flashvid}, ours={args.run_ours}")
+    print(
+        "Run phases    : "
+        f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, ours={args.run_ours}"
+    )
     if args.run_ours:
         print(
             "Ours config   : "
@@ -928,6 +938,8 @@ def run(args: BenchmarkArgs):
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
+    if not (args.run_baseline or args.run_flashvid or args.run_ours):
+        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours")
 
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
@@ -936,19 +948,20 @@ def run(args: BenchmarkArgs):
         print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
     print(f"Loaded {len(samples)} samples.\n")
 
-    total_phases = 1 + int(args.run_flashvid) + int(args.run_ours)
+    total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours)
     phase_idx = 1
 
-    print(f"Phase {phase_idx}/{total_phases}: Baseline ...")
-    _run_phase(
-        model_bundle=model_bundle,
-        args=args,
-        samples=samples,
-        phase_name="Baseline",
-        use_acceleration=False,
-        output_path=args.baseline_output,
-    )
-    phase_idx += 1
+    if args.run_baseline:
+        print(f"Phase {phase_idx}/{total_phases}: Baseline ...")
+        _run_phase(
+            model_bundle=model_bundle,
+            args=args,
+            samples=samples,
+            phase_name="Baseline",
+            use_acceleration=False,
+            output_path=args.baseline_output,
+        )
+        phase_idx += 1
 
     if args.run_flashvid:
         print(f"\nPhase {phase_idx}/{total_phases}: FlashVID ...")
@@ -975,25 +988,28 @@ def run(args: BenchmarkArgs):
             output_path=args.ours_output,
         )
 
-    baseline_records = _read_jsonl(args.baseline_output)
-    summary: dict[str, Any] = {
-        "baseline": _summarize_phase(baseline_records),
-        "comparison": {},
-    }
+    summary: dict[str, Any] = {"comparison": {}}
+    baseline_records = None
     flashvid_records = None
     ours_records = None
+    if args.run_baseline:
+        baseline_records = _read_jsonl(args.baseline_output)
+        summary["baseline"] = _summarize_phase(baseline_records)
     if args.run_flashvid:
         flashvid_records = _read_jsonl(args.flashvid_output)
         summary["flashvid"] = _summarize_phase(flashvid_records)
+    if args.run_ours:
+        ours_records = _read_jsonl(args.ours_output)
+        summary["ours"] = _summarize_phase(ours_records)
+
+    if baseline_records is not None and flashvid_records is not None:
         summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
             baseline_records,
             flashvid_records,
             anchor_name="baseline",
             target_name="flashvid",
         )
-    if args.run_ours:
-        ours_records = _read_jsonl(args.ours_output)
-        summary["ours"] = _summarize_phase(ours_records)
+    if baseline_records is not None and ours_records is not None:
         summary["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
             baseline_records,
             ours_records,
