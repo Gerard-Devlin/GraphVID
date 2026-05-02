@@ -14,7 +14,6 @@ from .configuration_flashvid import FlashVidConfig
 class _TransportState:
     aligned: torch.Tensor
     source_to_aligned: torch.Tensor
-    aligned_to_source: torch.Tensor
 
 
 @dataclass
@@ -164,26 +163,13 @@ def _build_local_neighbors(num_visual_tokens: int, config: FlashVidConfig, devic
     return neighbor_idx, valid
 
 
-def _aligned_representatives(best_aligned: torch.Tensor, best_score: torch.Tensor, num_positions: int) -> torch.Tensor:
-    reps = torch.empty((num_positions,), dtype=torch.long, device=best_aligned.device)
-    for aligned_idx in range(num_positions):
-        assigned = torch.where(best_aligned == aligned_idx)[0]
-        if assigned.numel() == 0:
-            reps[aligned_idx] = aligned_idx
-        elif assigned.numel() == 1:
-            reps[aligned_idx] = assigned[0]
-        else:
-            reps[aligned_idx] = assigned[torch.argmax(best_score[assigned])]
-    return reps
-
-
 def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> _TransportState:
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     device = segment_features.device
     identity = torch.arange(num_visual_tokens, dtype=torch.long, device=device)
     if num_frames <= 1:
         mapping = identity.unsqueeze(0).repeat(num_frames, 1)
-        return _TransportState(segment_features, mapping, mapping)
+        return _TransportState(segment_features, mapping)
 
     neighbor_idx, neighbor_valid = _build_local_neighbors(num_visual_tokens, config, device)
     mode = str(getattr(config, "talon_transport_mode", "hard") or "hard").strip().lower()
@@ -191,9 +177,7 @@ def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> 
 
     aligned = segment_features.clone()
     source_to_aligned = torch.empty((num_frames, num_visual_tokens), dtype=torch.long, device=device)
-    aligned_to_source = torch.empty((num_frames, num_visual_tokens), dtype=torch.long, device=device)
     source_to_aligned[0] = identity
-    aligned_to_source[0] = identity
 
     for t in range(1, num_frames):
         prev = aligned[t - 1]
@@ -205,7 +189,6 @@ def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> 
         sims = sims.masked_fill(~neighbor_valid, -1e9)
         best_pos = torch.argmax(sims, dim=1)
         best_aligned = neighbor_idx[identity, best_pos]
-        best_score = sims[identity, best_pos]
 
         if mode in ("soft", "entropy", "entropic"):
             weights = torch.softmax(sims / temperature, dim=1).to(cur.dtype)
@@ -233,9 +216,8 @@ def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> 
             aligned_t[empty] = cur[empty]
         aligned[t] = aligned_t
         source_to_aligned[t] = best_aligned
-        aligned_to_source[t] = _aligned_representatives(best_aligned, best_score, num_visual_tokens)
 
-    return _TransportState(aligned=aligned, source_to_aligned=source_to_aligned, aligned_to_source=aligned_to_source)
+    return _TransportState(aligned=aligned, source_to_aligned=source_to_aligned)
 
 
 def _lowrank_basis(aligned_features: torch.Tensor, max_rank: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -340,6 +322,8 @@ class TalonCompressor:
 
         self.config.num_attn_div_tokens = None
         self.config.num_sttm_tokens = None
+        self.config.vision_token_length = int(final_tokens.shape[0])
+        self.config.llm_token_length = None
         self.config.visual_token_length = int(final_tokens.shape[0])
         return final_tokens, final_indices
 
@@ -363,8 +347,12 @@ class TalonCompressor:
         fused_scores, _ = _question_aware_scores(flat_features, flat_attention, question_features, self.config)
         fused_grid = fused_scores.view(num_frames, num_visual_tokens)
 
-        effective_ratio = min(1.0, max(0.01, retention_ratio * float(getattr(self.config, "expansion", 1.0))))
-        target_budget = max(1, min(num_tokens, int(math.ceil(num_tokens * effective_ratio))))
+        target_budget = self._resolve_target_budget(
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            num_tokens=num_tokens,
+            retention_ratio=retention_ratio,
+        )
         memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
         core_budget = max(1, target_budget - memory_budget)
 
@@ -460,6 +448,26 @@ class TalonCompressor:
             all_indices = core_index_tensor
         return all_tokens, all_indices
 
+    def _resolve_target_budget(
+        self,
+        num_frames: int,
+        num_visual_tokens: int,
+        num_tokens: int,
+        retention_ratio: float,
+    ) -> int:
+        per_frame_target = int(getattr(self.config, "talon_target_tokens_per_frame", 0) or 0)
+        if per_frame_target > 0:
+            budget = num_frames * max(1, min(per_frame_target, num_visual_tokens))
+        else:
+            budget_scale = float(getattr(self.config, "talon_budget_scale", 0.60))
+            budget_scale = min(max(budget_scale, 0.05), 1.50)
+            effective_ratio = retention_ratio * float(getattr(self.config, "expansion", 1.0)) * budget_scale
+            effective_ratio = min(1.0, max(0.005, effective_ratio))
+            budget = int(math.ceil(num_tokens * effective_ratio))
+
+        min_total = max(1, int(getattr(self.config, "talon_min_total_tokens", 1) or 1))
+        return max(1, min(num_tokens, max(min_total, int(budget))))
+
     def _resolve_passthrough_budget(self, core_budget: int) -> int:
         ratio = min(max(float(getattr(self.config, "talon_passthrough_ratio", 0.15)), 0.0), 0.90)
         min_tokens = max(0, int(getattr(self.config, "talon_passthrough_min", 2)))
@@ -496,6 +504,36 @@ class TalonCompressor:
         best_reconstruction = torch.zeros_like(segment_features)
         spectral_weight = float(getattr(self.config, "talon_rd_spectral_weight", 1.0))
         innovation_weight = float(getattr(self.config, "talon_rd_innovation_weight", 1.0))
+
+        if _safe_bool(getattr(self.config, "talon_fast_rank_plan", True)):
+            # Rate-distortion proxy: choose the background rank from spectral tail
+            # and raw-token innovation energy, then reconstruct only once.
+            flat_energy = torch.norm(segment_features.float(), p=2, dim=-1).reshape(-1) ** 2
+            flat_energy = flat_energy.masked_fill(selected, 0.0)
+            sorted_energy = torch.sort(flat_energy, descending=True).values
+            prefix = F.pad(torch.cumsum(sorted_energy, dim=0), (1, 0), value=0.0)
+            total_energy = prefix[-1]
+
+            for rank in candidates:
+                rank_cost = int(rank) * num_frames
+                if rank_cost > talon_budget:
+                    continue
+                innovation_budget = min(max(0, talon_budget - rank_cost), sorted_energy.numel())
+                residual_tail_proxy = total_energy - prefix[innovation_budget]
+                spectral_tail = eigvals[rank:].sum() if rank < eigvals.numel() else eigvals.new_tensor(0.0)
+                score = spectral_weight * spectral_tail + innovation_weight * residual_tail_proxy
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_rank = int(rank)
+
+            best_reconstruction = self._reconstruct_source(transport, basis[:, :best_rank])
+            residual = segment_features.float() - best_reconstruction.float()
+            best_residual_scores = torch.norm(residual, p=2, dim=-1).reshape(-1) ** 2
+            return _RankPlan(
+                rank=best_rank,
+                residual_scores=best_residual_scores,
+                reconstruction_source=best_reconstruction,
+            )
 
         for rank in candidates:
             rank_cost = int(rank) * num_frames

@@ -188,6 +188,8 @@ def flashvid_compression(
     sorted_indices = final_global_indices.argsort()
     sorted_tokens = final_tokens[sorted_indices]  # Sort by global indices.
     # Store the final token length in the `flashvid_config`.
+    flashvid_config.vision_token_length = int(sorted_tokens.shape[0])
+    flashvid_config.llm_token_length = None
     flashvid_config.visual_token_length = sorted_tokens.shape[0]
     # print(f"#Visual Tokens After Vision-Side Compression : {flashvid_config.visual_token_length}")
     return sorted_tokens, final_global_indices[sorted_indices]
@@ -586,6 +588,7 @@ def fastv_prune(
     device = hidden_states.device
     # No-op shortcut: disable inner-LLM pruning when retention ratio is >= 1.
     if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) >= 0.9999:
+        flashvid_config.llm_token_length = getattr(flashvid_config, "visual_token_length", None)
         keep_indices = torch.arange(seq_length, device=device, dtype=torch.long)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices
 
@@ -644,5 +647,6 @@ def fastv_prune(
         # Use index-select instead of naive truncation because keep_indices is a sparse subset.
         causal_mask = causal_mask.index_select(2, keep_indices).index_select(3, keep_indices)
     # Update flashvid config.
+    flashvid_config.llm_token_length = num_retained_tokens
     flashvid_config.visual_token_length = num_retained_tokens
     return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices

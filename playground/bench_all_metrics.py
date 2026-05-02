@@ -71,6 +71,10 @@ class BenchmarkArgs:
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
     talon_rank_max: int = field(default=32)
+    talon_budget_scale: float = field(default=0.60)
+    talon_target_tokens_per_frame: int = field(default=0)
+    talon_min_total_tokens: int = field(default=1)
+    talon_fast_rank_plan: bool = field(default=True)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -481,19 +485,28 @@ def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) 
     return _extract_choice_letter(text[:8]), gen_tokens
 
 
-def _get_compressed_visual_tokens(model, raw_visual_tokens: int, use_acceleration: bool) -> int:
-    if not use_acceleration:
-        return raw_visual_tokens
-    if not hasattr(model, "flashvid_config"):
-        return raw_visual_tokens
-    cfg = getattr(model, "flashvid_config")
-    length = getattr(cfg, "visual_token_length", None)
-    if length is None:
-        return raw_visual_tokens
+def _safe_int_metric(value, fallback: int) -> int:
+    if value is None:
+        return fallback
     try:
-        return int(length)
+        return int(value)
     except Exception:
-        return raw_visual_tokens
+        return fallback
+
+
+def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: bool) -> tuple[int, int]:
+    if not use_acceleration or not hasattr(model, "flashvid_config"):
+        return raw_visual_tokens, raw_visual_tokens
+    cfg = getattr(model, "flashvid_config")
+    vision_length = _safe_int_metric(
+        getattr(cfg, "vision_token_length", None),
+        _safe_int_metric(getattr(cfg, "visual_token_length", None), raw_visual_tokens),
+    )
+    final_length = _safe_int_metric(
+        getattr(cfg, "llm_token_length", None),
+        _safe_int_metric(getattr(cfg, "visual_token_length", None), vision_length),
+    )
+    return final_length, vision_length
 
 
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
@@ -529,6 +542,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     pred_answer = ""
     gen_tokens_per_run = []
     compressed_tokens_per_run = []
+    vision_tokens_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -561,13 +575,14 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             pred_answer = answer
         latencies.append(float(latency_ms))
         gen_tokens_per_run.append(float(gen_tokens))
-        compressed_tokens_per_run.append(
-            float(_get_compressed_visual_tokens(model, raw_visual_tokens, use_acceleration))
-        )
+        final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
+        compressed_tokens_per_run.append(float(final_tokens))
+        vision_tokens_per_run.append(float(vision_tokens))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
     compressed_visual_tokens = float(np.mean(compressed_tokens_per_run)) if compressed_tokens_per_run else float(raw_visual_tokens)
+    vision_compressed_visual_tokens = float(np.mean(vision_tokens_per_run)) if vision_tokens_per_run else float(raw_visual_tokens)
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -579,6 +594,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "tokens_per_second": tps,
         "raw_visual_tokens": float(raw_visual_tokens),
         "compressed_visual_tokens": compressed_visual_tokens,
+        "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
     }
 
 
@@ -594,7 +610,9 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "tokens_per_second": None,
         "raw_visual_tokens": None,
         "compressed_visual_tokens": None,
+        "vision_compressed_visual_tokens": None,
         "visual_token_reduction_ratio": None,
+        "vision_visual_token_reduction_ratio": None,
         "error": None,
         "error_traceback": None,
     }
@@ -604,9 +622,12 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         result = _run_benchmark_once(model_bundle, args, prepared_inputs, use_acceleration=use_acceleration)
         raw_v = result["raw_visual_tokens"]
         compressed_v = result["compressed_visual_tokens"]
+        vision_compressed_v = result["vision_compressed_visual_tokens"]
         reduction_ratio = None
+        vision_reduction_ratio = None
         if raw_v and raw_v > 0:
             reduction_ratio = float(max(0.0, 1.0 - (compressed_v / raw_v)))
+            vision_reduction_ratio = float(max(0.0, 1.0 - (vision_compressed_v / raw_v)))
 
         record.update(
             {
@@ -617,7 +638,9 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "tokens_per_second": result["tokens_per_second"],
                 "raw_visual_tokens": raw_v,
                 "compressed_visual_tokens": compressed_v,
+                "vision_compressed_visual_tokens": vision_compressed_v,
                 "visual_token_reduction_ratio": reduction_ratio,
+                "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
         )
     except Exception as exc:  # pragma: no cover - runtime path
@@ -666,11 +689,12 @@ def _run_phase(
             else:
                 latency_ms = float(record["latency_ms"])
                 compressed_v = float(record["compressed_visual_tokens"])
+                vision_v = float(record.get("vision_compressed_visual_tokens") or compressed_v)
                 raw_v = float(record["raw_visual_tokens"])
                 print(
                     f"[{phase_name}] {idx}/{len(samples)} {record.get('question_id')} "
                     f"acc={record['correct']} latency={latency_ms:.2f}ms "
-                    f"vtoken={compressed_v:.1f}/{raw_v:.1f}"
+                    f"vtoken={compressed_v:.1f}/{raw_v:.1f} vision={vision_v:.1f}/{raw_v:.1f}"
                 )
 
 
@@ -687,7 +711,17 @@ def _summarize_phase(records: list[dict[str, Any]]):
     tps = [float(r["tokens_per_second"]) for r in valid if r.get("tokens_per_second") is not None]
     raw_visual = [float(r["raw_visual_tokens"]) for r in valid if r.get("raw_visual_tokens") is not None]
     compressed_visual = [float(r["compressed_visual_tokens"]) for r in valid if r.get("compressed_visual_tokens") is not None]
+    vision_compressed_visual = [
+        float(r["vision_compressed_visual_tokens"])
+        for r in valid
+        if r.get("vision_compressed_visual_tokens") is not None
+    ]
     reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
+    vision_reduction = [
+        float(r["vision_visual_token_reduction_ratio"])
+        for r in valid
+        if r.get("vision_visual_token_reduction_ratio") is not None
+    ]
 
     return {
         "num_samples": len(records),
@@ -699,7 +733,9 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "tokens_per_second": _stats(tps),
         "raw_visual_tokens": _stats(raw_visual),
         "compressed_visual_tokens": _stats(compressed_visual),
+        "vision_compressed_visual_tokens": _stats(vision_compressed_visual),
         "visual_token_reduction_ratio": _stats(reduction),
+        "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
 
 
@@ -723,7 +759,9 @@ def _summarize_pairwise_comparison(
 
     latency_ratios = []
     token_ratios = []
+    vision_token_ratios = []
     reduction_gains = []
+    vision_reduction_gains = []
     for b, f in matched:
         b_lat = b.get("latency_ms")
         f_lat = f.get("latency_ms")
@@ -736,11 +774,19 @@ def _summarize_pairwise_comparison(
             token_ratios.append(float(f_v) / float(b_v))
             reduction_gains.append(float(1.0 - (f_v / b_v)))
 
+        b_vision_v = b.get("vision_compressed_visual_tokens")
+        f_vision_v = f.get("vision_compressed_visual_tokens")
+        if b_vision_v and f_vision_v and b_vision_v > 0:
+            vision_token_ratios.append(float(f_vision_v) / float(b_vision_v))
+            vision_reduction_gains.append(float(1.0 - (f_vision_v / b_vision_v)))
+
     return {
         "matched_samples": len(matched),
         "latency_speedup_ratio": _stats(latency_ratios),
         f"visual_token_ratio_{target_name}_over_{anchor_name}": _stats(token_ratios),
         f"visual_token_reduction_vs_{anchor_name}": _stats(reduction_gains),
+        f"vision_token_ratio_{target_name}_over_{anchor_name}": _stats(vision_token_ratios),
+        f"vision_token_reduction_vs_{anchor_name}": _stats(vision_reduction_gains),
     }
 
 
@@ -776,6 +822,10 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
+        talon_budget_scale=args.talon_budget_scale,
+        talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
+        talon_min_total_tokens=args.talon_min_total_tokens,
+        talon_fast_rank_plan=args.talon_fast_rank_plan,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -825,6 +875,10 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,
         talon_rank_max=args.talon_rank_max,
+        talon_budget_scale=args.talon_budget_scale,
+        talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
+        talon_min_total_tokens=args.talon_min_total_tokens,
+        talon_fast_rank_plan=args.talon_fast_rank_plan,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -871,7 +925,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
         print(
             "Ours config   : "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
-            f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}"
+            f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
+            f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}"
         )
     print(SEPARATOR)
 
@@ -889,13 +944,19 @@ def _print_summary(summary: dict[str, Any]):
         print(f"[{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}")
         lat_mean = phase["latency_ms"]["mean"]
         vt_mean = phase["compressed_visual_tokens"]["mean"]
+        vision_vt_mean = phase["vision_compressed_visual_tokens"]["mean"]
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
+        vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
             print(f"  latency mean: {lat_mean:.2f} ms")
         if vt_mean is not None:
-            print(f"  visual tokens mean: {vt_mean:.2f}")
+            print(f"  final visual tokens mean: {vt_mean:.2f}")
+        if vision_vt_mean is not None:
+            print(f"  vision-side tokens mean: {vision_vt_mean:.2f}")
         if red_mean is not None:
-            print(f"  token reduction mean: {red_mean * 100:.2f}%")
+            print(f"  final token reduction mean: {red_mean * 100:.2f}%")
+        if vision_red_mean is not None:
+            print(f"  vision-side token reduction mean: {vision_red_mean * 100:.2f}%")
 
     comparison = summary.get("comparison", {})
     if comparison:
@@ -907,7 +968,10 @@ def _print_summary(summary: dict[str, Any]):
             lat_sp = comp["latency_speedup_ratio"]["mean"]
             ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
             reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
+            vision_ratio_key = next((k for k in comp.keys() if k.startswith("vision_token_ratio_")), None)
+            vision_reduction_key = next((k for k in comp.keys() if k.startswith("vision_token_reduction_vs_")), None)
             token_red = comp[reduction_key]["mean"] if reduction_key else None
+            vision_token_red = comp[vision_reduction_key]["mean"] if vision_reduction_key else None
             print(f"  [{key}] matched={comp['matched_samples']}")
             if lat_sp is not None:
                 print(f"    latency speedup: {lat_sp:.3f}x")
@@ -915,6 +979,10 @@ def _print_summary(summary: dict[str, Any]):
                 print(f"    {ratio_key}: {comp[ratio_key]['mean']:.3f}")
             if token_red is not None:
                 print(f"    token reduction: {token_red * 100:.2f}%")
+            if vision_ratio_key and comp[vision_ratio_key]["mean"] is not None:
+                print(f"    {vision_ratio_key}: {comp[vision_ratio_key]['mean']:.3f}")
+            if vision_token_red is not None:
+                print(f"    vision-side token reduction: {vision_token_red * 100:.2f}%")
     print(SEPARATOR)
 
 

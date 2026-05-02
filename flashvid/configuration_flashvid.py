@@ -37,6 +37,8 @@ class FlashVidConfig:
     # Inner-LLM Compression params.
     visual_token_start_index: Optional[int] = field(default=None)
     visual_token_length: Optional[int] = field(default=None)
+    vision_token_length: Optional[int] = field(default=None)
+    llm_token_length: Optional[int] = field(default=None)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -55,6 +57,10 @@ class FlashVidConfig:
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
     talon_rank_max: int = field(default=32)
+    talon_budget_scale: float = field(default=0.60)
+    talon_target_tokens_per_frame: int = field(default=0)
+    talon_min_total_tokens: int = field(default=1)
+    talon_fast_rank_plan: bool = field(default=True)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft

@@ -184,6 +184,8 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                             frame_visual_tokens = torch.cat((frame_visual_tokens, self.model.image_newline[None].to(image_feature.device)), dim=0)
                             compressed_visual_token_list.append(frame_visual_tokens)
                         image_feature = torch.cat(compressed_visual_token_list, dim=0)
+                        flashvid_config.vision_token_length = int(image_feature.shape[0])
+                        flashvid_config.llm_token_length = None
                         flashvid_config.visual_token_length = image_feature.shape[0] # * Update the visual token length in the config
                         # print(f"visual token length: {flashvid_config.visual_token_length}") # ? Debugging line
                         # new_image_features.append(image_feature.flatten(0, 1))

@@ -511,6 +511,8 @@ def Qwen2_5_VLModel_forward(
         visual_end_index = visual_start_index + visual_length
         # Update FlashVid config.
         flashvid_config.visual_token_start_index = visual_start_index
+        flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
+        flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0]
         # Filter `position_ids`, `attention_mask`, `inputs_embeds`
         global_indices = torch.arange(input_ids.shape[-1]).to(input_ids)

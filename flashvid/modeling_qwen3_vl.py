@@ -340,6 +340,8 @@ def Qwen3VLModel_forward(
         visual_length = n_video_tokens
         # Update FlashVid config.
         flashvid_config.visual_token_start_index = visual_start_index
+        flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
+        flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
         # ! Filter deepstack_visual_embeds
         deepstack_visual_embeds = [deepstack_visual_embed[keep_visual_global_indices] for deepstack_visual_embed in deepstack_visual_embeds]

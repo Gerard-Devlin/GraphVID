@@ -97,6 +97,10 @@ def flashvid(
     talon_rank_ratio: float = 0.40,
     talon_rank_min: int = 2,
     talon_rank_max: int = 32,
+    talon_budget_scale: float = 0.60,
+    talon_target_tokens_per_frame: int = 0,
+    talon_min_total_tokens: int = 1,
+    talon_fast_rank_plan: bool = True,
     talon_budget_strategy: str = "marginal",
     talon_budget_mode: str = "uniform",
     talon_transport_mode: str = "hard",
@@ -158,6 +162,10 @@ def flashvid(
         talon_rank_ratio (float, optional): Per-frame low-rank share in TALON token budget.
         talon_rank_min (int, optional): Minimum TALON low-rank token count per frame when budget allows.
         talon_rank_max (int, optional): Maximum TALON low-rank token count per frame.
+        talon_budget_scale (float, optional): TALON-only multiplier over the shared visual budget.
+        talon_target_tokens_per_frame (int, optional): Fixed TALON target width per frame; 0 disables it.
+        talon_min_total_tokens (int, optional): Lower bound on TALON output tokens per segment.
+        talon_fast_rank_plan (bool, optional): Use one-pass rate-distortion rank planning.
         talon_budget_strategy (str, optional): Budget split policy, one of {"ratio","marginal"}.
         talon_budget_mode (str, optional): Frame budget policy, one of {"uniform","attention"}.
         talon_transport_mode (str, optional): Local transport mode, one of {"hard","soft"}.
@@ -258,6 +266,10 @@ def flashvid(
         talon_rank_ratio=talon_rank_ratio,
         talon_rank_min=talon_rank_min,
         talon_rank_max=talon_rank_max,
+        talon_budget_scale=talon_budget_scale,
+        talon_target_tokens_per_frame=talon_target_tokens_per_frame,
+        talon_min_total_tokens=talon_min_total_tokens,
+        talon_fast_rank_plan=talon_fast_rank_plan,
         talon_budget_strategy=talon_budget_strategy,
         talon_budget_mode=talon_budget_mode,
         talon_transport_mode=talon_transport_mode,
