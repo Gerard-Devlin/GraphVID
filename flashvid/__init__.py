@@ -103,6 +103,9 @@ def flashvid(
     talon_fast_rank_plan: bool = True,
     talon_background_max_ratio: float = 0.45,
     talon_frame_balanced_selection: bool = True,
+    talon_basis_method: str = "randomized",
+    talon_basis_oversample: int = 4,
+    talon_innovation_attention_weight: float = 0.45,
     talon_budget_strategy: str = "marginal",
     talon_budget_mode: str = "uniform",
     talon_transport_mode: str = "hard",
@@ -112,7 +115,7 @@ def flashvid(
     talon_use_question_innovation: bool = True,
     talon_innovation_qweight: float = 0.25,
     talon_output_mode: str = "manifold",
-    talon_reconstruction_blend: float = 0.25,
+    talon_reconstruction_blend: float = 0.0,
     talon_anchor_score_weight: float = 0.35,
     talon_passthrough_ratio: float = 0.15,
     talon_passthrough_min: int = 2,
@@ -170,6 +173,9 @@ def flashvid(
         talon_fast_rank_plan (bool, optional): Use one-pass rate-distortion rank planning.
         talon_background_max_ratio (float, optional): Max low-rank background share of per-frame TALON budget.
         talon_frame_balanced_selection (bool, optional): Keep passthrough/innovation budgets frame-balanced.
+        talon_basis_method (str, optional): Low-rank basis solver, "randomized" or "covariance".
+        talon_basis_oversample (int, optional): Randomized basis oversampling rank.
+        talon_innovation_attention_weight (float, optional): Attention/fused-score share in innovation scoring.
         talon_budget_strategy (str, optional): Budget split policy, one of {"ratio","marginal"}.
         talon_budget_mode (str, optional): Frame budget policy, one of {"uniform","attention"}.
         talon_transport_mode (str, optional): Local transport mode, one of {"hard","soft"}.
@@ -276,6 +282,9 @@ def flashvid(
         talon_fast_rank_plan=talon_fast_rank_plan,
         talon_background_max_ratio=talon_background_max_ratio,
         talon_frame_balanced_selection=talon_frame_balanced_selection,
+        talon_basis_method=talon_basis_method,
+        talon_basis_oversample=talon_basis_oversample,
+        talon_innovation_attention_weight=talon_innovation_attention_weight,
         talon_budget_strategy=talon_budget_strategy,
         talon_budget_mode=talon_budget_mode,
         talon_transport_mode=talon_transport_mode,

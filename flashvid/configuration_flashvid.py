@@ -63,6 +63,9 @@ class FlashVidConfig:
     talon_fast_rank_plan: bool = field(default=True)
     talon_background_max_ratio: float = field(default=0.45)
     talon_frame_balanced_selection: bool = field(default=True)
+    talon_basis_method: str = field(default="randomized")  # covariance | randomized
+    talon_basis_oversample: int = field(default=4)
+    talon_innovation_attention_weight: float = field(default=0.45)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft
@@ -72,7 +75,7 @@ class FlashVidConfig:
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
     talon_output_mode: str = field(default="manifold")  # manifold | coefficient
-    talon_reconstruction_blend: float = field(default=0.25)
+    talon_reconstruction_blend: float = field(default=0.0)
     talon_anchor_score_weight: float = field(default=0.35)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)

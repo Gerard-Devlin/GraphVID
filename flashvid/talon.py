@@ -220,11 +220,35 @@ def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> 
     return _TransportState(aligned=aligned, source_to_aligned=source_to_aligned)
 
 
-def _lowrank_basis(aligned_features: torch.Tensor, max_rank: int) -> Tuple[torch.Tensor, torch.Tensor]:
+def _lowrank_basis(aligned_features: torch.Tensor, max_rank: int, config: FlashVidConfig) -> Tuple[torch.Tensor, torch.Tensor]:
     _, num_visual_tokens, _ = aligned_features.shape
     max_rank = max(0, min(int(max_rank), int(num_visual_tokens)))
     if max_rank <= 0:
         return aligned_features.new_zeros((num_visual_tokens, 0)), aligned_features.new_zeros((0,), dtype=torch.float32)
+
+    method = str(getattr(config, "talon_basis_method", "randomized") or "randomized").strip().lower()
+    if method in ("randomized", "random", "sketch"):
+        oversample = max(0, int(getattr(config, "talon_basis_oversample", 4)))
+        sketch_rank = min(num_visual_tokens, max_rank + oversample)
+        # Treat aligned video as A in R^{P x (T*d)} and approximate the top
+        # left singular vectors without materializing the P x P covariance/eigh path.
+        matrix = aligned_features.float().permute(1, 0, 2).reshape(num_visual_tokens, -1)
+        generator = torch.Generator(device=matrix.device)
+        generator.manual_seed(0)
+        omega = torch.randn(
+            (matrix.shape[1], sketch_rank),
+            dtype=matrix.dtype,
+            device=matrix.device,
+            generator=generator,
+        )
+        q_basis, _ = torch.linalg.qr(torch.matmul(matrix, omega), mode="reduced")
+        small = torch.matmul(q_basis.transpose(0, 1), matrix)
+        small_cov = torch.matmul(small, small.transpose(0, 1))
+        eigvals_small, eigvecs_small = torch.linalg.eigh(small_cov)
+        order = torch.argsort(eigvals_small, descending=True)
+        eigvals = eigvals_small[order][:max_rank].float()
+        basis = torch.matmul(q_basis, eigvecs_small[:, order[:max_rank]])
+        return basis.to(dtype=aligned_features.dtype), eigvals
 
     cov = torch.zeros((num_visual_tokens, num_visual_tokens), dtype=torch.float32, device=aligned_features.device)
     for frame in aligned_features:
@@ -413,7 +437,7 @@ class TalonCompressor:
         )
 
         transport = _transport_align(segment_features, self.config)
-        basis, eigvals = _lowrank_basis(transport.aligned, rank_cap)
+        basis, eigvals = _lowrank_basis(transport.aligned, rank_cap, self.config)
         rank_plan = self._select_rank_plan(
             segment_features=segment_features,
             transport=transport,
@@ -704,7 +728,9 @@ class TalonCompressor:
         budget_mode: str,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         num_frames, num_visual_tokens, feat_dim = segment_features.shape
-        scores = _normalize_scores(residual_scores)
+        residual_core = _normalize_scores(residual_scores)
+        attention_weight = min(max(float(getattr(self.config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)
+        scores = (1.0 - attention_weight) * residual_core + attention_weight * fused_scores.float()
         if _safe_bool(getattr(self.config, "talon_use_question_innovation", True)):
             q_weight = min(max(float(getattr(self.config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
             scores = (1.0 - q_weight) * scores + q_weight * fused_scores.float()

@@ -77,6 +77,9 @@ class BenchmarkArgs:
     talon_fast_rank_plan: bool = field(default=True)
     talon_background_max_ratio: float = field(default=0.45)
     talon_frame_balanced_selection: bool = field(default=True)
+    talon_basis_method: str = field(default="randomized")
+    talon_basis_oversample: int = field(default=4)
+    talon_innovation_attention_weight: float = field(default=0.45)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -86,7 +89,7 @@ class BenchmarkArgs:
     talon_use_question_innovation: bool = field(default=True)
     talon_innovation_qweight: float = field(default=0.25)
     talon_output_mode: str = field(default="manifold")
-    talon_reconstruction_blend: float = field(default=0.25)
+    talon_reconstruction_blend: float = field(default=0.0)
     talon_anchor_score_weight: float = field(default=0.35)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
@@ -830,6 +833,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_fast_rank_plan=args.talon_fast_rank_plan,
         talon_background_max_ratio=args.talon_background_max_ratio,
         talon_frame_balanced_selection=args.talon_frame_balanced_selection,
+        talon_basis_method=args.talon_basis_method,
+        talon_basis_oversample=args.talon_basis_oversample,
+        talon_innovation_attention_weight=args.talon_innovation_attention_weight,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -885,6 +891,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_fast_rank_plan=args.talon_fast_rank_plan,
         talon_background_max_ratio=args.talon_background_max_ratio,
         talon_frame_balanced_selection=args.talon_frame_balanced_selection,
+        talon_basis_method=args.talon_basis_method,
+        talon_basis_oversample=args.talon_basis_oversample,
+        talon_innovation_attention_weight=args.talon_innovation_attention_weight,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
