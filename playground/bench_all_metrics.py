@@ -80,6 +80,9 @@ class BenchmarkArgs:
     talon_basis_method: str = field(default="randomized")
     talon_basis_oversample: int = field(default=4)
     talon_innovation_attention_weight: float = field(default=0.45)
+    talon_motion_importance_weight: float = field(default=0.35)
+    talon_boundary_importance_weight: float = field(default=0.10)
+    talon_frame_balanced_memory: bool = field(default=True)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -96,6 +99,8 @@ class BenchmarkArgs:
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
     memory_token_ratio: float = field(default=0.10)
+    memory_token_min: int = field(default=1)
+    memory_token_max: int = field(default=16)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
     decode_update_interval: int = field(default=4)
@@ -836,6 +841,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_basis_method=args.talon_basis_method,
         talon_basis_oversample=args.talon_basis_oversample,
         talon_innovation_attention_weight=args.talon_innovation_attention_weight,
+        talon_motion_importance_weight=args.talon_motion_importance_weight,
+        talon_boundary_importance_weight=args.talon_boundary_importance_weight,
+        talon_frame_balanced_memory=args.talon_frame_balanced_memory,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -851,6 +859,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_passthrough_min=args.talon_passthrough_min,
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
+        memory_token_ratio=args.memory_token_ratio,
+        memory_token_min=args.memory_token_min,
+        memory_token_max=args.memory_token_max,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -894,6 +905,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_basis_method=args.talon_basis_method,
         talon_basis_oversample=args.talon_basis_oversample,
         talon_innovation_attention_weight=args.talon_innovation_attention_weight,
+        talon_motion_importance_weight=args.talon_motion_importance_weight,
+        talon_boundary_importance_weight=args.talon_boundary_importance_weight,
+        talon_frame_balanced_memory=args.talon_frame_balanced_memory,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -910,6 +924,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
         memory_token_ratio=args.memory_token_ratio,
+        memory_token_min=args.memory_token_min,
+        memory_token_max=args.memory_token_max,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,

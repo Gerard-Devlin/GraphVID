@@ -106,6 +106,9 @@ def flashvid(
     talon_basis_method: str = "randomized",
     talon_basis_oversample: int = 4,
     talon_innovation_attention_weight: float = 0.45,
+    talon_motion_importance_weight: float = 0.35,
+    talon_boundary_importance_weight: float = 0.10,
+    talon_frame_balanced_memory: bool = True,
     talon_budget_strategy: str = "marginal",
     talon_budget_mode: str = "uniform",
     talon_transport_mode: str = "hard",
@@ -176,6 +179,9 @@ def flashvid(
         talon_basis_method (str, optional): Low-rank basis solver, "randomized" or "covariance".
         talon_basis_oversample (int, optional): Randomized basis oversampling rank.
         talon_innovation_attention_weight (float, optional): Attention/fused-score share in innovation scoring.
+        talon_motion_importance_weight (float, optional): Transition/motion share in frame budget allocation.
+        talon_boundary_importance_weight (float, optional): First/last-frame prior in frame budget allocation.
+        talon_frame_balanced_memory (bool, optional): Build residual memory tokens with frame coverage.
         talon_budget_strategy (str, optional): Budget split policy, one of {"ratio","marginal"}.
         talon_budget_mode (str, optional): Frame budget policy, one of {"uniform","attention"}.
         talon_transport_mode (str, optional): Local transport mode, one of {"hard","soft"}.
@@ -285,6 +291,9 @@ def flashvid(
         talon_basis_method=talon_basis_method,
         talon_basis_oversample=talon_basis_oversample,
         talon_innovation_attention_weight=talon_innovation_attention_weight,
+        talon_motion_importance_weight=talon_motion_importance_weight,
+        talon_boundary_importance_weight=talon_boundary_importance_weight,
+        talon_frame_balanced_memory=talon_frame_balanced_memory,
         talon_budget_strategy=talon_budget_strategy,
         talon_budget_mode=talon_budget_mode,
         talon_transport_mode=talon_transport_mode,

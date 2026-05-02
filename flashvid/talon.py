@@ -295,15 +295,80 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, mo
     return budgets
 
 
+def _frame_importance(
+    segment_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    num_frames = int(segment_features.shape[0])
+    attention = _normalize_scores(cls_attention.float().mean(dim=1))
+    if num_frames <= 1:
+        return attention
+
+    centers = F.normalize(segment_features.float().mean(dim=1), p=2, dim=-1, eps=1e-6)
+    transition = torch.zeros((num_frames,), dtype=torch.float32, device=segment_features.device)
+    delta = 0.5 * (1.0 - torch.sum(centers[:-1] * centers[1:], dim=-1)).clamp(0.0, 2.0)
+    transition[:-1] = torch.maximum(transition[:-1], delta)
+    transition[1:] = torch.maximum(transition[1:], delta)
+    transition = _normalize_scores(transition)
+
+    boundary = torch.zeros_like(transition)
+    boundary[0] = 1.0
+    boundary[-1] = 1.0
+
+    motion_weight = min(max(float(getattr(config, "talon_motion_importance_weight", 0.35)), 0.0), 1.0)
+    boundary_weight = min(max(float(getattr(config, "talon_boundary_importance_weight", 0.10)), 0.0), 1.0)
+    attention_weight = max(0.0, 1.0 - motion_weight - boundary_weight)
+    return _normalize_scores(attention_weight * attention + motion_weight * transition + boundary_weight * boundary)
+
+
 def _build_memory_tokens(
     flat_features: torch.Tensor,
     dropped_indices: torch.Tensor,
     residual_scores: torch.Tensor,
     memory_budget: int,
+    num_frames: Optional[int] = None,
+    num_visual_tokens: Optional[int] = None,
+    frame_importance: Optional[torch.Tensor] = None,
+    budget_mode: str = "uniform",
+    frame_balanced: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     feat_dim = flat_features.shape[-1]
     if memory_budget <= 0 or dropped_indices.numel() == 0:
         return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
+
+    if frame_balanced and num_frames is not None and num_visual_tokens is not None and frame_importance is not None:
+        priorities_all = residual_scores.float()
+        frame_budgets = _allocate_frame_budget(memory_budget, frame_importance, budget_mode)
+        tokens = []
+        indices = []
+        for t, budget_t in enumerate(frame_budgets):
+            if budget_t <= 0:
+                continue
+            start = t * int(num_visual_tokens)
+            end = start + int(num_visual_tokens)
+            frame_mask = (dropped_indices >= start) & (dropped_indices < end)
+            frame_dropped = dropped_indices[frame_mask]
+            if frame_dropped.numel() == 0:
+                continue
+            priorities = priorities_all[frame_dropped].clamp_min(1e-6)
+            order = torch.argsort(priorities, descending=True)
+            frame_dropped = frame_dropped[order]
+            priorities = priorities[order]
+            chunks = torch.chunk(
+                torch.arange(frame_dropped.numel(), device=flat_features.device),
+                min(int(budget_t), int(frame_dropped.numel())),
+            )
+            for chunk in chunks:
+                if chunk.numel() == 0:
+                    continue
+                idx = frame_dropped[chunk]
+                weights = priorities[chunk].to(flat_features.dtype)
+                merged = torch.sum(flat_features[idx] * weights.unsqueeze(-1), dim=0) / weights.sum()
+                tokens.append(merged)
+                indices.append(idx[0])
+        if tokens:
+            return torch.stack(tokens, dim=0), torch.stack(indices, dim=0)
 
     priorities = residual_scores[dropped_indices].float()
     order = torch.argsort(priorities, descending=True)
@@ -406,7 +471,7 @@ class TalonCompressor:
         core_tokens: List[torch.Tensor] = []
         core_indices: List[torch.Tensor] = []
 
-        frame_importance = cls_attention.float().mean(dim=1)
+        frame_importance = _frame_importance(segment_features, cls_attention, self.config)
         budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
 
         passthrough_budget = self._resolve_passthrough_budget(core_budget)
@@ -500,6 +565,11 @@ class TalonCompressor:
             dropped_indices=dropped,
             residual_scores=residual_scores,
             memory_budget=memory_budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            frame_importance=frame_importance,
+            budget_mode=budget_mode,
+            frame_balanced=_safe_bool(getattr(self.config, "talon_frame_balanced_memory", True)),
         )
         if mem_tokens.numel() > 0:
             all_tokens = torch.cat([core_token_tensor, mem_tokens], dim=0)
