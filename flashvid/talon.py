@@ -332,10 +332,12 @@ def _build_memory_tokens(
     frame_importance: Optional[torch.Tensor] = None,
     budget_mode: str = "uniform",
     frame_balanced: bool = False,
+    memory_mode: str = "raw",
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     feat_dim = flat_features.shape[-1]
     if memory_budget <= 0 or dropped_indices.numel() == 0:
         return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
+    raw_mode = str(memory_mode or "raw").strip().lower() in ("raw", "anchor", "anchors", "select")
 
     if frame_balanced and num_frames is not None and num_visual_tokens is not None and frame_importance is not None:
         priorities_all = residual_scores.float()
@@ -355,6 +357,11 @@ def _build_memory_tokens(
             order = torch.argsort(priorities, descending=True)
             frame_dropped = frame_dropped[order]
             priorities = priorities[order]
+            if raw_mode:
+                keep = min(int(budget_t), int(frame_dropped.numel()))
+                tokens.append(flat_features[frame_dropped[:keep]])
+                indices.append(frame_dropped[:keep])
+                continue
             chunks = torch.chunk(
                 torch.arange(frame_dropped.numel(), device=flat_features.device),
                 min(int(budget_t), int(frame_dropped.numel())),
@@ -368,6 +375,8 @@ def _build_memory_tokens(
                 tokens.append(merged)
                 indices.append(idx[0])
         if tokens:
+            if raw_mode:
+                return torch.cat(tokens, dim=0), torch.cat(indices, dim=0)
             return torch.stack(tokens, dim=0), torch.stack(indices, dim=0)
 
     priorities = residual_scores[dropped_indices].float()
@@ -375,6 +384,9 @@ def _build_memory_tokens(
     ordered = dropped_indices[order]
     ordered_priorities = priorities[order].clamp_min(1e-6)
     num_chunks = min(memory_budget, int(ordered.numel()))
+    if raw_mode:
+        ordered = ordered[:num_chunks]
+        return flat_features[ordered], ordered
     chunks = torch.chunk(torch.arange(ordered.numel(), device=flat_features.device), num_chunks)
 
     tokens = []
@@ -475,6 +487,9 @@ class TalonCompressor:
         budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
 
         passthrough_budget = self._resolve_passthrough_budget(core_budget)
+        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.20)), 0.0), 0.80)
+        anchor_safety_budget = int(round(core_budget * anchor_safety_ratio))
+        passthrough_budget = min(max(0, core_budget - 1), max(passthrough_budget, anchor_safety_budget))
         if passthrough_budget > 0:
             passthrough_idx = self._select_passthrough_indices(
                 fused_scores=fused_scores,
@@ -570,6 +585,7 @@ class TalonCompressor:
             frame_importance=frame_importance,
             budget_mode=budget_mode,
             frame_balanced=_safe_bool(getattr(self.config, "talon_frame_balanced_memory", True)),
+            memory_mode=str(getattr(self.config, "talon_memory_mode", "raw") or "raw"),
         )
         if mem_tokens.numel() > 0:
             all_tokens = torch.cat([core_token_tensor, mem_tokens], dim=0)

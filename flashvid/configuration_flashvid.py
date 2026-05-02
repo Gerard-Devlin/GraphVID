@@ -69,6 +69,8 @@ class FlashVidConfig:
     talon_motion_importance_weight: float = field(default=0.35)
     talon_boundary_importance_weight: float = field(default=0.10)
     talon_frame_balanced_memory: bool = field(default=True)
+    talon_memory_mode: str = field(default="raw")  # raw | merge
+    talon_anchor_safety_ratio: float = field(default=0.20)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft

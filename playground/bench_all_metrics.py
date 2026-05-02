@@ -83,6 +83,8 @@ class BenchmarkArgs:
     talon_motion_importance_weight: float = field(default=0.35)
     talon_boundary_importance_weight: float = field(default=0.10)
     talon_frame_balanced_memory: bool = field(default=True)
+    talon_memory_mode: str = field(default="raw")
+    talon_anchor_safety_ratio: float = field(default=0.20)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -844,6 +846,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_motion_importance_weight=args.talon_motion_importance_weight,
         talon_boundary_importance_weight=args.talon_boundary_importance_weight,
         talon_frame_balanced_memory=args.talon_frame_balanced_memory,
+        talon_memory_mode=args.talon_memory_mode,
+        talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -908,6 +912,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_motion_importance_weight=args.talon_motion_importance_weight,
         talon_boundary_importance_weight=args.talon_boundary_importance_weight,
         talon_frame_balanced_memory=args.talon_frame_balanced_memory,
+        talon_memory_mode=args.talon_memory_mode,
+        talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
