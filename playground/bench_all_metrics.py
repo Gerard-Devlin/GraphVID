@@ -75,6 +75,8 @@ class BenchmarkArgs:
     talon_target_tokens_per_frame: int = field(default=0)
     talon_min_total_tokens: int = field(default=1)
     talon_fast_rank_plan: bool = field(default=True)
+    talon_background_max_ratio: float = field(default=0.45)
+    talon_frame_balanced_selection: bool = field(default=True)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -826,6 +828,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
         talon_min_total_tokens=args.talon_min_total_tokens,
         talon_fast_rank_plan=args.talon_fast_rank_plan,
+        talon_background_max_ratio=args.talon_background_max_ratio,
+        talon_frame_balanced_selection=args.talon_frame_balanced_selection,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -879,6 +883,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
         talon_min_total_tokens=args.talon_min_total_tokens,
         talon_fast_rank_plan=args.talon_fast_rank_plan,
+        talon_background_max_ratio=args.talon_background_max_ratio,
+        talon_frame_balanced_selection=args.talon_frame_balanced_selection,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,

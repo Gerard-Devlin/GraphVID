@@ -249,6 +249,28 @@ def _resolve_memory_budget(num_tokens: int, target_budget: int, config: FlashVid
     return max(0, budget)
 
 
+def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, mode: str) -> List[int]:
+    num_frames = int(frame_importance.shape[0])
+    if num_frames <= 0:
+        return []
+    if total_budget <= 0:
+        return [0 for _ in range(num_frames)]
+
+    base = int(total_budget // num_frames)
+    budgets = [base for _ in range(num_frames)]
+    remaining = int(total_budget - base * num_frames)
+    if remaining <= 0:
+        return budgets
+
+    if str(mode).strip().lower() == "attention":
+        order = torch.argsort(frame_importance.float(), descending=True)
+    else:
+        order = torch.arange(num_frames, device=frame_importance.device)
+    for idx in order[:remaining]:
+        budgets[int(idx.item())] += 1
+    return budgets
+
+
 def _build_memory_tokens(
     flat_features: torch.Tensor,
     dropped_indices: torch.Tensor,
@@ -360,9 +382,19 @@ class TalonCompressor:
         core_tokens: List[torch.Tensor] = []
         core_indices: List[torch.Tensor] = []
 
+        frame_importance = cls_attention.float().mean(dim=1)
+        budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
+
         passthrough_budget = self._resolve_passthrough_budget(core_budget)
         if passthrough_budget > 0:
-            passthrough_idx = torch.topk(fused_scores, k=min(passthrough_budget, num_tokens), dim=0).indices
+            passthrough_idx = self._select_passthrough_indices(
+                fused_scores=fused_scores,
+                frame_importance=frame_importance,
+                budget=passthrough_budget,
+                num_frames=num_frames,
+                num_visual_tokens=num_visual_tokens,
+                budget_mode=budget_mode,
+            )
             selected[passthrough_idx] = True
             core_tokens.append(flat_features[passthrough_idx])
             core_indices.append(flat_indices[passthrough_idx])
@@ -370,7 +402,10 @@ class TalonCompressor:
             passthrough_idx = torch.empty((0,), dtype=torch.long, device=device)
 
         talon_budget = max(0, core_budget - int(passthrough_idx.numel()))
-        max_rank_by_budget = max(0, talon_budget // max(1, num_frames))
+        per_frame_talon_budget = talon_budget / max(1, num_frames)
+        background_max_ratio = min(max(float(getattr(self.config, "talon_background_max_ratio", 0.45)), 0.0), 1.0)
+        background_rank_cap = int(math.floor(per_frame_talon_budget * background_max_ratio))
+        max_rank_by_budget = max(0, min(talon_budget // max(1, num_frames), background_rank_cap))
         rank_cap = min(
             max_rank_by_budget,
             int(getattr(self.config, "talon_rank_max", 32)),
@@ -417,8 +452,10 @@ class TalonCompressor:
                 segment_global_indices=segment_global_indices,
                 residual_scores=residual_scores,
                 fused_scores=fused_scores,
+                frame_importance=frame_importance,
                 selected=selected,
                 budget=remaining_innovation,
+                budget_mode=budget_mode,
             )
             if innovation_tokens.numel() > 0:
                 core_tokens.append(innovation_tokens)
@@ -476,6 +513,34 @@ class TalonCompressor:
         if budget > 0:
             budget = max(min(min_tokens, max_passthrough), budget)
         return budget
+
+    def _select_passthrough_indices(
+        self,
+        fused_scores: torch.Tensor,
+        frame_importance: torch.Tensor,
+        budget: int,
+        num_frames: int,
+        num_visual_tokens: int,
+        budget_mode: str,
+    ) -> torch.Tensor:
+        budget = min(max(0, int(budget)), int(fused_scores.numel()))
+        if budget <= 0:
+            return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+        if not _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
+            return torch.topk(fused_scores, k=budget, dim=0).indices
+
+        score_grid = fused_scores.view(num_frames, num_visual_tokens)
+        frame_budgets = _allocate_frame_budget(budget, frame_importance, budget_mode)
+        selected = []
+        for t, budget_t in enumerate(frame_budgets):
+            budget_t = min(int(budget_t), num_visual_tokens)
+            if budget_t <= 0:
+                continue
+            local = torch.topk(score_grid[t], k=budget_t, dim=0).indices
+            selected.append(t * num_visual_tokens + local)
+        if not selected:
+            return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+        return torch.cat(selected, dim=0).to(dtype=torch.long)
 
     def _select_rank_plan(
         self,
@@ -633,8 +698,10 @@ class TalonCompressor:
         segment_global_indices: torch.Tensor,
         residual_scores: torch.Tensor,
         fused_scores: torch.Tensor,
+        frame_importance: torch.Tensor,
         selected: torch.Tensor,
         budget: int,
+        budget_mode: str,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         num_frames, num_visual_tokens, feat_dim = segment_features.shape
         scores = _normalize_scores(residual_scores)
@@ -645,7 +712,37 @@ class TalonCompressor:
         k = min(int(budget), int((~selected).sum().item()))
         if k <= 0:
             return segment_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=segment_features.device)
-        top = torch.topk(scores, k=k, dim=0).indices
+
+        if _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
+            score_grid = scores.view(num_frames, num_visual_tokens)
+            selected_grid = selected.view(num_frames, num_visual_tokens)
+            frame_budgets = _allocate_frame_budget(k, frame_importance, budget_mode)
+            top_list = []
+            leftover = 0
+            for t, budget_t in enumerate(frame_budgets):
+                available = int((~selected_grid[t]).sum().item())
+                keep_t = min(int(budget_t), available)
+                leftover += max(0, int(budget_t) - keep_t)
+                if keep_t <= 0:
+                    continue
+                local_scores = score_grid[t].masked_fill(selected_grid[t], -1e9)
+                local_top = torch.topk(local_scores, k=keep_t, dim=0).indices
+                top_list.append(t * num_visual_tokens + local_top)
+            if leftover > 0:
+                covered = torch.zeros_like(selected)
+                if top_list:
+                    covered[torch.cat(top_list, dim=0)] = True
+                extra_scores = scores.masked_fill(selected | covered, -1e9)
+                extra_k = min(leftover, int((extra_scores > -1e8).sum().item()))
+                if extra_k > 0:
+                    top_list.append(torch.topk(extra_scores, k=extra_k, dim=0).indices)
+            if top_list:
+                top = torch.cat(top_list, dim=0).to(dtype=torch.long)
+            else:
+                top = torch.topk(scores, k=k, dim=0).indices
+        else:
+            top = torch.topk(scores, k=k, dim=0).indices
+
         selected[top] = True
         flat_features = segment_features.reshape(num_frames * num_visual_tokens, feat_dim)
         flat_indices = segment_global_indices.reshape(num_frames * num_visual_tokens)

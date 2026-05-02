@@ -61,6 +61,8 @@ class FlashVidConfig:
     talon_target_tokens_per_frame: int = field(default=0)
     talon_min_total_tokens: int = field(default=1)
     talon_fast_rank_plan: bool = field(default=True)
+    talon_background_max_ratio: float = field(default=0.45)
+    talon_frame_balanced_selection: bool = field(default=True)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft
