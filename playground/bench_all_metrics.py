@@ -100,8 +100,10 @@ class BenchmarkArgs:
     talon_min_anchor_per_frame: int = field(default=2)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
+    talon_use_segmentation: bool = field(default=False)
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
+    talon_deepstack_mode: str = field(default="disable")
     memory_token_ratio: float = field(default=0.10)
     memory_token_min: int = field(default=1)
     memory_token_max: int = field(default=16)
@@ -865,8 +867,10 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
         talon_passthrough_ratio=args.talon_passthrough_ratio,
         talon_passthrough_min=args.talon_passthrough_min,
+        talon_use_segmentation=args.talon_use_segmentation,
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
+        talon_deepstack_mode=args.talon_deepstack_mode,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -933,8 +937,10 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
         talon_passthrough_ratio=args.talon_passthrough_ratio,
         talon_passthrough_min=args.talon_passthrough_min,
+        talon_use_segmentation=args.talon_use_segmentation,
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
+        talon_deepstack_mode=args.talon_deepstack_mode,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,

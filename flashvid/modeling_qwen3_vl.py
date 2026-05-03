@@ -35,6 +35,22 @@ from .utils import (
 )
 
 
+def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
+    mode = str(getattr(flashvid_config, "talon_deepstack_mode", "disable") or "disable").strip().lower()
+    if mode in ("keep", "on", "enabled", "true"):
+        return True
+    if mode in ("disable", "off", "disabled", "none", "false"):
+        return False
+
+    output_mode = str(getattr(flashvid_config, "talon_output_mode", "manifold") or "manifold").strip().lower()
+    if output_mode not in ("manifold", "manifold_raw", "raw"):
+        return False
+    if abs(float(getattr(flashvid_config, "talon_reconstruction_blend", 0.0))) > 1e-6:
+        return False
+    memory_mode = str(getattr(flashvid_config, "talon_memory_mode", "raw") or "raw").strip().lower()
+    return memory_mode in ("raw", "anchor", "anchors", "select")
+
+
 def Qwen3VLVisionAttention_forward(
     self: Qwen3VLVisionAttention,
     hidden_states: torch.Tensor,
@@ -343,8 +359,14 @@ def Qwen3VLModel_forward(
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
         flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
-        # ! Filter deepstack_visual_embeds
-        deepstack_visual_embeds = [deepstack_visual_embed[keep_visual_global_indices] for deepstack_visual_embed in deepstack_visual_embeds]
+        if (
+            str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "talon"
+            and not _talon_should_keep_deepstack(flashvid_config)
+        ):
+            deepstack_visual_embeds = None
+        elif deepstack_visual_embeds is not None:
+            # Keep DeepStack aligned only when TALON outputs stay on the raw-token manifold.
+            deepstack_visual_embeds = [deepstack_visual_embed[keep_visual_global_indices] for deepstack_visual_embed in deepstack_visual_embeds]
         keep_global_indexes = (
             torch.cat(
                 [

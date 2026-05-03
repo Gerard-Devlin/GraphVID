@@ -85,8 +85,10 @@ class FlashVidConfig:
     talon_min_anchor_per_frame: int = field(default=2)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
+    talon_use_segmentation: bool = field(default=False)
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
+    talon_deepstack_mode: str = field(default="disable")  # disable | keep | auto
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

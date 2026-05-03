@@ -114,6 +114,8 @@ def _segment_lengths(video_features: torch.Tensor, config: FlashVidConfig) -> to
     num_frames = int(video_features.shape[0])
     if num_frames <= 1 or not _safe_bool(getattr(config, "do_segment", True)):
         return torch.tensor([num_frames], dtype=torch.long, device=video_features.device)
+    if not _safe_bool(getattr(config, "talon_use_segmentation", False)):
+        return torch.tensor([num_frames], dtype=torch.long, device=video_features.device)
 
     min_segments = int(getattr(config, "min_segment_num", 8))
     complementary = _safe_bool(getattr(config, "complementary_segment", True))

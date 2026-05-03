@@ -125,8 +125,10 @@ def flashvid(
     talon_min_anchor_per_frame: int = 2,
     talon_passthrough_ratio: float = 0.15,
     talon_passthrough_min: int = 2,
+    talon_use_segmentation: bool = False,
     talon_disable_oversegmentation: bool = True,
     talon_max_segments: int = 4,
+    talon_deepstack_mode: str = "disable",
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -202,8 +204,10 @@ def flashvid(
         talon_min_anchor_per_frame (int, optional): Minimum raw attention anchors kept per frame when budget allows.
         talon_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unchanged in TALON.
         talon_passthrough_min (int, optional): Minimum TALON passthrough token count per segment when budget allows.
+        talon_use_segmentation (bool, optional): Whether TALON should segment the video before compression.
         talon_disable_oversegmentation (bool, optional): Avoid excessive short segments for TALON path.
         talon_max_segments (int, optional): Upper bound on TALON segment count when oversegmentation guard is enabled.
+        talon_deepstack_mode (str, optional): TALON handling for Qwen3-VL DeepStack, one of {"disable","keep","auto"}.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -316,8 +320,10 @@ def flashvid(
         talon_min_anchor_per_frame=talon_min_anchor_per_frame,
         talon_passthrough_ratio=talon_passthrough_ratio,
         talon_passthrough_min=talon_passthrough_min,
+        talon_use_segmentation=talon_use_segmentation,
         talon_disable_oversegmentation=talon_disable_oversegmentation,
         talon_max_segments=talon_max_segments,
+        talon_deepstack_mode=talon_deepstack_mode,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,
