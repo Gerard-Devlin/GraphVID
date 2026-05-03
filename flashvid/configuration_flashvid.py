@@ -68,6 +68,7 @@ class FlashVidConfig:
     talon_innovation_attention_weight: float = field(default=0.45)
     talon_motion_importance_weight: float = field(default=0.35)
     talon_boundary_importance_weight: float = field(default=0.10)
+    talon_question_frame_weight: float = field(default=0.20)
     talon_frame_balanced_memory: bool = field(default=True)
     talon_memory_mode: str = field(default="raw")  # raw | merge
     talon_anchor_safety_ratio: float = field(default=0.20)
@@ -85,10 +86,10 @@ class FlashVidConfig:
     talon_min_anchor_per_frame: int = field(default=2)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
-    talon_use_segmentation: bool = field(default=False)
+    talon_use_segmentation: bool = field(default=True)
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
-    talon_deepstack_mode: str = field(default="disable")  # disable | keep | auto
+    talon_deepstack_mode: str = field(default="keep")  # disable | keep | auto
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

@@ -83,6 +83,7 @@ class BenchmarkArgs:
     talon_innovation_attention_weight: float = field(default=0.45)
     talon_motion_importance_weight: float = field(default=0.35)
     talon_boundary_importance_weight: float = field(default=0.10)
+    talon_question_frame_weight: float = field(default=0.20)
     talon_frame_balanced_memory: bool = field(default=True)
     talon_memory_mode: str = field(default="raw")
     talon_anchor_safety_ratio: float = field(default=0.20)
@@ -100,10 +101,10 @@ class BenchmarkArgs:
     talon_min_anchor_per_frame: int = field(default=2)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
-    talon_use_segmentation: bool = field(default=False)
+    talon_use_segmentation: bool = field(default=True)
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
-    talon_deepstack_mode: str = field(default="disable")
+    talon_deepstack_mode: str = field(default="keep")
     memory_token_ratio: float = field(default=0.10)
     memory_token_min: int = field(default=1)
     memory_token_max: int = field(default=16)
@@ -850,6 +851,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_innovation_attention_weight=args.talon_innovation_attention_weight,
         talon_motion_importance_weight=args.talon_motion_importance_weight,
         talon_boundary_importance_weight=args.talon_boundary_importance_weight,
+        talon_question_frame_weight=args.talon_question_frame_weight,
         talon_frame_balanced_memory=args.talon_frame_balanced_memory,
         talon_memory_mode=args.talon_memory_mode,
         talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
@@ -920,6 +922,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_innovation_attention_weight=args.talon_innovation_attention_weight,
         talon_motion_importance_weight=args.talon_motion_importance_weight,
         talon_boundary_importance_weight=args.talon_boundary_importance_weight,
+        talon_question_frame_weight=args.talon_question_frame_weight,
         talon_frame_balanced_memory=args.talon_frame_balanced_memory,
         talon_memory_mode=args.talon_memory_mode,
         talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,

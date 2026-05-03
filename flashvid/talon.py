@@ -300,6 +300,7 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, mo
 def _frame_importance(
     segment_features: torch.Tensor,
     cls_attention: torch.Tensor,
+    question_features: Optional[torch.Tensor],
     config: FlashVidConfig,
 ) -> torch.Tensor:
     num_frames = int(segment_features.shape[0])
@@ -320,8 +321,21 @@ def _frame_importance(
 
     motion_weight = min(max(float(getattr(config, "talon_motion_importance_weight", 0.35)), 0.0), 1.0)
     boundary_weight = min(max(float(getattr(config, "talon_boundary_importance_weight", 0.10)), 0.0), 1.0)
-    attention_weight = max(0.0, 1.0 - motion_weight - boundary_weight)
-    return _normalize_scores(attention_weight * attention + motion_weight * transition + boundary_weight * boundary)
+    question_weight = 0.0
+    question_frame = torch.zeros_like(attention)
+    if _safe_bool(getattr(config, "question_aware_reweighting", False)) and question_features is not None and question_features.numel() > 0:
+        q = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
+        q_proto = F.normalize(q.mean(dim=0), p=2, dim=-1, eps=1e-6)
+        question_frame = _normalize_scores(torch.matmul(centers, q_proto))
+        question_weight = min(max(float(getattr(config, "talon_question_frame_weight", 0.20)), 0.0), 1.0)
+
+    attention_weight = max(0.0, 1.0 - motion_weight - boundary_weight - question_weight)
+    return _normalize_scores(
+        attention_weight * attention
+        + motion_weight * transition
+        + boundary_weight * boundary
+        + question_weight * question_frame
+    )
 
 
 def _build_memory_tokens(
@@ -485,7 +499,7 @@ class TalonCompressor:
         core_tokens: List[torch.Tensor] = []
         core_indices: List[torch.Tensor] = []
 
-        frame_importance = _frame_importance(segment_features, cls_attention, self.config)
+        frame_importance = _frame_importance(segment_features, cls_attention, question_features, self.config)
         budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
 
         passthrough_budget = self._resolve_passthrough_budget(core_budget)

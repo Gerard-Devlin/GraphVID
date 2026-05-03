@@ -108,6 +108,7 @@ def flashvid(
     talon_innovation_attention_weight: float = 0.45,
     talon_motion_importance_weight: float = 0.35,
     talon_boundary_importance_weight: float = 0.10,
+    talon_question_frame_weight: float = 0.20,
     talon_frame_balanced_memory: bool = True,
     talon_memory_mode: str = "raw",
     talon_anchor_safety_ratio: float = 0.20,
@@ -125,10 +126,10 @@ def flashvid(
     talon_min_anchor_per_frame: int = 2,
     talon_passthrough_ratio: float = 0.15,
     talon_passthrough_min: int = 2,
-    talon_use_segmentation: bool = False,
+    talon_use_segmentation: bool = True,
     talon_disable_oversegmentation: bool = True,
     talon_max_segments: int = 4,
-    talon_deepstack_mode: str = "disable",
+    talon_deepstack_mode: str = "keep",
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -186,6 +187,7 @@ def flashvid(
         talon_innovation_attention_weight (float, optional): Attention/fused-score share in innovation scoring.
         talon_motion_importance_weight (float, optional): Transition/motion share in frame budget allocation.
         talon_boundary_importance_weight (float, optional): First/last-frame prior in frame budget allocation.
+        talon_question_frame_weight (float, optional): Question-frame semantic share in frame budget allocation.
         talon_frame_balanced_memory (bool, optional): Build residual memory tokens with frame coverage.
         talon_memory_mode (str, optional): "raw" keeps representative memory anchors; "merge" averages residual groups.
         talon_anchor_safety_ratio (float, optional): Extra raw attention-anchor share protected before TALON factors.
@@ -303,6 +305,7 @@ def flashvid(
         talon_innovation_attention_weight=talon_innovation_attention_weight,
         talon_motion_importance_weight=talon_motion_importance_weight,
         talon_boundary_importance_weight=talon_boundary_importance_weight,
+        talon_question_frame_weight=talon_question_frame_weight,
         talon_frame_balanced_memory=talon_frame_balanced_memory,
         talon_memory_mode=talon_memory_mode,
         talon_anchor_safety_ratio=talon_anchor_safety_ratio,

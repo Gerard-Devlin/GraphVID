@@ -36,7 +36,7 @@ from .utils import (
 
 
 def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
-    mode = str(getattr(flashvid_config, "talon_deepstack_mode", "disable") or "disable").strip().lower()
+    mode = str(getattr(flashvid_config, "talon_deepstack_mode", "keep") or "keep").strip().lower()
     if mode in ("keep", "on", "enabled", "true"):
         return True
     if mode in ("disable", "off", "disabled", "none", "false"):
