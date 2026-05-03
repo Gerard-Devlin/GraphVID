@@ -282,16 +282,28 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, mo
     if total_budget <= 0:
         return [0 for _ in range(num_frames)]
 
+    mode = str(mode).strip().lower()
+    if mode == "attention":
+        weights = frame_importance.float().clamp_min(0.0)
+        if float(weights.sum().item()) <= 1e-8:
+            weights = torch.ones_like(weights)
+        weights = weights / weights.sum()
+        raw = weights * float(total_budget)
+        base = torch.floor(raw).to(dtype=torch.long)
+        budgets = base.clone()
+        remaining = int(total_budget - int(base.sum().item()))
+        if remaining > 0:
+            fractional = raw - base.float()
+            order = torch.argsort(fractional, descending=True)
+            budgets[order[:remaining]] += 1
+        return [int(x.item()) for x in budgets]
+
     base = int(total_budget // num_frames)
     budgets = [base for _ in range(num_frames)]
     remaining = int(total_budget - base * num_frames)
     if remaining <= 0:
         return budgets
-
-    if str(mode).strip().lower() == "attention":
-        order = torch.argsort(frame_importance.float(), descending=True)
-    else:
-        order = torch.arange(num_frames, device=frame_importance.device)
+    order = torch.arange(num_frames, device=frame_importance.device)
     for idx in order[:remaining]:
         budgets[int(idx.item())] += 1
     return budgets
