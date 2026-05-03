@@ -122,6 +122,7 @@ def flashvid(
     talon_output_mode: str = "manifold",
     talon_reconstruction_blend: float = 0.0,
     talon_anchor_score_weight: float = 0.35,
+    talon_min_anchor_per_frame: int = 2,
     talon_passthrough_ratio: float = 0.15,
     talon_passthrough_min: int = 2,
     talon_disable_oversegmentation: bool = True,
@@ -198,6 +199,7 @@ def flashvid(
             "coefficient" exposes raw TALON coefficients/residuals for ablation.
         talon_reconstruction_blend (float, optional): Blend low-rank reconstruction into anchor tokens.
         talon_anchor_score_weight (float, optional): Mix question/attention score into low-rank anchor picking.
+        talon_min_anchor_per_frame (int, optional): Minimum raw attention anchors kept per frame when budget allows.
         talon_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unchanged in TALON.
         talon_passthrough_min (int, optional): Minimum TALON passthrough token count per segment when budget allows.
         talon_disable_oversegmentation (bool, optional): Avoid excessive short segments for TALON path.
@@ -311,6 +313,7 @@ def flashvid(
         talon_output_mode=talon_output_mode,
         talon_reconstruction_blend=talon_reconstruction_blend,
         talon_anchor_score_weight=talon_anchor_score_weight,
+        talon_min_anchor_per_frame=talon_min_anchor_per_frame,
         talon_passthrough_ratio=talon_passthrough_ratio,
         talon_passthrough_min=talon_passthrough_min,
         talon_disable_oversegmentation=talon_disable_oversegmentation,

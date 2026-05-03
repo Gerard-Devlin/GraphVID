@@ -97,6 +97,7 @@ class BenchmarkArgs:
     talon_output_mode: str = field(default="manifold")
     talon_reconstruction_blend: float = field(default=0.0)
     talon_anchor_score_weight: float = field(default=0.35)
+    talon_min_anchor_per_frame: int = field(default=2)
     talon_passthrough_ratio: float = field(default=0.15)
     talon_passthrough_min: int = field(default=2)
     talon_disable_oversegmentation: bool = field(default=True)
@@ -861,6 +862,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_output_mode=args.talon_output_mode,
         talon_reconstruction_blend=args.talon_reconstruction_blend,
         talon_anchor_score_weight=args.talon_anchor_score_weight,
+        talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
         talon_passthrough_ratio=args.talon_passthrough_ratio,
         talon_passthrough_min=args.talon_passthrough_min,
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
@@ -928,6 +930,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_output_mode=args.talon_output_mode,
         talon_reconstruction_blend=args.talon_reconstruction_blend,
         talon_anchor_score_weight=args.talon_anchor_score_weight,
+        talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
         talon_passthrough_ratio=args.talon_passthrough_ratio,
         talon_passthrough_min=args.talon_passthrough_min,
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,

@@ -487,12 +487,18 @@ class TalonCompressor:
         budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
 
         passthrough_budget = self._resolve_passthrough_budget(core_budget)
+        min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
         anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.20)), 0.0), 0.80)
         anchor_safety_budget = int(round(core_budget * anchor_safety_ratio))
-        passthrough_budget = min(max(0, core_budget - 1), max(passthrough_budget, anchor_safety_budget))
+        anchor_floor_budget = min(num_tokens, min_anchor_per_frame * num_frames)
+        passthrough_budget = min(
+            max(0, core_budget - 1),
+            max(passthrough_budget, anchor_safety_budget, anchor_floor_budget),
+        )
         if passthrough_budget > 0:
             passthrough_idx = self._select_passthrough_indices(
                 fused_scores=fused_scores,
+                raw_attention=flat_attention,
                 frame_importance=frame_importance,
                 budget=passthrough_budget,
                 num_frames=num_frames,
@@ -627,6 +633,7 @@ class TalonCompressor:
     def _select_passthrough_indices(
         self,
         fused_scores: torch.Tensor,
+        raw_attention: torch.Tensor,
         frame_importance: torch.Tensor,
         budget: int,
         num_frames: int,
@@ -640,14 +647,37 @@ class TalonCompressor:
             return torch.topk(fused_scores, k=budget, dim=0).indices
 
         score_grid = fused_scores.view(num_frames, num_visual_tokens)
+        attention_grid = _normalize_scores(raw_attention).view(num_frames, num_visual_tokens)
         frame_budgets = _allocate_frame_budget(budget, frame_importance, budget_mode)
+        min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
         selected = []
         for t, budget_t in enumerate(frame_budgets):
             budget_t = min(int(budget_t), num_visual_tokens)
             if budget_t <= 0:
                 continue
-            local = torch.topk(score_grid[t], k=budget_t, dim=0).indices
-            selected.append(t * num_visual_tokens + local)
+            used = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=fused_scores.device)
+            local_parts = []
+
+            anchor_keep = min(min_anchor_per_frame, budget_t, num_visual_tokens)
+            if anchor_keep > 0:
+                anchor_local = torch.topk(attention_grid[t], k=anchor_keep, dim=0).indices
+                local_parts.append(anchor_local)
+                used[anchor_local] = True
+
+            remaining = budget_t - sum(part.numel() for part in local_parts)
+            if remaining > 0:
+                fused_local = score_grid[t].masked_fill(used, -1e9)
+                fused_local_idx = torch.topk(fused_local, k=remaining, dim=0).indices
+                local_parts.append(fused_local_idx)
+
+            local = torch.cat(local_parts, dim=0).unique()
+            if local.numel() < budget_t:
+                refill_scores = score_grid[t].masked_fill(torch.isin(torch.arange(num_visual_tokens, device=fused_scores.device), local), -1e9)
+                refill_k = min(budget_t - local.numel(), int((refill_scores > -1e8).sum().item()))
+                if refill_k > 0:
+                    refill_idx = torch.topk(refill_scores, k=refill_k, dim=0).indices
+                    local = torch.cat([local, refill_idx], dim=0)
+            selected.append(t * num_visual_tokens + local[:budget_t])
         if not selected:
             return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
         return torch.cat(selected, dim=0).to(dtype=torch.long)
