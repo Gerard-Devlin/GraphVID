@@ -102,6 +102,10 @@ class FlashVidConfig:
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
     last_adaptive_retention_ratio: Optional[float] = field(default=None)
+    talon_adaptive_target_low: int = field(default=0)
+    talon_adaptive_target_mid: int = field(default=0)
+    talon_adaptive_target_high: int = field(default=0)
+    last_talon_target_tokens_per_frame: Optional[int] = field(default=None)
 
     # Spatial grid metadata (set by model hooks when available).
     H: Optional[int] = field(default=None)

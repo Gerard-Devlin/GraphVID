@@ -68,6 +68,9 @@ class BenchmarkArgs:
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
+    talon_adaptive_target_low: int = field(default=0)
+    talon_adaptive_target_mid: int = field(default=0)
+    talon_adaptive_target_high: int = field(default=0)
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -876,6 +879,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
+        talon_adaptive_target_low=args.talon_adaptive_target_low,
+        talon_adaptive_target_mid=args.talon_adaptive_target_mid,
+        talon_adaptive_target_high=args.talon_adaptive_target_high,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -907,6 +913,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
         adaptive_budget_high=args.adaptive_budget_high,
+        talon_adaptive_target_low=args.talon_adaptive_target_low,
+        talon_adaptive_target_mid=args.talon_adaptive_target_mid,
+        talon_adaptive_target_high=args.talon_adaptive_target_high,
         talon_transport_radius=args.talon_transport_radius,
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,

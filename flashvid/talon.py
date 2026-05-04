@@ -110,6 +110,43 @@ def _resolve_retention_ratio(
     return candidates[idx]
 
 
+def _resolve_talon_target_tokens_per_frame(
+    video_features: torch.Tensor,
+    question_features: Optional[torch.Tensor],
+    config: FlashVidConfig,
+) -> int:
+    base_target = int(getattr(config, "talon_target_tokens_per_frame", 0) or 0)
+    if base_target <= 0:
+        config.last_talon_target_tokens_per_frame = None
+        return 0
+
+    base_target = max(1, min(base_target, int(video_features.shape[1])))
+    if not _safe_bool(getattr(config, "adaptive_token_budget", False)):
+        config.last_talon_target_tokens_per_frame = base_target
+        return base_target
+
+    low = int(getattr(config, "talon_adaptive_target_low", 0) or 0)
+    mid = int(getattr(config, "talon_adaptive_target_mid", 0) or 0)
+    high = int(getattr(config, "talon_adaptive_target_high", 0) or 0)
+    if low <= 0:
+        low = max(1, int(round(base_target * 0.90)))
+    if mid <= 0:
+        mid = base_target
+    if high <= 0:
+        high = min(int(video_features.shape[1]), max(mid, int(round(base_target * 1.20))))
+
+    candidates = sorted([
+        max(1, min(low, int(video_features.shape[1]))),
+        max(1, min(mid, int(video_features.shape[1]))),
+        max(1, min(high, int(video_features.shape[1]))),
+    ])
+    score = 0.7 * _estimate_video_complexity(video_features) + 0.3 * _estimate_question_difficulty(question_features)
+    idx = min(len(candidates) - 1, int(score * len(candidates)))
+    target = int(candidates[idx])
+    config.last_talon_target_tokens_per_frame = target
+    return target
+
+
 def _segment_lengths(video_features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
     num_frames = int(video_features.shape[0])
     if num_frames <= 1 or not _safe_bool(getattr(config, "do_segment", True)):
@@ -444,6 +481,7 @@ class TalonCompressor:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         num_frames, num_visual_tokens, _ = video_features.shape
         ratio = _resolve_retention_ratio(video_features, question_features, self.config)
+        resolved_per_frame_target = _resolve_talon_target_tokens_per_frame(video_features, question_features, self.config)
         segment_lengths = _segment_lengths(video_features, self.config)
         global_indices = torch.arange(num_frames * num_visual_tokens, dtype=torch.long, device=video_features.device)
         global_grid = global_indices.view(num_frames, num_visual_tokens)
@@ -459,6 +497,7 @@ class TalonCompressor:
                 cls_attention=cls_attention[offset : offset + seg_len],
                 retention_ratio=ratio,
                 question_features=question_features,
+                resolved_per_frame_target=resolved_per_frame_target,
             )
             all_tokens.append(seg_tokens)
             all_indices.append(seg_indices)
@@ -485,6 +524,7 @@ class TalonCompressor:
         cls_attention: torch.Tensor,
         retention_ratio: float,
         question_features: Optional[torch.Tensor],
+        resolved_per_frame_target: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         num_frames, num_visual_tokens, feat_dim = segment_features.shape
         num_tokens = num_frames * num_visual_tokens
@@ -503,6 +543,7 @@ class TalonCompressor:
             num_visual_tokens=num_visual_tokens,
             num_tokens=num_tokens,
             retention_ratio=retention_ratio,
+            resolved_per_frame_target=resolved_per_frame_target,
         )
         memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
         core_budget = max(1, target_budget - memory_budget)
@@ -635,8 +676,9 @@ class TalonCompressor:
         num_visual_tokens: int,
         num_tokens: int,
         retention_ratio: float,
+        resolved_per_frame_target: int = 0,
     ) -> int:
-        per_frame_target = int(getattr(self.config, "talon_target_tokens_per_frame", 0) or 0)
+        per_frame_target = int(resolved_per_frame_target or getattr(self.config, "talon_target_tokens_per_frame", 0) or 0)
         if per_frame_target > 0:
             budget = num_frames * max(1, min(per_frame_target, num_visual_tokens))
         else:
