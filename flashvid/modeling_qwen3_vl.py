@@ -108,6 +108,17 @@ def _talon_full_bypass_eligible(
     return frame_target >= num_visual_tokens
 
 
+def _use_original_qwen3vl_text_stack(flashvid_config: Optional[FlashVidConfig]) -> bool:
+    if flashvid_config is None:
+        return False
+    if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
+        return False
+    decode_policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
+    if decode_policy not in ("none", "off", "disabled"):
+        return False
+    return True
+
+
 def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
     mode = str(getattr(flashvid_config, "talon_deepstack_mode", "keep") or "keep").strip().lower()
     if mode in ("keep", "on", "enabled", "true"):
@@ -509,17 +520,29 @@ def Qwen3VLModel_forward(
         cache_position = cache_position[keep_global_indexes]
         visual_pos_masks = visual_pos_masks[:, keep_global_indexes]
 
-    outputs = self.language_model(
-        input_ids=None,
-        position_ids=position_ids,
-        attention_mask=attention_mask,
-        past_key_values=past_key_values,
-        inputs_embeds=inputs_embeds,
-        cache_position=cache_position,
-        visual_pos_masks=visual_pos_masks,
-        deepstack_visual_embeds=deepstack_visual_embeds,
-        **kwargs,
-    )
+    if _use_original_qwen3vl_text_stack(flashvid_config):
+        outputs = type(self.language_model)._flashvid_original_forward(
+            self.language_model,
+            input_ids=None,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            cache_position=cache_position,
+            **kwargs,
+        )
+    else:
+        outputs = self.language_model(
+            input_ids=None,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            cache_position=cache_position,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+            **kwargs,
+        )
 
     return Qwen3VLModelOutputWithPast(
         last_hidden_state=outputs.last_hidden_state,
