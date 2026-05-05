@@ -660,6 +660,8 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "raw_visual_tokens": None,
         "compressed_visual_tokens": None,
         "vision_compressed_visual_tokens": None,
+        "talon_target_tokens_per_frame": None,
+        "talon_complexity_score": None,
         "visual_token_reduction_ratio": None,
         "vision_visual_token_reduction_ratio": None,
         "error": None,
@@ -688,6 +690,8 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "raw_visual_tokens": raw_v,
                 "compressed_visual_tokens": compressed_v,
                 "vision_compressed_visual_tokens": vision_compressed_v,
+                "talon_target_tokens_per_frame": result.get("talon_target_tokens_per_frame"),
+                "talon_complexity_score": result.get("talon_complexity_score"),
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -765,6 +769,16 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("vision_compressed_visual_tokens") is not None
     ]
+    talon_target = [
+        float(r["talon_target_tokens_per_frame"])
+        for r in valid
+        if r.get("talon_target_tokens_per_frame") is not None
+    ]
+    talon_complexity = [
+        float(r["talon_complexity_score"])
+        for r in valid
+        if r.get("talon_complexity_score") is not None
+    ]
     reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
         float(r["vision_visual_token_reduction_ratio"])
@@ -783,6 +797,8 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "raw_visual_tokens": _stats(raw_visual),
         "compressed_visual_tokens": _stats(compressed_visual),
         "vision_compressed_visual_tokens": _stats(vision_compressed_visual),
+        "talon_target_tokens_per_frame": _stats(talon_target),
+        "talon_complexity_score": _stats(talon_complexity),
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1035,6 +1051,8 @@ def _print_summary(summary: dict[str, Any]):
         lat_mean = phase["latency_ms"]["mean"]
         vt_mean = phase["compressed_visual_tokens"]["mean"]
         vision_vt_mean = phase["vision_compressed_visual_tokens"]["mean"]
+        talon_target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
+        talon_complexity_mean = phase.get("talon_complexity_score", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -1043,6 +1061,10 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  final visual tokens mean: {vt_mean:.2f}")
         if vision_vt_mean is not None:
             print(f"  vision-side tokens mean: {vision_vt_mean:.2f}")
+        if talon_target_mean is not None:
+            print(f"  talon target/frame mean: {talon_target_mean:.2f}")
+        if talon_complexity_mean is not None:
+            print(f"  talon complexity mean: {talon_complexity_mean:.4f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
