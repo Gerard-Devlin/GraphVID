@@ -82,6 +82,22 @@ def _call_qwen3vl_original_pipeline(self: Qwen3VLModel, **kwargs):
             setattr(cls, attr, fn)
 
 
+def _call_qwen3vl_original_text_stack(language_model: Qwen3VLTextModel, **kwargs):
+    originals = {
+        (Qwen3VLTextAttention, "forward"): Qwen3VLTextAttention.forward,
+        (Qwen3VLTextDecoderLayer, "forward"): Qwen3VLTextDecoderLayer.forward,
+        (Qwen3VLTextModel, "forward"): Qwen3VLTextModel.forward,
+    }
+    try:
+        Qwen3VLTextAttention.forward = Qwen3VLTextAttention._flashvid_original_forward
+        Qwen3VLTextDecoderLayer.forward = Qwen3VLTextDecoderLayer._flashvid_original_forward
+        Qwen3VLTextModel.forward = Qwen3VLTextModel._flashvid_original_forward
+        return Qwen3VLTextModel._flashvid_original_forward(language_model, **kwargs)
+    finally:
+        for (cls, attr), fn in originals.items():
+            setattr(cls, attr, fn)
+
+
 def _talon_full_bypass_eligible(
     flashvid_config: Optional[FlashVidConfig],
     video_grid_thw: Optional[torch.LongTensor],
@@ -523,7 +539,7 @@ def Qwen3VLModel_forward(
         visual_pos_masks = visual_pos_masks[:, keep_global_indexes]
 
     if _use_original_qwen3vl_text_stack(flashvid_config):
-        outputs = type(self.language_model)._flashvid_original_forward(
+        outputs = _call_qwen3vl_original_text_stack(
             self.language_model,
             input_ids=None,
             position_ids=position_ids,
