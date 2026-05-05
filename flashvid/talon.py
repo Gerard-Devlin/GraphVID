@@ -141,7 +141,14 @@ def _resolve_talon_target_tokens_per_frame(
         max(1, min(high, int(video_features.shape[1]))),
     ])
     score = 0.7 * _estimate_video_complexity(video_features) + 0.3 * _estimate_question_difficulty(question_features)
-    idx = min(len(candidates) - 1, int(score * len(candidates)))
+    # Use explicit thresholds instead of floor(score * 3), which was overly biased
+    # toward the low bucket on real data and collapsed adaptive TALON to a fixed width.
+    if score < 0.25:
+        idx = 0
+    elif score < 0.55:
+        idx = 1
+    else:
+        idx = 2
     target = int(candidates[idx])
     config.last_talon_target_tokens_per_frame = target
     return target

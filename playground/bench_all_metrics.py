@@ -529,6 +529,21 @@ def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: b
     return final_length, vision_length
 
 
+def _get_talon_debug_metrics(model) -> dict[str, float | None]:
+    if not hasattr(model, "flashvid_config"):
+        return {
+            "talon_target_tokens_per_frame": None,
+            "talon_adaptive_retention_ratio": None,
+        }
+    cfg = getattr(model, "flashvid_config")
+    target = getattr(cfg, "last_talon_target_tokens_per_frame", None)
+    adaptive_ratio = getattr(cfg, "last_adaptive_retention_ratio", None)
+    return {
+        "talon_target_tokens_per_frame": float(target) if target is not None else None,
+        "talon_adaptive_retention_ratio": float(adaptive_ratio) if adaptive_ratio is not None else None,
+    }
+
+
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
@@ -563,6 +578,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     gen_tokens_per_run = []
     compressed_tokens_per_run = []
     vision_tokens_per_run = []
+    talon_target_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -596,13 +612,17 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         latencies.append(float(latency_ms))
         gen_tokens_per_run.append(float(gen_tokens))
         final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
+        debug_metrics = _get_talon_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
+        if debug_metrics["talon_target_tokens_per_frame"] is not None:
+            talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
     compressed_visual_tokens = float(np.mean(compressed_tokens_per_run)) if compressed_tokens_per_run else float(raw_visual_tokens)
     vision_compressed_visual_tokens = float(np.mean(vision_tokens_per_run)) if vision_tokens_per_run else float(raw_visual_tokens)
+    talon_target_tokens_per_frame = float(np.mean(talon_target_per_run)) if talon_target_per_run else None
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -615,6 +635,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "raw_visual_tokens": float(raw_visual_tokens),
         "compressed_visual_tokens": compressed_visual_tokens,
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
+        "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
     }
 
 
