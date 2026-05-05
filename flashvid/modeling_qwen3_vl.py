@@ -137,6 +137,27 @@ def _use_original_qwen3vl_text_stack(flashvid_config: Optional[FlashVidConfig]) 
     return True
 
 
+def _prefuse_deepstack_visual_embeds(
+    inputs_embeds: torch.Tensor,
+    visual_pos_masks: Optional[torch.Tensor],
+    deepstack_visual_embeds: Optional[list[torch.Tensor]],
+    scale: float = 0.35,
+) -> torch.Tensor:
+    if visual_pos_masks is None or deepstack_visual_embeds is None or len(deepstack_visual_embeds) == 0:
+        return inputs_embeds
+    if visual_pos_masks.ndim != 2 or inputs_embeds.ndim != 3:
+        return inputs_embeds
+    visual_mask = visual_pos_masks[0]
+    if int(visual_mask.sum().item()) <= 0:
+        return inputs_embeds
+    fused = torch.stack([x.to(dtype=inputs_embeds.dtype, device=inputs_embeds.device) for x in deepstack_visual_embeds], dim=0).mean(dim=0)
+    if fused.shape[0] != int(visual_mask.sum().item()) or fused.shape[-1] != inputs_embeds.shape[-1]:
+        return inputs_embeds
+    updated = inputs_embeds.clone()
+    updated[:, visual_mask] = updated[:, visual_mask] + float(scale) * fused.unsqueeze(0)
+    return updated
+
+
 def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
     mode = str(getattr(flashvid_config, "talon_deepstack_mode", "keep") or "keep").strip().lower()
     if mode in ("keep", "on", "enabled", "true"):
@@ -539,6 +560,11 @@ def Qwen3VLModel_forward(
         visual_pos_masks = visual_pos_masks[:, keep_global_indexes]
 
     if _use_original_qwen3vl_text_stack(flashvid_config):
+        inputs_embeds = _prefuse_deepstack_visual_embeds(
+            inputs_embeds=inputs_embeds,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+        )
         outputs = _call_qwen3vl_original_text_stack(
             self.language_model,
             input_ids=None,
