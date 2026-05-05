@@ -105,6 +105,9 @@ class FlashVidConfig:
     talon_adaptive_target_low: int = field(default=0)
     talon_adaptive_target_mid: int = field(default=0)
     talon_adaptive_target_high: int = field(default=0)
+    talon_complexity_floor: float = field(default=0.20)
+    talon_complexity_ceil: float = field(default=0.40)
+    talon_adaptive_gamma: float = field(default=1.0)
     last_talon_target_tokens_per_frame: Optional[int] = field(default=None)
     last_talon_complexity_score: Optional[float] = field(default=None)
 

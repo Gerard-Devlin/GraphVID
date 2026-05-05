@@ -144,14 +144,23 @@ def _resolve_talon_target_tokens_per_frame(
     score = max(0.0, min(1.0, float(score)))
     config.last_talon_complexity_score = score
 
+    floor = float(getattr(config, "talon_complexity_floor", 0.20))
+    ceil = float(getattr(config, "talon_complexity_ceil", 0.40))
+    if ceil <= floor + 1e-6:
+        ceil = floor + 1e-6
+    norm = (score - floor) / (ceil - floor)
+    norm = max(0.0, min(1.0, norm))
+    gamma = max(0.1, float(getattr(config, "talon_adaptive_gamma", 1.0)))
+    norm = norm ** gamma
+
     low_t, mid_t, high_t = candidates
-    # Continuous interpolation avoids collapsing almost all samples into a single
-    # discrete bucket, which happened with hard thresholds on full-dataset runs.
-    if score <= 0.5:
-        alpha = score / 0.5
+    # Normalize and stretch the practical complexity band before interpolation,
+    # so adaptive TALON does not collapse to a single width on real datasets.
+    if norm <= 0.5:
+        alpha = norm / 0.5
         target = int(round((1.0 - alpha) * low_t + alpha * mid_t))
     else:
-        alpha = (score - 0.5) / 0.5
+        alpha = (norm - 0.5) / 0.5
         target = int(round((1.0 - alpha) * mid_t + alpha * high_t))
     config.last_talon_target_tokens_per_frame = target
     return target

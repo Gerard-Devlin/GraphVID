@@ -71,6 +71,9 @@ class BenchmarkArgs:
     talon_adaptive_target_low: int = field(default=0)
     talon_adaptive_target_mid: int = field(default=0)
     talon_adaptive_target_high: int = field(default=0)
+    talon_complexity_floor: float = field(default=0.20)
+    talon_complexity_ceil: float = field(default=0.40)
+    talon_adaptive_gamma: float = field(default=1.0)
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -927,6 +930,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_adaptive_target_low=args.talon_adaptive_target_low,
         talon_adaptive_target_mid=args.talon_adaptive_target_mid,
         talon_adaptive_target_high=args.talon_adaptive_target_high,
+        talon_complexity_floor=args.talon_complexity_floor,
+        talon_complexity_ceil=args.talon_complexity_ceil,
+        talon_adaptive_gamma=args.talon_adaptive_gamma,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -961,6 +967,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_adaptive_target_low=args.talon_adaptive_target_low,
         talon_adaptive_target_mid=args.talon_adaptive_target_mid,
         talon_adaptive_target_high=args.talon_adaptive_target_high,
+        talon_complexity_floor=args.talon_complexity_floor,
+        talon_complexity_ceil=args.talon_complexity_ceil,
+        talon_adaptive_gamma=args.talon_adaptive_gamma,
         talon_transport_radius=args.talon_transport_radius,
         talon_rank_ratio=args.talon_rank_ratio,
         talon_rank_min=args.talon_rank_min,

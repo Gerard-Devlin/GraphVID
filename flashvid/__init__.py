@@ -141,6 +141,9 @@ def flashvid(
     talon_adaptive_target_low: int = 0,
     talon_adaptive_target_mid: int = 0,
     talon_adaptive_target_high: int = 0,
+    talon_complexity_floor: float = 0.20,
+    talon_complexity_ceil: float = 0.40,
+    talon_adaptive_gamma: float = 1.0,
     # 3) Inner-LLM Compression params
     expansion: float = 1.25,
     pruning_layer: int = 20,
@@ -223,6 +226,9 @@ def flashvid(
         talon_adaptive_target_low (int, optional): TALON low-complexity target tokens per frame when adaptive budget is enabled.
         talon_adaptive_target_mid (int, optional): TALON mid-complexity target tokens per frame when adaptive budget is enabled.
         talon_adaptive_target_high (int, optional): TALON high-complexity target tokens per frame when adaptive budget is enabled.
+        talon_complexity_floor (float, optional): Lower bound used to normalize TALON complexity score for adaptive targeting.
+        talon_complexity_ceil (float, optional): Upper bound used to normalize TALON complexity score for adaptive targeting.
+        talon_adaptive_gamma (float, optional): Nonlinear gain for adaptive TALON target interpolation.
         expansion (float, optional): The expansion ratio for inner-LLM compression. Defaults to 1.25.
         pruning_layer (int, optional): The layer to prune. Defaults to 20.
         llm_retention_ratio (float, optional): The retention ratio for inner-LLM compression. Defaults to 0.3.
@@ -343,6 +349,9 @@ def flashvid(
         talon_adaptive_target_low=talon_adaptive_target_low,
         talon_adaptive_target_mid=talon_adaptive_target_mid,
         talon_adaptive_target_high=talon_adaptive_target_high,
+        talon_complexity_floor=talon_complexity_floor,
+        talon_complexity_ceil=talon_complexity_ceil,
+        talon_adaptive_gamma=talon_adaptive_gamma,
         expansion=expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
