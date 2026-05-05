@@ -54,6 +54,34 @@ def _set_qwen3vl_bypass_flags(model: Qwen3VLModel, active: bool) -> None:
             setattr(cfg, "flashvid_bypass_active", active)
 
 
+def _call_qwen3vl_original_pipeline(self: Qwen3VLModel, **kwargs):
+    originals = {
+        (Qwen3VLVisionAttention, "forward"): Qwen3VLVisionAttention.forward,
+        (Qwen3VLVisionBlock, "forward"): Qwen3VLVisionBlock.forward,
+        (Qwen3VLVisionModel, "forward"): Qwen3VLVisionModel.forward,
+        (Qwen3VLModel, "forward"): Qwen3VLModel.forward,
+        (Qwen3VLTextAttention, "forward"): Qwen3VLTextAttention.forward,
+        (Qwen3VLTextDecoderLayer, "forward"): Qwen3VLTextDecoderLayer.forward,
+        (Qwen3VLTextModel, "forward"): Qwen3VLTextModel.forward,
+        (Qwen3VLModel, "get_image_features"): Qwen3VLModel.get_image_features,
+        (Qwen3VLModel, "get_video_features"): Qwen3VLModel.get_video_features,
+    }
+    try:
+        Qwen3VLVisionAttention.forward = Qwen3VLVisionAttention._flashvid_original_forward
+        Qwen3VLVisionBlock.forward = Qwen3VLVisionBlock._flashvid_original_forward
+        Qwen3VLVisionModel.forward = Qwen3VLVisionModel._flashvid_original_forward
+        Qwen3VLModel.forward = Qwen3VLModel._flashvid_original_forward
+        Qwen3VLTextAttention.forward = Qwen3VLTextAttention._flashvid_original_forward
+        Qwen3VLTextDecoderLayer.forward = Qwen3VLTextDecoderLayer._flashvid_original_forward
+        Qwen3VLTextModel.forward = Qwen3VLTextModel._flashvid_original_forward
+        Qwen3VLModel.get_image_features = Qwen3VLModel._flashvid_original_get_image_features
+        Qwen3VLModel.get_video_features = Qwen3VLModel._flashvid_original_get_video_features
+        return Qwen3VLModel._flashvid_original_forward(self, **kwargs)
+    finally:
+        for (cls, attr), fn in originals.items():
+            setattr(cls, attr, fn)
+
+
 def _talon_full_bypass_eligible(
     flashvid_config: Optional[FlashVidConfig],
     video_grid_thw: Optional[torch.LongTensor],
@@ -304,24 +332,20 @@ def Qwen3VLModel_forward(
         spatial_merge_size=spatial_merge,
         pixel_values_videos=pixel_values_videos,
     ):
-        _set_qwen3vl_bypass_flags(self, True)
-        try:
-            return type(self)._flashvid_original_forward(
-                self,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                pixel_values=pixel_values,
-                pixel_values_videos=pixel_values_videos,
-                image_grid_thw=image_grid_thw,
-                video_grid_thw=video_grid_thw,
-                cache_position=cache_position,
-                **kwargs,
-            )
-        finally:
-            _set_qwen3vl_bypass_flags(self, False)
+        return _call_qwen3vl_original_pipeline(
+            self,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            cache_position=cache_position,
+            **kwargs,
+        )
 
     if inputs_embeds is None:
         inputs_embeds = self.get_input_embeddings()(input_ids)
