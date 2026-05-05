@@ -35,6 +35,41 @@ from .utils import (
 )
 
 
+def _qwen3vl_bypass_enabled(module) -> bool:
+    config = getattr(module, "config", None)
+    if config is not None and bool(getattr(config, "flashvid_bypass_active", False)):
+        return True
+    attn = getattr(module, "self_attn", None)
+    attn_config = getattr(attn, "config", None)
+    return bool(getattr(attn_config, "flashvid_bypass_active", False))
+
+
+def _talon_full_bypass_eligible(
+    flashvid_config: Optional[FlashVidConfig],
+    video_grid_thw: Optional[torch.LongTensor],
+    spatial_merge_size: int,
+    pixel_values_videos: Optional[torch.Tensor],
+) -> bool:
+    if flashvid_config is None or pixel_values_videos is None or video_grid_thw is None:
+        return False
+    if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() != "talon":
+        return False
+    if bool(getattr(flashvid_config, "adaptive_token_budget", False)):
+        return False
+    if float(getattr(flashvid_config, "retention_ratio", 1.0)) < 0.9999:
+        return False
+    if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
+        return False
+    decode_policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
+    if decode_policy not in ("none", "off", "disabled"):
+        return False
+    frame_target = int(getattr(flashvid_config, "talon_target_tokens_per_frame", 0) or 0)
+    if frame_target <= 0:
+        return False
+    num_visual_tokens = int((video_grid_thw[0][1].item() * video_grid_thw[0][2].item()) // max(1, spatial_merge_size**2))
+    return frame_target >= num_visual_tokens
+
+
 def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
     mode = str(getattr(flashvid_config, "talon_deepstack_mode", "keep") or "keep").strip().lower()
     if mode in ("keep", "on", "enabled", "true"):
@@ -60,6 +95,15 @@ def Qwen3VLVisionAttention_forward(
     return_logits: bool = False,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_forward(
+            self,
+            hidden_states,
+            cu_seqlens,
+            rotary_pos_emb=rotary_pos_emb,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
     seq_length = hidden_states.shape[0]
     query_states, key_states, value_states = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
     cos, sin = position_embeddings
@@ -121,6 +165,15 @@ def Qwen3VLVisionBlock_forward(
     position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
     **kwargs,
 ) -> torch.Tensor:
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_forward(
+            self,
+            hidden_states,
+            cu_seqlens,
+            rotary_pos_emb=rotary_pos_emb,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
     residual = hidden_states
     hidden_states, attn_weights = self.attn(
         self.norm1(hidden_states),
@@ -144,6 +197,13 @@ def Qwen3VLVisionModel_forward(
     grid_thw: torch.Tensor,
     **kwargs,
 ) -> torch.Tensor:
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_forward(
+            self,
+            hidden_states,
+            grid_thw,
+            **kwargs,
+        )
     """
     Args:
         hidden_states (`torch.Tensor` of shape `(seq_len, hidden_size)`):
@@ -225,6 +285,33 @@ def Qwen3VLModel_forward(
     """
     if (input_ids is None) ^ (inputs_embeds is not None):
         raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+    flashvid_config: Optional[FlashVidConfig] = getattr(self, "flashvid_config", None)
+    spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
+    if _talon_full_bypass_eligible(
+        flashvid_config=flashvid_config,
+        video_grid_thw=video_grid_thw,
+        spatial_merge_size=spatial_merge,
+        pixel_values_videos=pixel_values_videos,
+    ):
+        self.config.flashvid_bypass_active = True
+        try:
+            return type(self)._flashvid_original_forward(
+                self,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                pixel_values=pixel_values,
+                pixel_values_videos=pixel_values_videos,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                cache_position=cache_position,
+                **kwargs,
+            )
+        finally:
+            self.config.flashvid_bypass_active = False
 
     if inputs_embeds is None:
         inputs_embeds = self.get_input_embeddings()(input_ids)
@@ -429,6 +516,19 @@ def Qwen3VLTextModel_forward(
         The feature is extracted from the different visual encoder layers, and fed to the decoder
         hidden states. It's from the paper DeepStack(https://arxiv.org/abs/2406.04334).
     """
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_forward(
+            self,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            **kwargs,
+        )
+
     if (input_ids is None) ^ (inputs_embeds is not None):
         raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -553,6 +653,12 @@ def Qwen3VLModel_get_image_features(
     pixel_values: torch.FloatTensor,
     image_grid_thw: Optional[torch.LongTensor] = None,
 ):
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_get_image_features(
+            self,
+            pixel_values,
+            image_grid_thw=image_grid_thw,
+        )
     """
     Encodes images into continuous embeddings that can be forwarded to the language model. The deepstack visual features are also returned.
 
@@ -574,6 +680,12 @@ def Qwen3VLModel_get_video_features(
     pixel_values_videos: torch.FloatTensor,
     video_grid_thw: Optional[torch.LongTensor] = None,
 ):
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_get_video_features(
+            self,
+            pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+        )
     """
     Encodes videos into continuous embeddings that can be forwarded to the language model.
     Also returns deepstack visual features and cls-attention signals for FlashVID compression.
@@ -605,6 +717,18 @@ def Qwen3VLTextDecoderLayer_forward(
     cache_position: Optional[torch.LongTensor] = None,
     **kwargs: Unpack[TransformersKwargs],
 ) -> torch.Tensor:
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_forward(
+            self,
+            hidden_states,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            **kwargs,
+        )
     residual = hidden_states
     hidden_states = self.input_layernorm(hidden_states)
     # Self Attention
@@ -637,6 +761,16 @@ def Qwen3VLTextAttention_forward(
     cache_position: Optional[torch.LongTensor] = None,
     **kwargs: Unpack[FlashAttentionKwargs],
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    if _qwen3vl_bypass_enabled(self):
+        return type(self)._flashvid_original_forward(
+            self,
+            hidden_states,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            cache_position=cache_position,
+            **kwargs,
+        )
     input_shape = hidden_states.shape[:-1]
     hidden_shape = (*input_shape, -1, self.head_dim)
 

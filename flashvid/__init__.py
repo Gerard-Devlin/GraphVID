@@ -265,6 +265,24 @@ def flashvid(
         Qwen2_5_VLForConditionalGeneration.generate_ori = Qwen2_5_VLForConditionalGeneration.generate
         Qwen2_5_VLForConditionalGeneration.generate = Qwen2_5_VLForConditionalGeneration_generate
     elif type(model) is Qwen3VLForConditionalGeneration:  ## For Qwen3-VL
+        if not hasattr(Qwen3VLVisionAttention, "_flashvid_original_forward"):
+            Qwen3VLVisionAttention._flashvid_original_forward = Qwen3VLVisionAttention.forward
+        if not hasattr(Qwen3VLVisionBlock, "_flashvid_original_forward"):
+            Qwen3VLVisionBlock._flashvid_original_forward = Qwen3VLVisionBlock.forward
+        if not hasattr(Qwen3VLVisionModel, "_flashvid_original_forward"):
+            Qwen3VLVisionModel._flashvid_original_forward = Qwen3VLVisionModel.forward
+        if not hasattr(Qwen3VLModel, "_flashvid_original_forward"):
+            Qwen3VLModel._flashvid_original_forward = Qwen3VLModel.forward
+        if not hasattr(Qwen3VLTextAttention, "_flashvid_original_forward"):
+            Qwen3VLTextAttention._flashvid_original_forward = Qwen3VLTextAttention.forward
+        if not hasattr(Qwen3VLTextDecoderLayer, "_flashvid_original_forward"):
+            Qwen3VLTextDecoderLayer._flashvid_original_forward = Qwen3VLTextDecoderLayer.forward
+        if not hasattr(Qwen3VLTextModel, "_flashvid_original_forward"):
+            Qwen3VLTextModel._flashvid_original_forward = Qwen3VLTextModel.forward
+        if not hasattr(Qwen3VLModel, "_flashvid_original_get_image_features"):
+            Qwen3VLModel._flashvid_original_get_image_features = Qwen3VLModel.get_image_features
+        if not hasattr(Qwen3VLModel, "_flashvid_original_get_video_features"):
+            Qwen3VLModel._flashvid_original_get_video_features = Qwen3VLModel.get_video_features
         Qwen3VLVisionAttention.forward = Qwen3VLVisionAttention_forward
         Qwen3VLVisionBlock.forward = Qwen3VLVisionBlock_forward
         Qwen3VLVisionModel.forward = Qwen3VLVisionModel_forward
@@ -364,6 +382,7 @@ def flashvid(
     # Store FlashVid Config in the model.
     setattr(model, "flashvid_config", flashvid_config)
     setattr(model.model, "flashvid_config", flashvid_config)
+    setattr(model.config, "flashvid_bypass_active", False)
     if type(model) in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration):
         setattr(model.model.language_model, "flashvid_config", flashvid_config)
 
