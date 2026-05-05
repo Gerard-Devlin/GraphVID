@@ -111,6 +111,8 @@ def _talon_full_bypass_eligible(
 def _use_original_qwen3vl_text_stack(flashvid_config: Optional[FlashVidConfig]) -> bool:
     if flashvid_config is None:
         return False
+    if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() != "talon":
+        return False
     if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
         return False
     decode_policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
