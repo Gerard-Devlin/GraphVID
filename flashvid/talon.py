@@ -141,15 +141,18 @@ def _resolve_talon_target_tokens_per_frame(
         max(1, min(high, int(video_features.shape[1]))),
     ])
     score = 0.7 * _estimate_video_complexity(video_features) + 0.3 * _estimate_question_difficulty(question_features)
-    # Use explicit thresholds instead of floor(score * 3), which was overly biased
-    # toward the low bucket on real data and collapsed adaptive TALON to a fixed width.
-    if score < 0.25:
-        idx = 0
-    elif score < 0.55:
-        idx = 1
+    score = max(0.0, min(1.0, float(score)))
+    config.last_talon_complexity_score = score
+
+    low_t, mid_t, high_t = candidates
+    # Continuous interpolation avoids collapsing almost all samples into a single
+    # discrete bucket, which happened with hard thresholds on full-dataset runs.
+    if score <= 0.5:
+        alpha = score / 0.5
+        target = int(round((1.0 - alpha) * low_t + alpha * mid_t))
     else:
-        idx = 2
-    target = int(candidates[idx])
+        alpha = (score - 0.5) / 0.5
+        target = int(round((1.0 - alpha) * mid_t + alpha * high_t))
     config.last_talon_target_tokens_per_frame = target
     return target
 
