@@ -619,6 +619,7 @@ class TalonCompressor:
             eigvals=eigvals,
             selected=selected,
             talon_budget=talon_budget,
+            fused_scores=fused_scores,
         )
 
         rank = rank_plan.rank
@@ -669,10 +670,15 @@ class TalonCompressor:
             core_index_tensor = flat_indices[top1]
 
         dropped = torch.where(~selected)[0]
+        memory_scores = residual_scores.float()
+        if _safe_bool(getattr(self.config, "talon_use_question_innovation", True)):
+            q_weight = min(max(float(getattr(self.config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
+            memory_scores = memory_scores * (1.0 + q_weight * fused_scores.float())
+
         mem_tokens, mem_local_idx = _build_memory_tokens(
             flat_features=flat_features,
             dropped_indices=dropped,
-            residual_scores=residual_scores,
+            residual_scores=memory_scores,
             memory_budget=memory_budget,
             num_frames=num_frames,
             num_visual_tokens=num_visual_tokens,
@@ -779,6 +785,7 @@ class TalonCompressor:
         eigvals: torch.Tensor,
         selected: torch.Tensor,
         talon_budget: int,
+        fused_scores: torch.Tensor,
     ) -> _RankPlan:
         num_frames, num_visual_tokens, feat_dim = segment_features.shape
         max_rank = int(basis.shape[1])
@@ -798,11 +805,16 @@ class TalonCompressor:
         best_reconstruction = torch.zeros_like(segment_features)
         spectral_weight = float(getattr(self.config, "talon_rd_spectral_weight", 1.0))
         innovation_weight = float(getattr(self.config, "talon_rd_innovation_weight", 1.0))
+        question_weight = 0.0
+        if _safe_bool(getattr(self.config, "talon_use_question_innovation", True)):
+            question_weight = min(max(float(getattr(self.config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
 
         if _safe_bool(getattr(self.config, "talon_fast_rank_plan", True)):
             # Rate-distortion proxy: choose the background rank from spectral tail
             # and raw-token innovation energy, then reconstruct only once.
             flat_energy = torch.norm(segment_features.float(), p=2, dim=-1).reshape(-1) ** 2
+            if question_weight > 0.0:
+                flat_energy = flat_energy * (1.0 + question_weight * fused_scores.float())
             flat_energy = flat_energy.masked_fill(selected, 0.0)
             sorted_energy = torch.sort(flat_energy, descending=True).values
             prefix = F.pad(torch.cumsum(sorted_energy, dim=0), (1, 0), value=0.0)
@@ -836,14 +848,17 @@ class TalonCompressor:
             reconstruction = self._reconstruct_source(transport, basis[:, :rank])
             residual = segment_features.float() - reconstruction.float()
             residual_scores = torch.norm(residual, p=2, dim=-1).reshape(-1) ** 2
-            candidate_scores = residual_scores.masked_fill(selected, -1.0)
+            candidate_scores = residual_scores.float()
+            if question_weight > 0.0:
+                candidate_scores = candidate_scores * (1.0 + question_weight * fused_scores.float())
+            candidate_scores = candidate_scores.masked_fill(selected, -1.0)
             innovation_budget = max(0, talon_budget - rank_cost)
             if innovation_budget > 0 and (candidate_scores > 0).any():
                 keep_k = min(innovation_budget, int((candidate_scores > 0).sum().item()))
                 kept = torch.topk(candidate_scores, k=keep_k, dim=0).values.sum()
             else:
                 kept = candidate_scores.new_tensor(0.0)
-            residual_tail = residual_scores.masked_fill(selected, 0.0).sum() - kept
+            residual_tail = candidate_scores.masked_fill(selected, 0.0).sum() - kept
             spectral_tail = eigvals[rank:].sum() if rank < eigvals.numel() else eigvals.new_tensor(0.0)
             score = spectral_weight * spectral_tail + innovation_weight * residual_tail
             if best_score is None or score < best_score:
