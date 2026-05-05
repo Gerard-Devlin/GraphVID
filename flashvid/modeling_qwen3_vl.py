@@ -44,6 +44,16 @@ def _qwen3vl_bypass_enabled(module) -> bool:
     return bool(getattr(attn_config, "flashvid_bypass_active", False))
 
 
+def _set_qwen3vl_bypass_flags(model: Qwen3VLModel, active: bool) -> None:
+    for cfg in (
+        getattr(model, "config", None),
+        getattr(getattr(model, "visual", None), "config", None),
+        getattr(getattr(model, "language_model", None), "config", None),
+    ):
+        if cfg is not None:
+            setattr(cfg, "flashvid_bypass_active", active)
+
+
 def _talon_full_bypass_eligible(
     flashvid_config: Optional[FlashVidConfig],
     video_grid_thw: Optional[torch.LongTensor],
@@ -294,7 +304,7 @@ def Qwen3VLModel_forward(
         spatial_merge_size=spatial_merge,
         pixel_values_videos=pixel_values_videos,
     ):
-        self.config.flashvid_bypass_active = True
+        _set_qwen3vl_bypass_flags(self, True)
         try:
             return type(self)._flashvid_original_forward(
                 self,
@@ -311,7 +321,7 @@ def Qwen3VLModel_forward(
                 **kwargs,
             )
         finally:
-            self.config.flashvid_bypass_active = False
+            _set_qwen3vl_bypass_flags(self, False)
 
     if inputs_embeds is None:
         inputs_embeds = self.get_input_embeddings()(input_ids)
