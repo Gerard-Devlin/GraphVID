@@ -354,6 +354,77 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, mo
     return budgets
 
 
+def _hybrid_global_frame_select(
+    scores: torch.Tensor,
+    selected_mask: torch.Tensor,
+    budget: int,
+    num_frames: int,
+    num_visual_tokens: int,
+    frame_importance: torch.Tensor,
+    budget_mode: str,
+    global_ratio: float = 0.70,
+    min_per_frame: int = 0,
+) -> torch.Tensor:
+    budget = min(max(0, int(budget)), int((~selected_mask).sum().item()))
+    if budget <= 0:
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+
+    global_ratio = min(max(float(global_ratio), 0.0), 1.0)
+    selected = []
+    occupied = selected_mask.clone()
+
+    # Stage-1: global top-k to maximize question/attention utility.
+    global_k = min(budget, max(0, int(round(budget * global_ratio))))
+    if global_k > 0:
+        global_scores = scores.masked_fill(occupied, -1e9)
+        valid_global = int((global_scores > -1e8).sum().item())
+        if valid_global > 0:
+            gk = min(global_k, valid_global)
+            top_global = torch.topk(global_scores, k=gk, dim=0).indices
+            selected.append(top_global)
+            occupied[top_global] = True
+
+    # Stage-2: frame-aware refill to prevent over-collapse on few frames.
+    remaining = budget - sum(int(x.numel()) for x in selected)
+    if remaining <= 0:
+        return torch.cat(selected, dim=0).to(dtype=torch.long) if selected else torch.empty((0,), dtype=torch.long, device=scores.device)
+
+    frame_budgets = _allocate_frame_budget(remaining, frame_importance, budget_mode)
+    score_grid = scores.view(num_frames, num_visual_tokens)
+    occupied_grid = occupied.view(num_frames, num_visual_tokens)
+    frame_pick = []
+    for t in range(num_frames):
+        required = max(0, int(min_per_frame))
+        frame_budget = max(required, int(frame_budgets[t]))
+        available = int((~occupied_grid[t]).sum().item())
+        keep_t = min(frame_budget, available)
+        if keep_t <= 0:
+            continue
+        local_scores = score_grid[t].masked_fill(occupied_grid[t], -1e9)
+        local_top = torch.topk(local_scores, k=keep_t, dim=0).indices
+        global_idx = t * num_visual_tokens + local_top
+        frame_pick.append(global_idx)
+        occupied[global_idx] = True
+
+    if frame_pick:
+        selected.append(torch.cat(frame_pick, dim=0))
+
+    # Stage-3: final global refill for any leftover slots.
+    picked = sum(int(x.numel()) for x in selected)
+    leftover = budget - picked
+    if leftover > 0:
+        refill_scores = scores.masked_fill(occupied, -1e9)
+        valid_refill = int((refill_scores > -1e8).sum().item())
+        if valid_refill > 0:
+            rk = min(leftover, valid_refill)
+            refill = torch.topk(refill_scores, k=rk, dim=0).indices
+            selected.append(refill)
+
+    if not selected:
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+    return torch.cat(selected, dim=0).unique().to(dtype=torch.long)
+
+
 def _frame_importance(
     segment_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -723,42 +794,50 @@ class TalonCompressor:
             return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
         if not _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
             return torch.topk(fused_scores, k=budget, dim=0).indices
-
-        score_grid = fused_scores.view(num_frames, num_visual_tokens)
+        # Anchor safety first: keep a small number of per-frame high-attention anchors.
         attention_grid = _normalize_scores(raw_attention).view(num_frames, num_visual_tokens)
-        frame_budgets = _allocate_frame_budget(budget, frame_importance, budget_mode)
         min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
-        selected = []
-        for t, budget_t in enumerate(frame_budgets):
-            budget_t = min(int(budget_t), num_visual_tokens)
-            if budget_t <= 0:
-                continue
-            used = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=fused_scores.device)
-            local_parts = []
+        anchor_budget = min(budget, num_frames * min_anchor_per_frame) if min_anchor_per_frame > 0 else 0
+        anchor_selected = []
+        if anchor_budget > 0:
+            for t in range(num_frames):
+                k_t = min(min_anchor_per_frame, num_visual_tokens)
+                if k_t <= 0:
+                    continue
+                local = torch.topk(attention_grid[t], k=k_t, dim=0).indices
+                anchor_selected.append(t * num_visual_tokens + local)
+            if anchor_selected:
+                anchor_selected = torch.cat(anchor_selected, dim=0).unique()
+                if anchor_selected.numel() > anchor_budget:
+                    anchor_scores = fused_scores[anchor_selected]
+                    keep_order = torch.topk(anchor_scores, k=anchor_budget, dim=0).indices
+                    anchor_selected = anchor_selected[keep_order]
+            else:
+                anchor_selected = torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+        else:
+            anchor_selected = torch.empty((0,), dtype=torch.long, device=fused_scores.device)
 
-            anchor_keep = min(min_anchor_per_frame, budget_t, num_visual_tokens)
-            if anchor_keep > 0:
-                anchor_local = torch.topk(attention_grid[t], k=anchor_keep, dim=0).indices
-                local_parts.append(anchor_local)
-                used[anchor_local] = True
-
-            remaining = budget_t - sum(part.numel() for part in local_parts)
-            if remaining > 0:
-                fused_local = score_grid[t].masked_fill(used, -1e9)
-                fused_local_idx = torch.topk(fused_local, k=remaining, dim=0).indices
-                local_parts.append(fused_local_idx)
-
-            local = torch.cat(local_parts, dim=0).unique()
-            if local.numel() < budget_t:
-                refill_scores = score_grid[t].masked_fill(torch.isin(torch.arange(num_visual_tokens, device=fused_scores.device), local), -1e9)
-                refill_k = min(budget_t - local.numel(), int((refill_scores > -1e8).sum().item()))
-                if refill_k > 0:
-                    refill_idx = torch.topk(refill_scores, k=refill_k, dim=0).indices
-                    local = torch.cat([local, refill_idx], dim=0)
-            selected.append(t * num_visual_tokens + local[:budget_t])
-        if not selected:
-            return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-        return torch.cat(selected, dim=0).to(dtype=torch.long)
+        selected_mask = torch.zeros_like(fused_scores, dtype=torch.bool)
+        if anchor_selected.numel() > 0:
+            selected_mask[anchor_selected] = True
+        remaining_budget = max(0, budget - int(anchor_selected.numel()))
+        global_ratio = float(getattr(self.config, "talon_global_topk_ratio", 0.70))
+        hybrid_selected = _hybrid_global_frame_select(
+            scores=fused_scores.float(),
+            selected_mask=selected_mask,
+            budget=remaining_budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            frame_importance=frame_importance,
+            budget_mode=budget_mode,
+            global_ratio=global_ratio,
+            min_per_frame=0,
+        )
+        if anchor_selected.numel() == 0:
+            return hybrid_selected
+        if hybrid_selected.numel() == 0:
+            return anchor_selected
+        return torch.cat([anchor_selected, hybrid_selected], dim=0).unique().to(dtype=torch.long)
 
     def _select_rank_plan(
         self,
@@ -934,32 +1013,17 @@ class TalonCompressor:
             return segment_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=segment_features.device)
 
         if _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
-            score_grid = scores.view(num_frames, num_visual_tokens)
-            selected_grid = selected.view(num_frames, num_visual_tokens)
-            frame_budgets = _allocate_frame_budget(k, frame_importance, budget_mode)
-            top_list = []
-            leftover = 0
-            for t, budget_t in enumerate(frame_budgets):
-                available = int((~selected_grid[t]).sum().item())
-                keep_t = min(int(budget_t), available)
-                leftover += max(0, int(budget_t) - keep_t)
-                if keep_t <= 0:
-                    continue
-                local_scores = score_grid[t].masked_fill(selected_grid[t], -1e9)
-                local_top = torch.topk(local_scores, k=keep_t, dim=0).indices
-                top_list.append(t * num_visual_tokens + local_top)
-            if leftover > 0:
-                covered = torch.zeros_like(selected)
-                if top_list:
-                    covered[torch.cat(top_list, dim=0)] = True
-                extra_scores = scores.masked_fill(selected | covered, -1e9)
-                extra_k = min(leftover, int((extra_scores > -1e8).sum().item()))
-                if extra_k > 0:
-                    top_list.append(torch.topk(extra_scores, k=extra_k, dim=0).indices)
-            if top_list:
-                top = torch.cat(top_list, dim=0).to(dtype=torch.long)
-            else:
-                top = torch.topk(scores, k=k, dim=0).indices
+            top = _hybrid_global_frame_select(
+                scores=scores.float(),
+                selected_mask=selected,
+                budget=k,
+                num_frames=num_frames,
+                num_visual_tokens=num_visual_tokens,
+                frame_importance=frame_importance,
+                budget_mode=budget_mode,
+                global_ratio=float(getattr(self.config, "talon_global_topk_ratio", 0.70)),
+                min_per_frame=0,
+            )
         else:
             top = torch.topk(scores, k=k, dim=0).indices
 
