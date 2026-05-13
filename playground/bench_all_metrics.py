@@ -74,6 +74,36 @@ class BenchmarkArgs:
     talon_complexity_floor: float = field(default=0.20)
     talon_complexity_ceil: float = field(default=0.40)
     talon_adaptive_gamma: float = field(default=1.0)
+    talon_adaptive_target_enabled: bool = field(default=True)
+    talon_force_fixed_target: bool = field(default=False)
+    talon_target_mean_cap: float = field(default=18.75)
+    talon_unified_selection: bool = field(default=True)
+    talon_low_budget_mode_threshold: int = field(default=20)
+    talon_low_budget_rank_cap: int = field(default=1)
+    talon_background_global_ratio: float = field(default=0.60)
+    talon_memory_fused_weight: float = field(default=0.50)
+    talon_memory_residual_weight: float = field(default=0.35)
+    talon_memory_frame_weight: float = field(default=0.15)
+    talon_recall_memory_mode: str = field(default="raw")
+    talon_final_fused_weight: float = field(default=0.55)
+    talon_final_residual_weight: float = field(default=0.30)
+    talon_final_frame_weight: float = field(default=0.15)
+    talon_anchor_keep_bonus: float = field(default=0.08)
+    talon_recall_keep_bonus: float = field(default=0.05)
+    talon_global_topk_ratio: float = field(default=0.70)
+    talon_rescue_enabled: bool = field(default=True)
+    talon_rescue_ratio: float = field(default=0.08)
+    talon_rescue_from_memory_only: bool = field(default=True)
+    talon_rescue_fused_weight: float = field(default=0.55)
+    talon_rescue_residual_weight: float = field(default=0.35)
+    talon_rescue_frame_weight: float = field(default=0.10)
+    talon_rescue_global_ratio: float = field(default=0.85)
+    talon_rerank_with_flash_prior: bool = field(default=True)
+    talon_flash_prior_ratio: float = field(default=0.20)
+    talon_recall_semantic_ratio: float = field(default=0.50)
+    talon_recall_event_ratio: float = field(default=0.25)
+    talon_recall_frame_ratio: float = field(default=0.15)
+    talon_recall_global_ratio: float = field(default=0.55)
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -538,15 +568,33 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
             "talon_target_tokens_per_frame": None,
             "talon_adaptive_retention_ratio": None,
             "talon_complexity_score": None,
+            "talon_target_budget": None,
+            "talon_anchor_tokens": None,
+            "talon_rank_tokens": None,
+            "talon_event_tokens": None,
+            "talon_recall_tokens": None,
+            "talon_memory_tokens": None,
         }
     cfg = getattr(model, "flashvid_config")
     target = getattr(cfg, "last_talon_target_tokens_per_frame", None)
     adaptive_ratio = getattr(cfg, "last_adaptive_retention_ratio", None)
     complexity = getattr(cfg, "last_talon_complexity_score", None)
+    target_budget = getattr(cfg, "last_talon_target_budget", None)
+    anchor_tokens = getattr(cfg, "last_talon_anchor_tokens", None)
+    rank_tokens = getattr(cfg, "last_talon_rank_tokens", None)
+    event_tokens = getattr(cfg, "last_talon_event_tokens", None)
+    recall_tokens = getattr(cfg, "last_talon_recall_tokens", None)
+    memory_tokens = getattr(cfg, "last_talon_memory_tokens", None)
     return {
         "talon_target_tokens_per_frame": float(target) if target is not None else None,
         "talon_adaptive_retention_ratio": float(adaptive_ratio) if adaptive_ratio is not None else None,
         "talon_complexity_score": float(complexity) if complexity is not None else None,
+        "talon_target_budget": float(target_budget) if target_budget is not None else None,
+        "talon_anchor_tokens": float(anchor_tokens) if anchor_tokens is not None else None,
+        "talon_rank_tokens": float(rank_tokens) if rank_tokens is not None else None,
+        "talon_event_tokens": float(event_tokens) if event_tokens is not None else None,
+        "talon_recall_tokens": float(recall_tokens) if recall_tokens is not None else None,
+        "talon_memory_tokens": float(memory_tokens) if memory_tokens is not None else None,
     }
 
 
@@ -586,6 +634,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     vision_tokens_per_run = []
     talon_target_per_run = []
     talon_complexity_per_run = []
+    talon_target_budget_per_run = []
+    talon_anchor_per_run = []
+    talon_rank_per_run = []
+    talon_event_per_run = []
+    talon_recall_per_run = []
+    talon_memory_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -626,6 +680,18 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
         if debug_metrics["talon_complexity_score"] is not None:
             talon_complexity_per_run.append(float(debug_metrics["talon_complexity_score"]))
+        if debug_metrics["talon_target_budget"] is not None:
+            talon_target_budget_per_run.append(float(debug_metrics["talon_target_budget"]))
+        if debug_metrics["talon_anchor_tokens"] is not None:
+            talon_anchor_per_run.append(float(debug_metrics["talon_anchor_tokens"]))
+        if debug_metrics["talon_rank_tokens"] is not None:
+            talon_rank_per_run.append(float(debug_metrics["talon_rank_tokens"]))
+        if debug_metrics["talon_event_tokens"] is not None:
+            talon_event_per_run.append(float(debug_metrics["talon_event_tokens"]))
+        if debug_metrics["talon_recall_tokens"] is not None:
+            talon_recall_per_run.append(float(debug_metrics["talon_recall_tokens"]))
+        if debug_metrics["talon_memory_tokens"] is not None:
+            talon_memory_per_run.append(float(debug_metrics["talon_memory_tokens"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
@@ -633,6 +699,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     vision_compressed_visual_tokens = float(np.mean(vision_tokens_per_run)) if vision_tokens_per_run else float(raw_visual_tokens)
     talon_target_tokens_per_frame = float(np.mean(talon_target_per_run)) if talon_target_per_run else None
     talon_complexity_score = float(np.mean(talon_complexity_per_run)) if talon_complexity_per_run else None
+    talon_target_budget = float(np.mean(talon_target_budget_per_run)) if talon_target_budget_per_run else None
+    talon_anchor_tokens = float(np.mean(talon_anchor_per_run)) if talon_anchor_per_run else None
+    talon_rank_tokens = float(np.mean(talon_rank_per_run)) if talon_rank_per_run else None
+    talon_event_tokens = float(np.mean(talon_event_per_run)) if talon_event_per_run else None
+    talon_recall_tokens = float(np.mean(talon_recall_per_run)) if talon_recall_per_run else None
+    talon_memory_tokens = float(np.mean(talon_memory_per_run)) if talon_memory_per_run else None
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -647,6 +719,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
         "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
         "talon_complexity_score": talon_complexity_score,
+        "talon_target_budget": talon_target_budget,
+        "talon_anchor_tokens": talon_anchor_tokens,
+        "talon_rank_tokens": talon_rank_tokens,
+        "talon_event_tokens": talon_event_tokens,
+        "talon_recall_tokens": talon_recall_tokens,
+        "talon_memory_tokens": talon_memory_tokens,
     }
 
 
@@ -665,6 +743,12 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "vision_compressed_visual_tokens": None,
         "talon_target_tokens_per_frame": None,
         "talon_complexity_score": None,
+        "talon_target_budget": None,
+        "talon_anchor_tokens": None,
+        "talon_rank_tokens": None,
+        "talon_event_tokens": None,
+        "talon_recall_tokens": None,
+        "talon_memory_tokens": None,
         "visual_token_reduction_ratio": None,
         "vision_visual_token_reduction_ratio": None,
         "error": None,
@@ -695,6 +779,12 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "vision_compressed_visual_tokens": vision_compressed_v,
                 "talon_target_tokens_per_frame": result.get("talon_target_tokens_per_frame"),
                 "talon_complexity_score": result.get("talon_complexity_score"),
+                "talon_target_budget": result.get("talon_target_budget"),
+                "talon_anchor_tokens": result.get("talon_anchor_tokens"),
+                "talon_rank_tokens": result.get("talon_rank_tokens"),
+                "talon_event_tokens": result.get("talon_event_tokens"),
+                "talon_recall_tokens": result.get("talon_recall_tokens"),
+                "talon_memory_tokens": result.get("talon_memory_tokens"),
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -782,6 +872,36 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("talon_complexity_score") is not None
     ]
+    talon_target_budget = [
+        float(r["talon_target_budget"])
+        for r in valid
+        if r.get("talon_target_budget") is not None
+    ]
+    talon_anchor_tokens = [
+        float(r["talon_anchor_tokens"])
+        for r in valid
+        if r.get("talon_anchor_tokens") is not None
+    ]
+    talon_rank_tokens = [
+        float(r["talon_rank_tokens"])
+        for r in valid
+        if r.get("talon_rank_tokens") is not None
+    ]
+    talon_event_tokens = [
+        float(r["talon_event_tokens"])
+        for r in valid
+        if r.get("talon_event_tokens") is not None
+    ]
+    talon_recall_tokens = [
+        float(r["talon_recall_tokens"])
+        for r in valid
+        if r.get("talon_recall_tokens") is not None
+    ]
+    talon_memory_tokens = [
+        float(r["talon_memory_tokens"])
+        for r in valid
+        if r.get("talon_memory_tokens") is not None
+    ]
     reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
         float(r["vision_visual_token_reduction_ratio"])
@@ -802,6 +922,12 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "vision_compressed_visual_tokens": _stats(vision_compressed_visual),
         "talon_target_tokens_per_frame": _stats(talon_target),
         "talon_complexity_score": _stats(talon_complexity),
+        "talon_target_budget": _stats(talon_target_budget),
+        "talon_anchor_tokens": _stats(talon_anchor_tokens),
+        "talon_rank_tokens": _stats(talon_rank_tokens),
+        "talon_event_tokens": _stats(talon_event_tokens),
+        "talon_recall_tokens": _stats(talon_recall_tokens),
+        "talon_memory_tokens": _stats(talon_memory_tokens),
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -933,6 +1059,36 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_complexity_floor=args.talon_complexity_floor,
         talon_complexity_ceil=args.talon_complexity_ceil,
         talon_adaptive_gamma=args.talon_adaptive_gamma,
+        talon_adaptive_target_enabled=args.talon_adaptive_target_enabled,
+        talon_force_fixed_target=args.talon_force_fixed_target,
+        talon_target_mean_cap=args.talon_target_mean_cap,
+        talon_unified_selection=args.talon_unified_selection,
+        talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
+        talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
+        talon_background_global_ratio=args.talon_background_global_ratio,
+        talon_memory_fused_weight=args.talon_memory_fused_weight,
+        talon_memory_residual_weight=args.talon_memory_residual_weight,
+        talon_memory_frame_weight=args.talon_memory_frame_weight,
+        talon_recall_memory_mode=args.talon_recall_memory_mode,
+        talon_final_fused_weight=args.talon_final_fused_weight,
+        talon_final_residual_weight=args.talon_final_residual_weight,
+        talon_final_frame_weight=args.talon_final_frame_weight,
+        talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
+        talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_global_topk_ratio=args.talon_global_topk_ratio,
+        talon_rescue_enabled=args.talon_rescue_enabled,
+        talon_rescue_ratio=args.talon_rescue_ratio,
+        talon_rescue_from_memory_only=args.talon_rescue_from_memory_only,
+        talon_rescue_fused_weight=args.talon_rescue_fused_weight,
+        talon_rescue_residual_weight=args.talon_rescue_residual_weight,
+        talon_rescue_frame_weight=args.talon_rescue_frame_weight,
+        talon_rescue_global_ratio=args.talon_rescue_global_ratio,
+        talon_rerank_with_flash_prior=args.talon_rerank_with_flash_prior,
+        talon_flash_prior_ratio=args.talon_flash_prior_ratio,
+        talon_recall_semantic_ratio=args.talon_recall_semantic_ratio,
+        talon_recall_event_ratio=args.talon_recall_event_ratio,
+        talon_recall_frame_ratio=args.talon_recall_frame_ratio,
+        talon_recall_global_ratio=args.talon_recall_global_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1010,6 +1166,36 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
+        talon_adaptive_target_enabled=args.talon_adaptive_target_enabled,
+        talon_force_fixed_target=args.talon_force_fixed_target,
+        talon_target_mean_cap=args.talon_target_mean_cap,
+        talon_unified_selection=args.talon_unified_selection,
+        talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
+        talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
+        talon_background_global_ratio=args.talon_background_global_ratio,
+        talon_memory_fused_weight=args.talon_memory_fused_weight,
+        talon_memory_residual_weight=args.talon_memory_residual_weight,
+        talon_memory_frame_weight=args.talon_memory_frame_weight,
+        talon_recall_memory_mode=args.talon_recall_memory_mode,
+        talon_final_fused_weight=args.talon_final_fused_weight,
+        talon_final_residual_weight=args.talon_final_residual_weight,
+        talon_final_frame_weight=args.talon_final_frame_weight,
+        talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
+        talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_global_topk_ratio=args.talon_global_topk_ratio,
+        talon_rescue_enabled=args.talon_rescue_enabled,
+        talon_rescue_ratio=args.talon_rescue_ratio,
+        talon_rescue_from_memory_only=args.talon_rescue_from_memory_only,
+        talon_rescue_fused_weight=args.talon_rescue_fused_weight,
+        talon_rescue_residual_weight=args.talon_rescue_residual_weight,
+        talon_rescue_frame_weight=args.talon_rescue_frame_weight,
+        talon_rescue_global_ratio=args.talon_rescue_global_ratio,
+        talon_rerank_with_flash_prior=args.talon_rerank_with_flash_prior,
+        talon_flash_prior_ratio=args.talon_flash_prior_ratio,
+        talon_recall_semantic_ratio=args.talon_recall_semantic_ratio,
+        talon_recall_event_ratio=args.talon_recall_event_ratio,
+        talon_recall_frame_ratio=args.talon_recall_frame_ratio,
+        talon_recall_global_ratio=args.talon_recall_global_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1062,6 +1248,12 @@ def _print_summary(summary: dict[str, Any]):
         vision_vt_mean = phase["vision_compressed_visual_tokens"]["mean"]
         talon_target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
         talon_complexity_mean = phase.get("talon_complexity_score", {}).get("mean")
+        talon_budget_mean = phase.get("talon_target_budget", {}).get("mean")
+        talon_anchor_mean = phase.get("talon_anchor_tokens", {}).get("mean")
+        talon_rank_mean = phase.get("talon_rank_tokens", {}).get("mean")
+        talon_event_mean = phase.get("talon_event_tokens", {}).get("mean")
+        talon_recall_mean = phase.get("talon_recall_tokens", {}).get("mean")
+        talon_memory_mean = phase.get("talon_memory_tokens", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -1074,6 +1266,12 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  talon target/frame mean: {talon_target_mean:.2f}")
         if talon_complexity_mean is not None:
             print(f"  talon complexity mean: {talon_complexity_mean:.4f}")
+        if talon_budget_mean is not None:
+            print(f"  talon target budget mean: {talon_budget_mean:.2f}")
+        if talon_anchor_mean is not None:
+            print(f"  talon anchor/event/recall mean: {talon_anchor_mean:.2f}/{(talon_event_mean or 0.0):.2f}/{(talon_recall_mean or 0.0):.2f}")
+        if talon_rank_mean is not None:
+            print(f"  talon rank/memory mean: {talon_rank_mean:.2f}/{(talon_memory_mean or 0.0):.2f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
