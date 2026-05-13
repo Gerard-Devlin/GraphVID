@@ -177,6 +177,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             _str_bool(args.local_files_only),
             "--dataset_jsonl",
             args.dataset_jsonl,
+            "--duration_filter",
+            args.duration_filter,
             "--start_index",
             str(start),
             "--limit",
@@ -321,6 +323,7 @@ def main() -> None:
     parser.add_argument("--model_path", default="/gluster/envs/users/wuzhijian/hf_home/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b")
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
+    parser.add_argument("--duration_filter", default="", help="Comma-separated durations: short,medium,long.")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--total_limit", type=int, default=200)

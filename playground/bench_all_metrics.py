@@ -35,6 +35,7 @@ class BenchmarkArgs:
     start_index: int = field(default=0)
     limit: int | None = field(default=100)
     shuffle: bool = field(default=True)
+    duration_filter: str = field(default="")
     num_frames: int = field(default=64)
     max_pixels: int = field(default=256 * 28 * 28)
     min_pixels: int = field(default=64 * 28 * 28)
@@ -352,13 +353,22 @@ def _resolve_video_path(video_id: str, hf_home_override: str | None) -> str:
     raise FileNotFoundError(f"missing video for videoID={video_id} under {base_dir}")
 
 
-def _load_dataset(dataset_jsonl: str, limit: int | None, shuffle: bool, start_index: int = 0) -> list[dict[str, Any]]:
+def _load_dataset(
+    dataset_jsonl: str,
+    limit: int | None,
+    shuffle: bool,
+    start_index: int = 0,
+    duration_filter: str = "",
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     with Path(dataset_jsonl).open(encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
             records.append(json.loads(line))
+    allowed_durations = {x.strip().lower() for x in str(duration_filter or "").split(",") if x.strip()}
+    if allowed_durations:
+        records = [r for r in records if str(r.get("duration", "")).strip().lower() in allowed_durations]
     if shuffle:
         random.shuffle(records)
     start_index = max(0, int(start_index or 0))
@@ -1727,7 +1737,7 @@ def _print_summary(summary: dict[str, Any]):
 
 
 def run(args: BenchmarkArgs):
-    samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index)
+    samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
     if not (args.run_baseline or args.run_flashvid or args.run_ours):
