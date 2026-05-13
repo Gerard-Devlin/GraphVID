@@ -70,11 +70,23 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--adaptive_token_budget",
             "False",
             "--talon_adaptive_target_enabled",
-            "False",
+            _str_bool(args.talon_adaptive_target_enabled),
             "--talon_target_mean_cap",
-            "0",
+            str(args.talon_target_mean_cap),
             "--talon_target_tokens_per_frame",
             str(args.talon_target_tokens_per_frame),
+            "--talon_adaptive_target_low",
+            str(args.talon_adaptive_target_low),
+            "--talon_adaptive_target_mid",
+            str(args.talon_adaptive_target_mid),
+            "--talon_adaptive_target_high",
+            str(args.talon_adaptive_target_high),
+            "--talon_complexity_floor",
+            str(args.talon_complexity_floor),
+            "--talon_complexity_ceil",
+            str(args.talon_complexity_ceil),
+            "--talon_adaptive_gamma",
+            str(args.talon_adaptive_gamma),
             "--talon_question_recall_ratio",
             str(args.talon_question_recall_ratio),
             "--talon_question_recall_qweight",
@@ -297,6 +309,14 @@ def main() -> None:
     parser.add_argument("--gpu_ids", default="", help="Comma-separated GPU ids. Overrides auto selection.")
     parser.add_argument("--tag", default="talon_recall08_t20_parallel")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=20)
+    parser.add_argument("--talon_adaptive_target_enabled", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--talon_adaptive_target_low", type=int, default=0)
+    parser.add_argument("--talon_adaptive_target_mid", type=int, default=0)
+    parser.add_argument("--talon_adaptive_target_high", type=int, default=0)
+    parser.add_argument("--talon_complexity_floor", type=float, default=0.20)
+    parser.add_argument("--talon_complexity_ceil", type=float, default=0.40)
+    parser.add_argument("--talon_adaptive_gamma", type=float, default=1.0)
+    parser.add_argument("--talon_target_mean_cap", type=float, default=0.0)
     parser.add_argument("--talon_question_recall_ratio", type=float, default=0.08)
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     args = parser.parse_args()
