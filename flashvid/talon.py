@@ -607,6 +607,60 @@ def _emit_rescue_tokens(
     return flat_features[top], flat_indices[top]
 
 
+def _collect_recall_candidates(
+    fused_scores: torch.Tensor,
+    residual_scores: torch.Tensor,
+    frame_importance: torch.Tensor,
+    target_budget: int,
+    num_frames: int,
+    num_visual_tokens: int,
+    budget_mode: str,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    num_tokens = int(fused_scores.numel())
+    if num_tokens <= 0 or target_budget <= 0:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+
+    semantic_ratio = min(max(float(getattr(config, "talon_recall_semantic_ratio", 0.50)), 0.0), 1.0)
+    event_ratio = min(max(float(getattr(config, "talon_recall_event_ratio", 0.25)), 0.0), 1.0)
+    frame_ratio = min(max(float(getattr(config, "talon_recall_frame_ratio", 0.15)), 0.0), 1.0)
+
+    k_sem = min(num_tokens, max(0, int(round(target_budget * semantic_ratio))))
+    k_event = min(num_tokens, max(0, int(round(target_budget * event_ratio))))
+    k_frame = min(num_tokens, max(0, int(round(target_budget * frame_ratio))))
+
+    picks = []
+    if k_sem > 0:
+        sem = torch.topk(fused_scores.float(), k=k_sem, dim=0).indices
+        picks.append(sem)
+
+    if k_event > 0:
+        frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
+        event_score = 0.65 * _normalize_scores(residual_scores.float()) + 0.35 * _normalize_scores(frame_prior)
+        event_score = 0.75 * event_score + 0.25 * _normalize_scores(fused_scores.float())
+        evt = torch.topk(event_score, k=k_event, dim=0).indices
+        picks.append(evt)
+
+    if k_frame > 0:
+        frame_pick = _hybrid_global_frame_select(
+            scores=fused_scores.float(),
+            selected_mask=torch.zeros((num_tokens,), dtype=torch.bool, device=fused_scores.device),
+            budget=k_frame,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            frame_importance=frame_importance,
+            budget_mode=budget_mode,
+            global_ratio=float(getattr(config, "talon_recall_global_ratio", 0.55)),
+            min_per_frame=1,
+        )
+        if frame_pick.numel() > 0:
+            picks.append(frame_pick)
+
+    if not picks:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+    return torch.cat(picks, dim=0).unique().to(dtype=torch.long)
+
+
 class TalonCompressor:
     def __init__(self, config: FlashVidConfig):
         self.config = config
@@ -879,7 +933,25 @@ class TalonCompressor:
         if candidate_local.numel() == 0:
             return all_tokens, all_indices
 
-        candidate_scores = fused_scores[candidate_local]
+        recall_pool = _collect_recall_candidates(
+            fused_scores=fused_scores,
+            residual_scores=residual_scores,
+            frame_importance=frame_importance,
+            target_budget=target_budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            budget_mode=budget_mode,
+            config=self.config,
+        )
+        if recall_pool.numel() > 0:
+            candidate_local = torch.cat([candidate_local, recall_pool], dim=0).unique()
+
+        frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
+        candidate_scores = (
+            0.60 * _normalize_scores(fused_scores[candidate_local].float())
+            + 0.30 * _normalize_scores(residual_scores[candidate_local].float())
+            + 0.10 * _normalize_scores(frame_prior[candidate_local])
+        )
         k_final = min(target_budget, int(candidate_local.numel()))
         chosen_local = candidate_local[torch.topk(candidate_scores, k=k_final, dim=0).indices]
         if chosen_local.numel() < target_budget:
