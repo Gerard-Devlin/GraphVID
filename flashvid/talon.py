@@ -32,6 +32,10 @@ class _SegmentDebugStats:
     event_tokens: int = 0
     recall_tokens: int = 0
     memory_tokens: int = 0
+    rank_cap: int = 0
+    chosen_rank: int = 0
+    duplicate_index_count: int = 0
+    question_aware_active: int = 0
 
 
 def _normalize_scores(scores: torch.Tensor) -> torch.Tensor:
@@ -309,7 +313,8 @@ def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> 
 
         empty = torch.isnan(aligned_t).any(dim=-1) | (aligned_t.abs().sum(dim=-1) <= 0)
         if empty.any():
-            aligned_t[empty] = cur[empty]
+            # Preserve temporal continuity for unmapped aligned slots.
+            aligned_t[empty] = prev[empty]
         aligned[t] = aligned_t
         source_to_aligned[t] = best_aligned
 
@@ -808,6 +813,10 @@ class TalonCompressor:
             debug_totals.event_tokens += int(seg_debug.event_tokens)
             debug_totals.recall_tokens += int(seg_debug.recall_tokens)
             debug_totals.memory_tokens += int(seg_debug.memory_tokens)
+            debug_totals.rank_cap += int(seg_debug.rank_cap)
+            debug_totals.chosen_rank += int(seg_debug.chosen_rank)
+            debug_totals.duplicate_index_count += int(seg_debug.duplicate_index_count)
+            debug_totals.question_aware_active += int(seg_debug.question_aware_active)
             segment_count += 1
             offset += seg_len
 
@@ -829,6 +838,11 @@ class TalonCompressor:
         self.config.last_talon_event_tokens = int(debug_totals.event_tokens)
         self.config.last_talon_recall_tokens = int(debug_totals.recall_tokens)
         self.config.last_talon_memory_tokens = int(debug_totals.memory_tokens)
+        denom = max(1, int(segment_count))
+        self.config.last_talon_rank_cap = int(round(float(debug_totals.rank_cap) / float(denom)))
+        self.config.last_talon_chosen_rank = int(round(float(debug_totals.chosen_rank) / float(denom)))
+        self.config.last_talon_duplicate_index_count = int(debug_totals.duplicate_index_count)
+        self.config.last_talon_question_aware_active = bool(debug_totals.question_aware_active > 0)
         self.config.last_talon_segment_count = int(segment_count)
         return final_tokens, final_indices
 
@@ -855,6 +869,11 @@ class TalonCompressor:
         flat_attention = cls_attention.reshape(num_tokens).float()
         flat_indices = segment_global_indices.reshape(num_tokens)
         fused_scores, _ = _question_aware_scores(flat_features, flat_attention, question_features, self.config)
+        question_active = int(
+            _safe_bool(getattr(self.config, "question_aware_reweighting", False))
+            and question_features is not None
+            and question_features.numel() > 0
+        )
 
         target_budget = self._resolve_target_budget(
             num_frames=num_frames,
@@ -865,7 +884,7 @@ class TalonCompressor:
         )
         memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
         core_budget = max(1, target_budget - memory_budget)
-        debug_stats = _SegmentDebugStats(target_budget=int(target_budget))
+        debug_stats = _SegmentDebugStats(target_budget=int(target_budget), question_aware_active=question_active)
 
         selected = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
         frame_importance = _frame_importance(segment_features, cls_attention, question_features, self.config)
@@ -908,6 +927,7 @@ class TalonCompressor:
         low_budget_rank_cap = max(0, int(getattr(self.config, "talon_low_budget_rank_cap", 0) or 0))
         if resolved_per_frame_target > 0 and resolved_per_frame_target <= low_budget_threshold:
             rank_cap = min(rank_cap, low_budget_rank_cap)
+        debug_stats.rank_cap = int(rank_cap)
 
         transport = _transport_align(segment_features, self.config)
         basis, eigvals = _lowrank_basis(transport.aligned, rank_cap, self.config)
@@ -920,6 +940,7 @@ class TalonCompressor:
             talon_budget=talon_budget,
         )
         residual_scores = rank_plan.residual_scores
+        debug_stats.chosen_rank = int(rank_plan.rank)
 
         rank_local = torch.empty((0,), dtype=torch.long, device=device)
         if rank_plan.rank > 0 and talon_budget > 0:
@@ -1052,8 +1073,10 @@ class TalonCompressor:
         # Unified final selection: one dedup + one score + one truncate.
         candidate_parts = [x for x in (anchor_local, rank_local, event_local, recall_local, prior_local, flash_prior_local) if x.numel() > 0]
         if candidate_parts:
-            candidate_local = torch.cat(candidate_parts, dim=0).unique()
+            candidate_concat = torch.cat(candidate_parts, dim=0).to(dtype=torch.long)
+            candidate_local = candidate_concat.unique()
             candidate_local = torch.sort(candidate_local).values
+            debug_stats.duplicate_index_count = int(candidate_concat.numel() - candidate_local.numel())
         else:
             candidate_local = torch.empty((0,), dtype=torch.long, device=device)
         if candidate_local.numel() == 0:
@@ -1135,6 +1158,14 @@ class TalonCompressor:
         if int(chosen_local.numel()) > target_budget:
             chosen_local = chosen_local[torch.topk(score_all[chosen_local], k=target_budget, dim=0).indices]
         chosen_local = torch.sort(chosen_local.to(dtype=torch.long)).values
+        chosen_mask_final = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+        if chosen_local.numel() > 0:
+            chosen_mask_final[chosen_local] = True
+        debug_stats.anchor_tokens = int(chosen_mask_final[anchor_local].sum().item()) if anchor_local.numel() > 0 else 0
+        debug_stats.rank_tokens = int(chosen_mask_final[rank_local].sum().item()) if rank_local.numel() > 0 else 0
+        debug_stats.event_tokens = int(chosen_mask_final[event_local].sum().item()) if event_local.numel() > 0 else 0
+        debug_stats.recall_tokens = int(chosen_mask_final[recall_local].sum().item()) if recall_local.numel() > 0 else 0
+        debug_stats.memory_tokens = debug_stats.recall_tokens
         return flat_features[chosen_local], flat_indices[chosen_local], debug_stats
 
     def _compress_segment_legacy(
@@ -1160,6 +1191,11 @@ class TalonCompressor:
         flat_attention = cls_attention.reshape(num_tokens).float()
         flat_indices = segment_global_indices.reshape(num_tokens)
         fused_scores, _ = _question_aware_scores(flat_features, flat_attention, question_features, self.config)
+        question_active = int(
+            _safe_bool(getattr(self.config, "question_aware_reweighting", False))
+            and question_features is not None
+            and question_features.numel() > 0
+        )
         fused_grid = fused_scores.view(num_frames, num_visual_tokens)
 
         target_budget = self._resolve_target_budget(
@@ -1171,7 +1207,7 @@ class TalonCompressor:
         )
         memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
         core_budget = max(1, target_budget - memory_budget)
-        debug_stats = _SegmentDebugStats(target_budget=int(target_budget))
+        debug_stats = _SegmentDebugStats(target_budget=int(target_budget), question_aware_active=question_active)
 
         selected = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
         core_tokens: List[torch.Tensor] = []
@@ -1218,6 +1254,7 @@ class TalonCompressor:
             int(getattr(self.config, "talon_rank_max", 32)),
             num_visual_tokens,
         )
+        debug_stats.rank_cap = int(rank_cap)
 
         transport = _transport_align(segment_features, self.config)
         basis, eigvals = _lowrank_basis(transport.aligned, rank_cap, self.config)
@@ -1231,10 +1268,13 @@ class TalonCompressor:
         )
 
         rank = rank_plan.rank
+        debug_stats.chosen_rank = int(rank)
         reconstruction_source = rank_plan.reconstruction_source
         residual_scores = rank_plan.residual_scores
         output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
         coefficient_output = output_mode in ("coefficient", "coeff", "strict")
+        rank_local = torch.empty((0,), dtype=torch.long, device=device)
+        event_local = torch.empty((0,), dtype=torch.long, device=device)
 
         if rank > 0:
             bg_tokens, bg_indices = self._emit_background_tokens(
@@ -1250,7 +1290,8 @@ class TalonCompressor:
             if bg_tokens.numel() > 0:
                 core_tokens.append(bg_tokens)
                 core_indices.append(bg_indices)
-                core_local_indices.append(_global_to_local_indices(flat_indices, bg_indices))
+                rank_local = _global_to_local_indices(flat_indices, bg_indices)
+                core_local_indices.append(rank_local)
                 debug_stats.rank_tokens += int(bg_tokens.shape[0])
 
         used_after_background = int(selected.sum().item()) - int(passthrough_idx.numel())
@@ -1269,7 +1310,9 @@ class TalonCompressor:
             if innovation_tokens.numel() > 0:
                 core_tokens.append(innovation_tokens)
                 core_indices.append(innovation_indices)
-                core_local_indices.append(_global_to_local_indices(flat_indices, innovation_indices))
+                innovation_local = _global_to_local_indices(flat_indices, innovation_indices)
+                core_local_indices.append(innovation_local)
+                event_local = torch.cat([event_local, innovation_local], dim=0).unique()
                 debug_stats.event_tokens += int(innovation_tokens.shape[0])
 
         if core_tokens:
@@ -1311,7 +1354,9 @@ class TalonCompressor:
                 if rescue_tokens.numel() > 0:
                     core_token_tensor = torch.cat([core_token_tensor, rescue_tokens], dim=0)
                     core_index_tensor = torch.cat([core_index_tensor, rescue_indices], dim=0)
-                    core_local_indices.append(_global_to_local_indices(flat_indices, rescue_indices))
+                    rescue_local = _global_to_local_indices(flat_indices, rescue_indices)
+                    core_local_indices.append(rescue_local)
+                    event_local = torch.cat([event_local, rescue_local], dim=0).unique()
                     memory_budget = max(0, memory_budget - int(rescue_tokens.shape[0]))
                     debug_stats.event_tokens += int(rescue_tokens.shape[0])
 
@@ -1336,6 +1381,7 @@ class TalonCompressor:
             all_tokens = core_token_tensor
             all_indices = core_index_tensor
             mem_local = torch.empty((0,), dtype=torch.long, device=device)
+        recall_local = mem_local
         debug_stats.recall_tokens = int(mem_tokens.shape[0])
         debug_stats.memory_tokens = int(mem_tokens.shape[0])
 
@@ -1344,6 +1390,16 @@ class TalonCompressor:
         output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
         do_rerank = _safe_bool(getattr(self.config, "talon_rerank_with_flash_prior", True)) and output_mode in ("manifold", "manifold_raw", "raw")
         if not do_rerank:
+            debug_stats.duplicate_index_count = int(all_indices.numel() - all_indices.unique().numel())
+            final_local = _global_to_local_indices(flat_indices, all_indices.unique())
+            final_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+            if final_local.numel() > 0:
+                final_mask[final_local] = True
+            debug_stats.anchor_tokens = int(final_mask[passthrough_idx].sum().item()) if passthrough_idx.numel() > 0 else 0
+            debug_stats.rank_tokens = int(final_mask[rank_local].sum().item()) if rank_local.numel() > 0 else 0
+            debug_stats.event_tokens = int(final_mask[event_local].sum().item()) if event_local.numel() > 0 else 0
+            debug_stats.recall_tokens = int(final_mask[recall_local].sum().item()) if recall_local.numel() > 0 else 0
+            debug_stats.memory_tokens = debug_stats.recall_tokens
             return all_tokens, all_indices, debug_stats
 
         candidate_local_parts = [x for x in core_local_indices if x.numel() > 0]
@@ -1388,6 +1444,10 @@ class TalonCompressor:
         )
         if recall_pool.numel() > 0:
             candidate_local = torch.cat([candidate_local, recall_pool], dim=0).unique()
+        duplicate_parts = [x for x in (base_local, prior_idx, recall_pool) if x.numel() > 0]
+        if duplicate_parts:
+            duplicate_concat = torch.cat(duplicate_parts, dim=0).to(dtype=torch.long)
+            debug_stats.duplicate_index_count = int(duplicate_concat.numel() - duplicate_concat.unique().numel())
 
         frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
         final_fused = max(0.0, float(getattr(self.config, "talon_final_fused_weight", 0.70)))
@@ -1486,6 +1546,14 @@ class TalonCompressor:
         if int(chosen_local.numel()) > target_budget:
             chosen_local = chosen_local[torch.topk(score_all[chosen_local], k=target_budget, dim=0).indices]
         chosen_local = torch.sort(chosen_local.to(dtype=torch.long)).values
+        chosen_mask_final = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+        if chosen_local.numel() > 0:
+            chosen_mask_final[chosen_local] = True
+        debug_stats.anchor_tokens = int(chosen_mask_final[passthrough_idx].sum().item()) if passthrough_idx.numel() > 0 else 0
+        debug_stats.rank_tokens = int(chosen_mask_final[rank_local].sum().item()) if rank_local.numel() > 0 else 0
+        debug_stats.event_tokens = int(chosen_mask_final[event_local].sum().item()) if event_local.numel() > 0 else 0
+        debug_stats.recall_tokens = int(chosen_mask_final[recall_local].sum().item()) if recall_local.numel() > 0 else 0
+        debug_stats.memory_tokens = debug_stats.recall_tokens
         return flat_features[chosen_local], flat_indices[chosen_local], debug_stats
 
     def _resolve_target_budget(

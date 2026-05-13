@@ -1,4 +1,5 @@
 import copy
+import gc
 import json
 import os
 import random
@@ -46,6 +47,7 @@ class BenchmarkArgs:
     run_baseline: bool = field(default=True)
     run_flashvid: bool = field(default=True)
     run_ours: bool = field(default=True)
+    reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
     retention_ratio: float = field(default=0.10)
@@ -91,6 +93,8 @@ class BenchmarkArgs:
     talon_final_frame_weight: float = field(default=0.10)
     talon_anchor_keep_bonus: float = field(default=0.10)
     talon_recall_keep_bonus: float = field(default=0.08)
+    talon_event_keep_bonus: float = field(default=0.04)
+    talon_legacy_base_keep_ratio: float = field(default=0.85)
     talon_prior_candidate_ratio: float = field(default=0.12)
     talon_prior_keep_bonus: float = field(default=0.06)
     talon_flash_prior_channel_ratio: float = field(default=0.12)
@@ -609,6 +613,10 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
             "talon_event_tokens": None,
             "talon_recall_tokens": None,
             "talon_memory_tokens": None,
+            "talon_rank_cap": None,
+            "talon_chosen_rank": None,
+            "talon_duplicate_index_count": None,
+            "talon_question_aware_active": None,
         }
     cfg = getattr(model, "flashvid_config")
     target = getattr(cfg, "last_talon_target_tokens_per_frame", None)
@@ -620,6 +628,10 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     event_tokens = getattr(cfg, "last_talon_event_tokens", None)
     recall_tokens = getattr(cfg, "last_talon_recall_tokens", None)
     memory_tokens = getattr(cfg, "last_talon_memory_tokens", None)
+    rank_cap = getattr(cfg, "last_talon_rank_cap", None)
+    chosen_rank = getattr(cfg, "last_talon_chosen_rank", None)
+    duplicate_count = getattr(cfg, "last_talon_duplicate_index_count", None)
+    question_active = getattr(cfg, "last_talon_question_aware_active", None)
     return {
         "talon_target_tokens_per_frame": float(target) if target is not None else None,
         "talon_adaptive_retention_ratio": float(adaptive_ratio) if adaptive_ratio is not None else None,
@@ -630,6 +642,10 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
         "talon_event_tokens": float(event_tokens) if event_tokens is not None else None,
         "talon_recall_tokens": float(recall_tokens) if recall_tokens is not None else None,
         "talon_memory_tokens": float(memory_tokens) if memory_tokens is not None else None,
+        "talon_rank_cap": float(rank_cap) if rank_cap is not None else None,
+        "talon_chosen_rank": float(chosen_rank) if chosen_rank is not None else None,
+        "talon_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
+        "talon_question_aware_active": float(bool(question_active)) if question_active is not None else None,
     }
 
 
@@ -675,6 +691,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_event_per_run = []
     talon_recall_per_run = []
     talon_memory_per_run = []
+    talon_rank_cap_per_run = []
+    talon_chosen_rank_per_run = []
+    talon_duplicate_per_run = []
+    talon_question_active_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -727,6 +747,14 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             talon_recall_per_run.append(float(debug_metrics["talon_recall_tokens"]))
         if debug_metrics["talon_memory_tokens"] is not None:
             talon_memory_per_run.append(float(debug_metrics["talon_memory_tokens"]))
+        if debug_metrics["talon_rank_cap"] is not None:
+            talon_rank_cap_per_run.append(float(debug_metrics["talon_rank_cap"]))
+        if debug_metrics["talon_chosen_rank"] is not None:
+            talon_chosen_rank_per_run.append(float(debug_metrics["talon_chosen_rank"]))
+        if debug_metrics["talon_duplicate_index_count"] is not None:
+            talon_duplicate_per_run.append(float(debug_metrics["talon_duplicate_index_count"]))
+        if debug_metrics["talon_question_aware_active"] is not None:
+            talon_question_active_per_run.append(float(debug_metrics["talon_question_aware_active"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
@@ -740,6 +768,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_event_tokens = float(np.mean(talon_event_per_run)) if talon_event_per_run else None
     talon_recall_tokens = float(np.mean(talon_recall_per_run)) if talon_recall_per_run else None
     talon_memory_tokens = float(np.mean(talon_memory_per_run)) if talon_memory_per_run else None
+    talon_rank_cap = float(np.mean(talon_rank_cap_per_run)) if talon_rank_cap_per_run else None
+    talon_chosen_rank = float(np.mean(talon_chosen_rank_per_run)) if talon_chosen_rank_per_run else None
+    talon_duplicate_index_count = float(np.mean(talon_duplicate_per_run)) if talon_duplicate_per_run else None
+    talon_question_aware_active = float(np.mean(talon_question_active_per_run)) if talon_question_active_per_run else None
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -760,6 +792,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_event_tokens": talon_event_tokens,
         "talon_recall_tokens": talon_recall_tokens,
         "talon_memory_tokens": talon_memory_tokens,
+        "talon_rank_cap": talon_rank_cap,
+        "talon_chosen_rank": talon_chosen_rank,
+        "talon_duplicate_index_count": talon_duplicate_index_count,
+        "talon_question_aware_active": talon_question_aware_active,
     }
 
 
@@ -784,6 +820,10 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "talon_event_tokens": None,
         "talon_recall_tokens": None,
         "talon_memory_tokens": None,
+        "talon_rank_cap": None,
+        "talon_chosen_rank": None,
+        "talon_duplicate_index_count": None,
+        "talon_question_aware_active": None,
         "visual_token_reduction_ratio": None,
         "vision_visual_token_reduction_ratio": None,
         "error": None,
@@ -820,6 +860,10 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_event_tokens": result.get("talon_event_tokens"),
                 "talon_recall_tokens": result.get("talon_recall_tokens"),
                 "talon_memory_tokens": result.get("talon_memory_tokens"),
+                "talon_rank_cap": result.get("talon_rank_cap"),
+                "talon_chosen_rank": result.get("talon_chosen_rank"),
+                "talon_duplicate_index_count": result.get("talon_duplicate_index_count"),
+                "talon_question_aware_active": result.get("talon_question_aware_active"),
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -937,6 +981,26 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("talon_memory_tokens") is not None
     ]
+    talon_rank_cap = [
+        float(r["talon_rank_cap"])
+        for r in valid
+        if r.get("talon_rank_cap") is not None
+    ]
+    talon_chosen_rank = [
+        float(r["talon_chosen_rank"])
+        for r in valid
+        if r.get("talon_chosen_rank") is not None
+    ]
+    talon_duplicate_count = [
+        float(r["talon_duplicate_index_count"])
+        for r in valid
+        if r.get("talon_duplicate_index_count") is not None
+    ]
+    talon_question_active = [
+        float(r["talon_question_aware_active"])
+        for r in valid
+        if r.get("talon_question_aware_active") is not None
+    ]
     reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
         float(r["vision_visual_token_reduction_ratio"])
@@ -963,6 +1027,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_event_tokens": _stats(talon_event_tokens),
         "talon_recall_tokens": _stats(talon_recall_tokens),
         "talon_memory_tokens": _stats(talon_memory_tokens),
+        "talon_rank_cap": _stats(talon_rank_cap),
+        "talon_chosen_rank": _stats(talon_chosen_rank),
+        "talon_duplicate_index_count": _stats(talon_duplicate_count),
+        "talon_question_aware_active": _stats(talon_question_active),
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1111,6 +1179,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_final_frame_weight=args.talon_final_frame_weight,
         talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_event_keep_bonus=args.talon_event_keep_bonus,
+        talon_legacy_base_keep_ratio=args.talon_legacy_base_keep_ratio,
         talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
         talon_prior_keep_bonus=args.talon_prior_keep_bonus,
         talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
@@ -1229,6 +1299,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_final_frame_weight=args.talon_final_frame_weight,
         talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_event_keep_bonus=args.talon_event_keep_bonus,
+        talon_legacy_base_keep_ratio=args.talon_legacy_base_keep_ratio,
         talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
         talon_prior_keep_bonus=args.talon_prior_keep_bonus,
         talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
@@ -1279,6 +1351,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, ours={args.run_ours}"
     )
+    print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
         print(
             "Ours config   : "
@@ -1312,6 +1385,10 @@ def _print_summary(summary: dict[str, Any]):
         talon_event_mean = phase.get("talon_event_tokens", {}).get("mean")
         talon_recall_mean = phase.get("talon_recall_tokens", {}).get("mean")
         talon_memory_mean = phase.get("talon_memory_tokens", {}).get("mean")
+        talon_rank_cap_mean = phase.get("talon_rank_cap", {}).get("mean")
+        talon_chosen_rank_mean = phase.get("talon_chosen_rank", {}).get("mean")
+        talon_dup_mean = phase.get("talon_duplicate_index_count", {}).get("mean")
+        talon_question_active_mean = phase.get("talon_question_aware_active", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -1330,6 +1407,12 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  talon anchor/event/recall mean: {talon_anchor_mean:.2f}/{(talon_event_mean or 0.0):.2f}/{(talon_recall_mean or 0.0):.2f}")
         if talon_rank_mean is not None:
             print(f"  talon rank/memory mean: {talon_rank_mean:.2f}/{(talon_memory_mean or 0.0):.2f}")
+        if talon_rank_cap_mean is not None:
+            print(f"  talon rank cap/chosen mean: {talon_rank_cap_mean:.2f}/{(talon_chosen_rank_mean or 0.0):.2f}")
+        if talon_dup_mean is not None:
+            print(f"  talon duplicate index mean: {talon_dup_mean:.2f}")
+        if talon_question_active_mean is not None:
+            print(f"  talon question-aware active mean: {talon_question_active_mean:.2f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -1379,43 +1462,90 @@ def run(args: BenchmarkArgs):
 
     total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours)
     phase_idx = 1
+    first_bundle_consumed = False
+
+    def _acquire_phase_bundle():
+        nonlocal first_bundle_consumed
+        if args.reload_model_each_phase:
+            if not first_bundle_consumed:
+                first_bundle_consumed = True
+                return model_bundle
+            return _load_backend_model(args)
+        return model_bundle
+
+    def _release_phase_bundle(bundle):
+        if not args.reload_model_each_phase:
+            return
+        if bundle is model_bundle:
+            return
+        del bundle
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     if args.run_baseline:
         print(f"Phase {phase_idx}/{total_phases}: Baseline ...")
-        _run_phase(
-            model_bundle=model_bundle,
-            args=args,
-            samples=samples,
-            phase_name="Baseline",
-            use_acceleration=False,
-            output_path=args.baseline_output,
-        )
+        phase_bundle = _acquire_phase_bundle()
+        try:
+            _run_phase(
+                model_bundle=phase_bundle,
+                args=args,
+                samples=samples,
+                phase_name="Baseline",
+                use_acceleration=False,
+                output_path=args.baseline_output,
+            )
+        finally:
+            _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
     if args.run_flashvid:
         print(f"\nPhase {phase_idx}/{total_phases}: FlashVID ...")
-        model_bundle["model"] = _apply_flashvid_original(model_bundle["model"], args, backend)
-        _run_phase(
-            model_bundle=model_bundle,
-            args=args,
-            samples=samples,
-            phase_name="FlashVID",
-            use_acceleration=True,
-            output_path=args.flashvid_output,
+        print(
+            "[talon-active][flashvid] "
+            f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
+            f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
+            f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}"
         )
+        phase_bundle = _acquire_phase_bundle()
+        phase_backend = phase_bundle["backend"]
+        phase_bundle["model"] = _apply_flashvid_original(phase_bundle["model"], args, phase_backend)
+        try:
+            _run_phase(
+                model_bundle=phase_bundle,
+                args=args,
+                samples=samples,
+                phase_name="FlashVID",
+                use_acceleration=True,
+                output_path=args.flashvid_output,
+            )
+        finally:
+            _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
     if args.run_ours:
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
-        model_bundle["model"] = _apply_ours(model_bundle["model"], args, backend)
-        _run_phase(
-            model_bundle=model_bundle,
-            args=args,
-            samples=samples,
-            phase_name="Ours",
-            use_acceleration=True,
-            output_path=args.ours_output,
+        print(
+            "[talon-active][ours] "
+            f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
+            f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
+            f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}, "
+            f"target/frame={args.talon_target_tokens_per_frame}"
         )
+        phase_bundle = _acquire_phase_bundle()
+        phase_backend = phase_bundle["backend"]
+        phase_bundle["model"] = _apply_ours(phase_bundle["model"], args, phase_backend)
+        try:
+            _run_phase(
+                model_bundle=phase_bundle,
+                args=args,
+                samples=samples,
+                phase_name="Ours",
+                use_acceleration=True,
+                output_path=args.ours_output,
+            )
+        finally:
+            _release_phase_bundle(phase_bundle)
 
     summary: dict[str, Any] = {"comparison": {}}
     baseline_records = None
@@ -1457,6 +1587,10 @@ def run(args: BenchmarkArgs):
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _print_summary(summary)
+    if args.reload_model_each_phase:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def main():

@@ -127,6 +127,8 @@ class FlashVidConfig:
     talon_final_frame_weight: float = field(default=0.10)
     talon_anchor_keep_bonus: float = field(default=0.10)
     talon_recall_keep_bonus: float = field(default=0.08)
+    talon_event_keep_bonus: float = field(default=0.04)
+    talon_legacy_base_keep_ratio: float = field(default=0.85)
     talon_prior_candidate_ratio: float = field(default=0.12)
     talon_prior_keep_bonus: float = field(default=0.06)
     talon_flash_prior_channel_ratio: float = field(default=0.12)
@@ -160,6 +162,10 @@ class FlashVidConfig:
     last_talon_recall_tokens: Optional[int] = field(default=None)
     last_talon_memory_tokens: Optional[int] = field(default=None)
     last_talon_segment_count: Optional[int] = field(default=None)
+    last_talon_rank_cap: Optional[int] = field(default=None)
+    last_talon_chosen_rank: Optional[int] = field(default=None)
+    last_talon_duplicate_index_count: Optional[int] = field(default=None)
+    last_talon_question_aware_active: Optional[bool] = field(default=None)
 
     # Spatial grid metadata (set by model hooks when available).
     H: Optional[int] = field(default=None)
