@@ -133,17 +133,8 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant == "echoprune":
-        from .echo_lite import echoprune_compression
-
-        return echoprune_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
     if compression_variant == "talon_core":
-        from .echo_lite import talon_core_compression
+        from .talon_core import talon_core_compression
 
         return talon_core_compression(
             video_features=video_features,
@@ -152,7 +143,7 @@ def flashvid_compression(
             question_features=question_features,
         )
     if compression_variant != "flashvid":
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|echoprune|talon_core")
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|talon_core")
 
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
