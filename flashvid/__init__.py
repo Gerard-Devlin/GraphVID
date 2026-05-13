@@ -142,6 +142,15 @@ def flashvid(
     echo_min_keep_per_frame: int = 1,
     echo_use_segmentation: bool = False,
     echo_global_topk_ratio: float = 0.70,
+    echoprune_anchor_ratio: float = 0.35,
+    echoprune_relevance_weight: float = 0.45,
+    echoprune_echo_weight: float = 0.45,
+    echoprune_continuation_weight: float = 0.10,
+    talon_core_rank: int = 4,
+    talon_core_anchor_ratio: float = 0.35,
+    talon_core_relevance_weight: float = 0.40,
+    talon_core_echo_weight: float = 0.35,
+    talon_core_lowrank_weight: float = 0.25,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -231,7 +240,8 @@ def flashvid(
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "talon" enables transport-aligned low-rank + sparse innovation compression;
-            "echo_lite" enables temporal echo residual token selection.
+            "echoprune" enables temporal echo residual token selection;
+            "talon_core" adds low-rank residual scoring while keeping raw tokens.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
         talon_transport_radius (int, optional): Local transport radius for frame-to-frame token alignment.
@@ -352,8 +362,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "echo_lite"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|echo_lite")
+    if variant not in ("flashvid", "talon", "echoprune", "talon_core"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|echoprune|talon_core")
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -424,6 +434,15 @@ def flashvid(
         echo_min_keep_per_frame=echo_min_keep_per_frame,
         echo_use_segmentation=echo_use_segmentation,
         echo_global_topk_ratio=echo_global_topk_ratio,
+        echoprune_anchor_ratio=echoprune_anchor_ratio,
+        echoprune_relevance_weight=echoprune_relevance_weight,
+        echoprune_echo_weight=echoprune_echo_weight,
+        echoprune_continuation_weight=echoprune_continuation_weight,
+        talon_core_rank=talon_core_rank,
+        talon_core_anchor_ratio=talon_core_anchor_ratio,
+        talon_core_relevance_weight=talon_core_relevance_weight,
+        talon_core_echo_weight=talon_core_echo_weight,
+        talon_core_lowrank_weight=talon_core_lowrank_weight,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

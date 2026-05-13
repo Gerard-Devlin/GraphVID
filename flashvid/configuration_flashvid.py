@@ -46,7 +46,8 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
-    # "echo_lite": temporal echo residual + semantic token selection path.
+    # "echoprune": temporal echo residual + semantic token selection path.
+    # "talon_core": echo residual + low-rank residual raw-token selection path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
@@ -104,6 +105,15 @@ class FlashVidConfig:
     echo_min_keep_per_frame: int = field(default=1)
     echo_use_segmentation: bool = field(default=False)
     echo_global_topk_ratio: float = field(default=0.70)
+    echoprune_anchor_ratio: float = field(default=0.35)
+    echoprune_relevance_weight: float = field(default=0.45)
+    echoprune_echo_weight: float = field(default=0.45)
+    echoprune_continuation_weight: float = field(default=0.10)
+    talon_core_rank: int = field(default=4)
+    talon_core_anchor_ratio: float = field(default=0.35)
+    talon_core_relevance_weight: float = field(default=0.40)
+    talon_core_echo_weight: float = field(default=0.35)
+    talon_core_lowrank_weight: float = field(default=0.25)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)

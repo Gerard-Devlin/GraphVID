@@ -187,12 +187,13 @@ def _hybrid_select(
     return torch.sort(chosen.to(dtype=torch.long)).values
 
 
-def _echo_residual_scores(video_features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
+def _echo_residual_and_continuation(video_features: torch.Tensor, config: FlashVidConfig) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, _ = video_features.shape
     device = video_features.device
     residual = torch.zeros((num_frames, num_visual_tokens), dtype=torch.float32, device=device)
+    matched_prev = torch.zeros((num_frames, num_visual_tokens), dtype=torch.long, device=device)
     if num_frames <= 1:
-        return residual.reshape(-1)
+        return residual.reshape(-1), residual.reshape(-1)
 
     neighbor_idx, neighbor_valid = _build_local_neighbors(num_visual_tokens, config, device)
     topk = max(1, int(getattr(config, "echo_topk_neighbors", 4)))
@@ -208,13 +209,115 @@ def _echo_residual_scores(video_features: torch.Tensor, config: FlashVidConfig) 
         k = min(topk, sims.shape[1])
         vals, pos = torch.topk(sims, k=k, dim=1)
         src_idx = neighbor_idx.gather(1, pos)
+        matched_prev[t] = src_idx[:, 0]
         weights = torch.softmax(vals / temperature, dim=1).to(cur.dtype)
         recon = torch.sum(prev[src_idx] * weights.unsqueeze(-1), dim=1)
         residual[t] = torch.mean((cur.float() - recon.float()) ** 2, dim=-1)
 
     if num_frames > 1:
         residual[0] = residual[1]
-    return residual.reshape(-1)
+
+    continuation = torch.zeros_like(residual)
+    for t in range(1, num_frames):
+        continuation[t] = residual[t - 1, matched_prev[t]]
+    continuation[0] = residual[0]
+    return residual.reshape(-1), continuation.reshape(-1)
+
+
+def _echo_residual_scores(video_features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
+    residual, _ = _echo_residual_and_continuation(video_features, config)
+    return residual
+
+
+def _lowrank_residual_scores(video_features: torch.Tensor, rank: int) -> torch.Tensor:
+    num_frames, num_visual_tokens, _ = video_features.shape
+    rank = max(0, min(int(rank), num_visual_tokens))
+    if rank <= 0:
+        return video_features.new_zeros((num_frames * num_visual_tokens,), dtype=torch.float32)
+
+    matrix = video_features.float().permute(1, 0, 2).reshape(num_visual_tokens, -1)
+    cov = torch.matmul(matrix, matrix.transpose(0, 1))
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    top = torch.argsort(eigvals, descending=True)[:rank]
+    basis = eigvecs[:, top].to(dtype=video_features.dtype)
+
+    residuals = []
+    for frame in video_features:
+        coeff = torch.matmul(basis.transpose(0, 1), frame)
+        recon = torch.matmul(basis, coeff)
+        residuals.append(torch.mean((frame.float() - recon.float()) ** 2, dim=-1))
+    return torch.stack(residuals, dim=0).reshape(-1)
+
+
+def _quota_select(
+    relevance_scores: torch.Tensor,
+    novelty_scores: torch.Tensor,
+    combined_scores: torch.Tensor,
+    total_budget: int,
+    num_frames: int,
+    num_visual_tokens: int,
+    frame_importance: torch.Tensor,
+    config: FlashVidConfig,
+    anchor_ratio: float,
+) -> torch.Tensor:
+    total_budget = min(max(1, int(total_budget)), int(combined_scores.numel()))
+    budgets = _allocate_frame_budget(
+        total_budget=total_budget,
+        frame_importance=frame_importance,
+        mode=str(getattr(config, "echo_frame_budget_mode", "attention") or "attention"),
+        min_keep_per_frame=max(0, int(getattr(config, "echo_min_keep_per_frame", 1))),
+    )
+    anchor_ratio = min(max(float(anchor_ratio), 0.0), 0.90)
+
+    rel_grid = relevance_scores.view(num_frames, num_visual_tokens)
+    nov_grid = novelty_scores.view(num_frames, num_visual_tokens)
+    cmb_grid = combined_scores.view(num_frames, num_visual_tokens)
+    chosen_parts: List[torch.Tensor] = []
+
+    for t in range(num_frames):
+        budget_t = min(max(0, int(budgets[t])), num_visual_tokens)
+        if budget_t <= 0:
+            continue
+        selected = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
+
+        anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio)))) if budget_t > 1 else budget_t
+        if anchor_k > 0:
+            anchor_idx = torch.topk(rel_grid[t], k=anchor_k, dim=0).indices
+            selected[anchor_idx] = True
+
+        remaining = budget_t - int(selected.sum().item())
+        if remaining > 0:
+            novelty_local = nov_grid[t].masked_fill(selected, -1e9)
+            valid = int((novelty_local > -1e8).sum().item())
+            if valid > 0:
+                novelty_idx = torch.topk(novelty_local, k=min(remaining, valid), dim=0).indices
+                selected[novelty_idx] = True
+
+        remaining = budget_t - int(selected.sum().item())
+        if remaining > 0:
+            combined_local = cmb_grid[t].masked_fill(selected, -1e9)
+            valid = int((combined_local > -1e8).sum().item())
+            if valid > 0:
+                fill_idx = torch.topk(combined_local, k=min(remaining, valid), dim=0).indices
+                selected[fill_idx] = True
+
+        local = torch.where(selected)[0]
+        if local.numel() > budget_t:
+            local = local[torch.topk(cmb_grid[t, local], k=budget_t, dim=0).indices]
+        chosen_parts.append(t * num_visual_tokens + local)
+
+    chosen = torch.cat(chosen_parts, dim=0).unique() if chosen_parts else torch.empty((0,), dtype=torch.long, device=combined_scores.device)
+    if int(chosen.numel()) < total_budget:
+        occupied = torch.zeros((combined_scores.numel(),), dtype=torch.bool, device=combined_scores.device)
+        if chosen.numel() > 0:
+            occupied[chosen] = True
+        fill_scores = combined_scores.masked_fill(occupied, -1e9)
+        fill_k = min(total_budget - int(chosen.numel()), int((fill_scores > -1e8).sum().item()))
+        if fill_k > 0:
+            chosen = torch.cat([chosen, torch.topk(fill_scores, k=fill_k, dim=0).indices], dim=0).unique()
+    if int(chosen.numel()) > total_budget:
+        chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
+    return torch.sort(chosen.to(dtype=torch.long)).values
 
 
 def _resolve_target_budget(
@@ -234,7 +337,37 @@ def _resolve_target_budget(
     return max(1, min(num_frames * num_visual_tokens, int(math.ceil(num_frames * num_visual_tokens * ratio * expansion))))
 
 
-def echo_lite_compression(
+def _finish_raw_selection(
+    flat_features: torch.Tensor,
+    flat_indices: torch.Tensor,
+    chosen: torch.Tensor,
+    target_budget: int,
+    residual_scores: torch.Tensor,
+    relevance_scores: torch.Tensor,
+    question_active: bool,
+    config: FlashVidConfig,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    chosen_mask = torch.zeros((flat_indices.numel(),), dtype=torch.bool, device=flat_indices.device)
+    if chosen.numel() > 0:
+        chosen_mask[chosen] = True
+    semantic_tokens = int((chosen_mask & (relevance_scores >= _normalize_scores(residual_scores))).sum().item())
+    novelty_tokens = int(chosen_mask.sum().item()) - semantic_tokens
+
+    config.num_attn_div_tokens = None
+    config.num_sttm_tokens = None
+    config.vision_token_length = int(chosen.numel())
+    config.llm_token_length = None
+    config.visual_token_length = int(chosen.numel())
+    config.last_echo_target_budget = int(target_budget)
+    config.last_echo_residual_mean = float(residual_scores.mean().item()) if residual_scores.numel() > 0 else 0.0
+    config.last_echo_semantic_tokens = semantic_tokens
+    config.last_echo_novelty_tokens = novelty_tokens
+    config.last_echo_duplicate_index_count = int(chosen.numel()) - int(chosen.unique().numel())
+    config.last_echo_question_aware_active = bool(question_active)
+    return flat_features[chosen], flat_indices[chosen]
+
+
+def echoprune_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
@@ -243,50 +376,95 @@ def echo_lite_compression(
     num_frames, num_visual_tokens, _ = video_features.shape
     num_tokens = num_frames * num_visual_tokens
     flat_features = video_features.reshape(num_tokens, -1)
-    flat_attention = cls_attention.reshape(num_tokens).float()
     flat_indices = torch.arange(num_tokens, dtype=torch.long, device=video_features.device)
-
-    residual_scores = _echo_residual_scores(video_features, flashvid_config)
-    residual_norm = _normalize_scores(residual_scores)
-    attention_norm = _normalize_scores(flat_attention)
+    attention_norm = _normalize_scores(cls_attention.reshape(num_tokens).float())
     question_norm, question_active = _question_scores(flat_features, question_features, flashvid_config)
 
-    wr = max(0.0, float(getattr(flashvid_config, "echo_weight_residual", 0.55)))
-    wa = max(0.0, float(getattr(flashvid_config, "echo_weight_attention", 0.35)))
-    wq = max(0.0, float(getattr(flashvid_config, "echo_weight_question", 0.10)))
-    if not question_active:
-        wq = 0.0
-    denom = max(1e-6, wr + wa + wq)
-    score = (wr / denom) * residual_norm + (wa / denom) * attention_norm + (wq / denom) * question_norm
+    echo_residual, echo_continuation = _echo_residual_and_continuation(video_features, flashvid_config)
+    residual_norm = _normalize_scores(echo_residual)
+    continuation_norm = _normalize_scores(echo_continuation)
+    relevance = _normalize_scores(0.70 * attention_norm + 0.30 * question_norm) if question_active else attention_norm
+    novelty = _normalize_scores(0.78 * residual_norm + 0.22 * continuation_norm)
+
+    rel_w = max(0.0, float(getattr(flashvid_config, "echoprune_relevance_weight", 0.45)))
+    echo_w = max(0.0, float(getattr(flashvid_config, "echoprune_echo_weight", 0.45)))
+    cont_w = max(0.0, float(getattr(flashvid_config, "echoprune_continuation_weight", 0.10)))
+    denom = max(1e-6, rel_w + echo_w + cont_w)
+    combined = _normalize_scores((rel_w / denom) * relevance + (echo_w / denom) * residual_norm + (cont_w / denom) * continuation_norm)
 
     target_budget = _resolve_target_budget(num_frames, num_visual_tokens, flashvid_config)
-    frame_importance = _frame_importance(cls_attention, residual_scores)
-    chosen = _hybrid_select(
-        scores=score,
+    frame_importance = _frame_importance(cls_attention, novelty)
+    chosen = _quota_select(
+        relevance_scores=relevance,
+        novelty_scores=novelty,
+        combined_scores=combined,
         total_budget=target_budget,
         num_frames=num_frames,
         num_visual_tokens=num_visual_tokens,
         frame_importance=frame_importance,
         config=flashvid_config,
+        anchor_ratio=float(getattr(flashvid_config, "echoprune_anchor_ratio", 0.35)),
+    )
+    return _finish_raw_selection(
+        flat_features=flat_features,
+        flat_indices=flat_indices,
+        chosen=chosen,
+        target_budget=target_budget,
+        residual_scores=echo_residual,
+        relevance_scores=relevance,
+        question_active=question_active,
+        config=flashvid_config,
     )
 
-    chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=video_features.device)
-    if chosen.numel() > 0:
-        chosen_mask[chosen] = True
-    semantic_score = attention_norm + question_norm
-    semantic_tokens = int((chosen_mask & (semantic_score >= residual_norm)).sum().item())
-    novelty_tokens = int(chosen_mask.sum().item()) - semantic_tokens
 
-    flashvid_config.num_attn_div_tokens = None
-    flashvid_config.num_sttm_tokens = None
-    flashvid_config.vision_token_length = int(chosen.numel())
-    flashvid_config.llm_token_length = None
-    flashvid_config.visual_token_length = int(chosen.numel())
-    flashvid_config.last_echo_target_budget = int(target_budget)
-    flashvid_config.last_echo_residual_mean = float(residual_scores.mean().item()) if residual_scores.numel() > 0 else 0.0
-    flashvid_config.last_echo_semantic_tokens = semantic_tokens
-    flashvid_config.last_echo_novelty_tokens = novelty_tokens
-    flashvid_config.last_echo_duplicate_index_count = int(chosen.numel()) - int(chosen.unique().numel())
-    flashvid_config.last_echo_question_aware_active = bool(question_active)
+def talon_core_compression(
+    video_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    num_frames, num_visual_tokens, _ = video_features.shape
+    num_tokens = num_frames * num_visual_tokens
+    flat_features = video_features.reshape(num_tokens, -1)
+    flat_indices = torch.arange(num_tokens, dtype=torch.long, device=video_features.device)
+    attention_norm = _normalize_scores(cls_attention.reshape(num_tokens).float())
+    question_norm, question_active = _question_scores(flat_features, question_features, flashvid_config)
 
-    return flat_features[chosen], flat_indices[chosen]
+    echo_residual, echo_continuation = _echo_residual_and_continuation(video_features, flashvid_config)
+    rank = int(getattr(flashvid_config, "talon_core_rank", 4) or 0)
+    lowrank_residual = _lowrank_residual_scores(video_features, rank=rank)
+    echo_norm = _normalize_scores(echo_residual)
+    lowrank_norm = _normalize_scores(lowrank_residual)
+    continuation_norm = _normalize_scores(echo_continuation)
+    relevance = _normalize_scores(0.72 * attention_norm + 0.28 * question_norm) if question_active else attention_norm
+    novelty = _normalize_scores(0.52 * echo_norm + 0.33 * lowrank_norm + 0.15 * continuation_norm)
+
+    rel_w = max(0.0, float(getattr(flashvid_config, "talon_core_relevance_weight", 0.40)))
+    echo_w = max(0.0, float(getattr(flashvid_config, "talon_core_echo_weight", 0.35)))
+    lr_w = max(0.0, float(getattr(flashvid_config, "talon_core_lowrank_weight", 0.25)))
+    denom = max(1e-6, rel_w + echo_w + lr_w)
+    combined = _normalize_scores((rel_w / denom) * relevance + (echo_w / denom) * echo_norm + (lr_w / denom) * lowrank_norm)
+
+    target_budget = _resolve_target_budget(num_frames, num_visual_tokens, flashvid_config)
+    frame_importance = _frame_importance(cls_attention, novelty)
+    chosen = _quota_select(
+        relevance_scores=relevance,
+        novelty_scores=novelty,
+        combined_scores=combined,
+        total_budget=target_budget,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        frame_importance=frame_importance,
+        config=flashvid_config,
+        anchor_ratio=float(getattr(flashvid_config, "talon_core_anchor_ratio", 0.35)),
+    )
+    return _finish_raw_selection(
+        flat_features=flat_features,
+        flat_indices=flat_indices,
+        chosen=chosen,
+        target_budget=target_budget,
+        residual_scores=0.55 * echo_residual + 0.45 * lowrank_residual,
+        relevance_scores=relevance,
+        question_active=question_active,
+        config=flashvid_config,
+    )

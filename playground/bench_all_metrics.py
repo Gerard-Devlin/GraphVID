@@ -81,6 +81,15 @@ class BenchmarkArgs:
     echo_min_keep_per_frame: int = field(default=1)
     echo_use_segmentation: bool = field(default=False)
     echo_global_topk_ratio: float = field(default=0.70)
+    echoprune_anchor_ratio: float = field(default=0.35)
+    echoprune_relevance_weight: float = field(default=0.45)
+    echoprune_echo_weight: float = field(default=0.45)
+    echoprune_continuation_weight: float = field(default=0.10)
+    talon_core_rank: int = field(default=4)
+    talon_core_anchor_ratio: float = field(default=0.35)
+    talon_core_relevance_weight: float = field(default=0.40)
+    talon_core_echo_weight: float = field(default=0.35)
+    talon_core_lowrank_weight: float = field(default=0.25)
     talon_adaptive_target_low: int = field(default=0)
     talon_adaptive_target_mid: int = field(default=0)
     talon_adaptive_target_high: int = field(default=0)
@@ -1282,6 +1291,15 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         echo_min_keep_per_frame=args.echo_min_keep_per_frame,
         echo_use_segmentation=args.echo_use_segmentation,
         echo_global_topk_ratio=args.echo_global_topk_ratio,
+        echoprune_anchor_ratio=args.echoprune_anchor_ratio,
+        echoprune_relevance_weight=args.echoprune_relevance_weight,
+        echoprune_echo_weight=args.echoprune_echo_weight,
+        echoprune_continuation_weight=args.echoprune_continuation_weight,
+        talon_core_rank=args.talon_core_rank,
+        talon_core_anchor_ratio=args.talon_core_anchor_ratio,
+        talon_core_relevance_weight=args.talon_core_relevance_weight,
+        talon_core_echo_weight=args.talon_core_echo_weight,
+        talon_core_lowrank_weight=args.talon_core_lowrank_weight,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -1419,6 +1437,15 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         echo_min_keep_per_frame=args.echo_min_keep_per_frame,
         echo_use_segmentation=args.echo_use_segmentation,
         echo_global_topk_ratio=args.echo_global_topk_ratio,
+        echoprune_anchor_ratio=args.echoprune_anchor_ratio,
+        echoprune_relevance_weight=args.echoprune_relevance_weight,
+        echoprune_echo_weight=args.echoprune_echo_weight,
+        echoprune_continuation_weight=args.echoprune_continuation_weight,
+        talon_core_rank=args.talon_core_rank,
+        talon_core_anchor_ratio=args.talon_core_anchor_ratio,
+        talon_core_relevance_weight=args.talon_core_relevance_weight,
+        talon_core_echo_weight=args.talon_core_echo_weight,
+        talon_core_lowrank_weight=args.talon_core_lowrank_weight,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -1498,7 +1525,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
             f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
-            f"echo_target={args.echo_target_tokens_per_frame}, event_cap={args.talon_event_budget_ratio:.2f}"
+            f"echo_target={args.echo_target_tokens_per_frame}, core_rank={args.talon_core_rank}, "
+            f"event_cap={args.talon_event_budget_ratio:.2f}"
         )
     print(SEPARATOR)
 
@@ -1615,25 +1643,28 @@ def run(args: BenchmarkArgs):
     if backend == "llava":
         print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
     print(f"Loaded {len(samples)} samples.\n")
+    if args.reload_model_each_phase:
+        model_bundle["model"] = None
+        model_bundle["processor"] = None
+        model_bundle["tokenizer"] = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours)
     phase_idx = 1
-    first_bundle_consumed = False
-
     def _acquire_phase_bundle():
-        nonlocal first_bundle_consumed
         if args.reload_model_each_phase:
-            if not first_bundle_consumed:
-                first_bundle_consumed = True
-                return model_bundle
             return _load_backend_model(args)
         return model_bundle
 
     def _release_phase_bundle(bundle):
         if not args.reload_model_each_phase:
             return
-        if bundle is model_bundle:
-            return
+        if isinstance(bundle, dict):
+            bundle["model"] = None
+            bundle["processor"] = None
+            bundle["tokenizer"] = None
         del bundle
         gc.collect()
         if torch.cuda.is_available():
@@ -1686,7 +1717,8 @@ def run(args: BenchmarkArgs):
             f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
             f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
             f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}, "
-            f"target/frame={args.talon_target_tokens_per_frame}, echo_target={args.echo_target_tokens_per_frame}"
+            f"target/frame={args.talon_target_tokens_per_frame}, echo_target={args.echo_target_tokens_per_frame}, "
+            f"core_rank={args.talon_core_rank}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
