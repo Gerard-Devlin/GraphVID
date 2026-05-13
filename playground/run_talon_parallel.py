@@ -134,6 +134,12 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_long_event_budget_ratio),
             "--talon_long_global_topk_ratio",
             str(args.talon_long_global_topk_ratio),
+            "--talon_task_aware_event",
+            _str_bool(args.talon_task_aware_event),
+            "--talon_task_event_attention_weight",
+            str(args.talon_task_event_attention_weight),
+            "--talon_task_event_qweight",
+            str(args.talon_task_event_qweight),
             "--talon_rank_min",
             "1",
             "--talon_rank_max",
@@ -375,6 +381,9 @@ def main() -> None:
     parser.add_argument("--talon_long_anchor_safety_ratio", type=float, default=0.80)
     parser.add_argument("--talon_long_event_budget_ratio", type=float, default=0.14)
     parser.add_argument("--talon_long_global_topk_ratio", type=float, default=0.85)
+    parser.add_argument("--talon_task_aware_event", type=_parse_bool, default=False)
+    parser.add_argument("--talon_task_event_attention_weight", type=float, default=0.82)
+    parser.add_argument("--talon_task_event_qweight", type=float, default=0.30)
     args = parser.parse_args()
 
     if args.gpu_ids.strip():

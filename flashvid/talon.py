@@ -565,9 +565,33 @@ def talon_compression(
     residual_norm = residual_scores
 
     innovation_attention_weight = min(max(float(getattr(flashvid_config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)
+    duration = str(getattr(flashvid_config, "current_video_duration", "") or "").strip().lower()
+    task_category = str(getattr(flashvid_config, "current_task_category", "") or "").strip().lower()
+    category = str(getattr(flashvid_config, "current_category", "") or "").strip().lower()
+    task_aware_event = (
+        _safe_bool(getattr(flashvid_config, "talon_task_aware_event", False))
+        and duration in ("medium", "long")
+        and (
+            "object" in task_category
+            or "action" in task_category
+            or "attribute" in task_category
+            or "temporal" in task_category
+            or category in ("sports competition", "film & television", "artistic performance")
+        )
+    )
+    if task_aware_event:
+        innovation_attention_weight = max(
+            innovation_attention_weight,
+            min(max(float(getattr(flashvid_config, "talon_task_event_attention_weight", 0.82)), 0.0), 1.0),
+        )
     innovation_scores = _normalize_scores((1.0 - innovation_attention_weight) * residual_norm + innovation_attention_weight * fused_scores)
     if question_scores is not None and _safe_bool(getattr(flashvid_config, "talon_use_question_innovation", True)):
         q_weight = min(max(float(getattr(flashvid_config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
+        if task_aware_event:
+            q_weight = max(
+                q_weight,
+                min(max(float(getattr(flashvid_config, "talon_task_event_qweight", 0.30)), 0.0), 1.0),
+            )
         innovation_scores = _normalize_scores((1.0 - q_weight) * innovation_scores + q_weight * question_scores)
 
     final_fused_weight = min(max(float(getattr(flashvid_config, "talon_final_fused_weight", 0.70)), 0.0), 1.0)

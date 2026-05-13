@@ -139,6 +139,9 @@ class BenchmarkArgs:
     talon_long_anchor_safety_ratio: float = field(default=0.80)
     talon_long_event_budget_ratio: float = field(default=0.14)
     talon_long_global_topk_ratio: float = field(default=0.85)
+    talon_task_aware_event: bool = field(default=False)
+    talon_task_event_attention_weight: float = field(default=0.82)
+    talon_task_event_qweight: float = field(default=0.30)
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -1444,6 +1447,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
         talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
         talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
+        talon_task_aware_event=args.talon_task_aware_event,
+        talon_task_event_attention_weight=args.talon_task_event_attention_weight,
+        talon_task_event_qweight=args.talon_task_event_qweight,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1583,6 +1589,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
         talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
         talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
+        talon_task_aware_event=args.talon_task_aware_event,
+        talon_task_event_attention_weight=args.talon_task_event_attention_weight,
+        talon_task_event_qweight=args.talon_task_event_qweight,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
