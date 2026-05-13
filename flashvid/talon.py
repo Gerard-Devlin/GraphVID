@@ -554,18 +554,54 @@ def talon_compression(
         + (final_frame_weight / denom) * frame_scores
     )
 
-    chosen, budgets, anchor_mask, event_mask, recall_mask = _select_tokens(
-        frame_features=video_features,
-        fused_scores=fused_scores,
-        question_scores=question_scores,
-        residual_scores=innovation_scores,
-        combined_scores=combined_scores,
-        total_budget=total_budget,
-        num_frames=num_frames,
-        num_visual_tokens=num_visual_tokens,
-        frame_importance=frame_importance,
-        config=flashvid_config,
+    monotonic_base_tpf = max(0, int(getattr(flashvid_config, "talon_monotonic_base_tokens_per_frame", 20) or 0))
+    use_monotonic_expansion = (
+        monotonic_base_tpf > 0
+        and target_per_frame > monotonic_base_tpf
+        and total_budget > monotonic_base_tpf * num_frames
     )
+    if use_monotonic_expansion:
+        # Keep higher budgets as a strict extension of the stable low-budget set.
+        # This avoids the t=21 path reshuffling anchors/events and accidentally
+        # dropping tokens that made the t=20 path work.
+        base_budget = _resolve_total_budget(num_frames, num_visual_tokens, flashvid_config, monotonic_base_tpf)
+        chosen, budgets, anchor_mask, event_mask, recall_mask = _select_tokens(
+            frame_features=video_features,
+            fused_scores=fused_scores,
+            question_scores=question_scores,
+            residual_scores=innovation_scores,
+            combined_scores=combined_scores,
+            total_budget=base_budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            frame_importance=frame_importance,
+            config=flashvid_config,
+        )
+        if int(chosen.numel()) < total_budget:
+            selected_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+            selected_mask[chosen] = True
+            extra_scores = combined_scores.masked_fill(selected_mask, -1e9)
+            fill_k = min(total_budget - int(chosen.numel()), int((extra_scores > -1e8).sum().item()))
+            if fill_k > 0:
+                extra = torch.topk(extra_scores, k=fill_k, dim=0).indices
+                chosen = torch.cat([chosen, extra], dim=0).unique()
+        if int(chosen.numel()) > total_budget:
+            chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
+        chosen = torch.sort(chosen.to(dtype=torch.long)).values
+        budgets = _allocate_frame_budget(total_budget, frame_importance, flashvid_config)
+    else:
+        chosen, budgets, anchor_mask, event_mask, recall_mask = _select_tokens(
+            frame_features=video_features,
+            fused_scores=fused_scores,
+            question_scores=question_scores,
+            residual_scores=innovation_scores,
+            combined_scores=combined_scores,
+            total_budget=total_budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            frame_importance=frame_importance,
+            config=flashvid_config,
+        )
     if chosen.numel() == 0:
         chosen = torch.topk(combined_scores, k=1, dim=0).indices.sort().values
 

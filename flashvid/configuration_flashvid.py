@@ -80,6 +80,7 @@ class FlashVidConfig:
     talon_question_recall_qweight: float = field(default=0.65)
     talon_question_pooling: str = field(default="mean")
     talon_question_pooling_topk: int = field(default=4)
+    talon_monotonic_base_tokens_per_frame: int = field(default=20)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft

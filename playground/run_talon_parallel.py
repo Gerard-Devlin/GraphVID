@@ -95,6 +95,8 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             args.talon_question_pooling,
             "--talon_question_pooling_topk",
             str(args.talon_question_pooling_topk),
+            "--talon_monotonic_base_tokens_per_frame",
+            str(args.talon_monotonic_base_tokens_per_frame),
             "--talon_anchor_diversity_weight",
             "0.0",
             "--talon_frame_local_budget_ratio",
@@ -333,6 +335,7 @@ def main() -> None:
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     parser.add_argument("--talon_question_pooling", default="mean")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
+    parser.add_argument("--talon_monotonic_base_tokens_per_frame", type=int, default=20)
     parser.add_argument("--talon_frame_local_budget_ratio", type=float, default=1.0)
     parser.add_argument("--talon_echo_residual_weight", type=float, default=0.0)
     parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
