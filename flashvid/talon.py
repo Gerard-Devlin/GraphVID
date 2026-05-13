@@ -1,41 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 from torch.nn import functional as F
 
 from .configuration_flashvid import FlashVidConfig
-from .token_selection import attn_based_token_selection, attn_div_v2_based_token_selection
-
-
-@dataclass
-class _TransportState:
-    aligned: torch.Tensor
-    source_to_aligned: torch.Tensor
-
-
-@dataclass
-class _RankPlan:
-    rank: int
-    residual_scores: torch.Tensor
-    reconstruction_source: torch.Tensor
-
-
-@dataclass
-class _SegmentDebugStats:
-    target_budget: int = 0
-    anchor_tokens: int = 0
-    rank_tokens: int = 0
-    event_tokens: int = 0
-    recall_tokens: int = 0
-    memory_tokens: int = 0
-    rank_cap: int = 0
-    chosen_rank: int = 0
-    duplicate_index_count: int = 0
-    question_aware_active: int = 0
 
 
 def _normalize_scores(scores: torch.Tensor) -> torch.Tensor:
@@ -47,16 +18,8 @@ def _normalize_scores(scores: torch.Tensor) -> torch.Tensor:
 
 def _safe_bool(value) -> bool:
     if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "y")
+        return value.strip().lower() in ("1", "true", "yes", "y", "on", "enabled")
     return bool(value)
-
-
-def _global_to_local_indices(flat_indices: torch.Tensor, global_indices: torch.Tensor) -> torch.Tensor:
-    if global_indices.numel() == 0:
-        return torch.empty((0,), dtype=torch.long, device=flat_indices.device)
-    local = torch.searchsorted(flat_indices, global_indices)
-    local = local.clamp(min=0, max=max(0, int(flat_indices.numel()) - 1))
-    return local.to(dtype=torch.long)
 
 
 def _resolve_grid_hw(num_visual_tokens: int, config: FlashVidConfig) -> Tuple[int, int]:
@@ -69,23 +32,45 @@ def _resolve_grid_hw(num_visual_tokens: int, config: FlashVidConfig) -> Tuple[in
     return h, w
 
 
+def _build_local_neighbors(num_visual_tokens: int, config: FlashVidConfig, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+    _, grid_w = _resolve_grid_hw(num_visual_tokens, config)
+    radius = max(0, int(getattr(config, "talon_transport_radius", 1)))
+    token_ids = torch.arange(num_visual_tokens, device=device)
+    y = token_ids // max(1, grid_w)
+    x = token_ids % max(1, grid_w)
+    offsets = [(dy, dx) for dy in range(-radius, radius + 1) for dx in range(-radius, radius + 1)] or [(0, 0)]
+
+    neighbor_idx = torch.empty((num_visual_tokens, len(offsets)), dtype=torch.long, device=device)
+    valid = torch.zeros((num_visual_tokens, len(offsets)), dtype=torch.bool, device=device)
+    for col, (dy, dx) in enumerate(offsets):
+        ny = y + dy
+        nx = x + dx
+        cand = ny * max(1, grid_w) + nx
+        ok = (ny >= 0) & (nx >= 0) & (nx < max(1, grid_w)) & (cand >= 0) & (cand < num_visual_tokens)
+        neighbor_idx[:, col] = torch.where(ok, cand, token_ids)
+        valid[:, col] = ok
+    valid[:, 0] = True
+    return neighbor_idx, valid
+
+
 def _question_aware_scores(
     flat_features: torch.Tensor,
     flat_attention: torch.Tensor,
     question_features: Optional[torch.Tensor],
     config: FlashVidConfig,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    visual_scores = _normalize_scores(flat_attention)
+    attention_scores = _normalize_scores(flat_attention)
     if not _safe_bool(getattr(config, "question_aware_reweighting", False)):
-        return visual_scores, None
+        return attention_scores, None
     if question_features is None or question_features.numel() == 0:
-        return visual_scores, None
+        return attention_scores, None
 
     token_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
     question_proto = F.normalize(question_features.float().mean(dim=0), p=2, dim=-1, eps=1e-6)
     question_scores = _normalize_scores(torch.matmul(token_features, question_proto))
     beta = min(max(float(getattr(config, "question_reweight_beta", 0.35)), 0.0), 1.0)
-    return (1.0 - beta) * visual_scores + beta * question_scores, question_scores
+    fused = _normalize_scores((1.0 - beta) * attention_scores + beta * question_scores)
+    return fused, question_scores
 
 
 def _estimate_video_complexity(video_features: torch.Tensor) -> float:
@@ -107,1737 +92,290 @@ def _estimate_question_difficulty(question_features: Optional[torch.Tensor]) -> 
     q = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
     center = F.normalize(q.mean(dim=0), p=2, dim=-1, eps=1e-6)
     dispersion = 0.5 * (1.0 - torch.matmul(q, center)).clamp(0.0, 2.0)
-    length_score = min(1.0, q.shape[0] / 32.0)
-    return float(0.5 * dispersion.mean().item() + 0.5 * length_score)
+    return float(0.5 * dispersion.mean().item() + 0.5 * min(1.0, q.shape[0] / 32.0))
 
 
-def _resolve_retention_ratio(
-    video_features: torch.Tensor,
-    question_features: Optional[torch.Tensor],
-    config: FlashVidConfig,
-) -> float:
-    base = float(config.retention_ratio)
-    if not _safe_bool(getattr(config, "adaptive_token_budget", False)):
-        config.last_adaptive_retention_ratio = base
-        return base
-    candidates = sorted(
-        [
-            max(0.01, min(1.0, float(getattr(config, "adaptive_budget_low", 0.10)))),
-            max(0.01, min(1.0, float(getattr(config, "adaptive_budget_mid", 0.15)))),
-            max(0.01, min(1.0, float(getattr(config, "adaptive_budget_high", 0.20)))),
-        ]
-    )
-    score = 0.7 * _estimate_video_complexity(video_features) + 0.3 * _estimate_question_difficulty(question_features)
-    idx = min(len(candidates) - 1, int(score * len(candidates)))
-    config.last_adaptive_retention_ratio = candidates[idx]
-    return candidates[idx]
-
-
-def _resolve_talon_target_tokens_per_frame(
+def _resolve_target_per_frame(
     video_features: torch.Tensor,
     question_features: Optional[torch.Tensor],
     config: FlashVidConfig,
 ) -> int:
-    base_target = int(getattr(config, "talon_target_tokens_per_frame", 0) or 0)
-    if base_target <= 0:
+    num_visual_tokens = int(video_features.shape[1])
+    target = int(getattr(config, "talon_target_tokens_per_frame", 0) or 0)
+    if target <= 0:
         config.last_talon_target_tokens_per_frame = None
+        config.last_talon_complexity_score = None
         return 0
+    target = max(1, min(target, num_visual_tokens))
 
-    base_target = max(1, min(base_target, int(video_features.shape[1])))
-    adaptive_enabled = _safe_bool(getattr(config, "talon_adaptive_target_enabled", True))
-    force_fixed = _safe_bool(getattr(config, "talon_force_fixed_target", False))
-    if force_fixed or not adaptive_enabled:
-        target = base_target
+    if _safe_bool(getattr(config, "talon_force_fixed_target", False)) or not _safe_bool(
+        getattr(config, "talon_adaptive_target_enabled", True)
+    ):
         config.last_talon_target_tokens_per_frame = target
         config.last_talon_complexity_score = None
-        running_sum = float(getattr(config, "talon_running_target_sum", 0.0) or 0.0)
-        running_count = int(getattr(config, "talon_running_target_count", 0) or 0)
-        setattr(config, "talon_running_target_sum", running_sum + float(target))
-        setattr(config, "talon_running_target_count", running_count + 1)
         return target
 
-    low = int(getattr(config, "talon_adaptive_target_low", 0) or 0)
-    mid = int(getattr(config, "talon_adaptive_target_mid", 0) or 0)
-    high = int(getattr(config, "talon_adaptive_target_high", 0) or 0)
-    if low <= 0:
-        low = max(1, base_target - 2)
-    if mid <= 0:
-        mid = max(low, base_target - 1)
-    if high <= 0:
-        high = base_target
+    low = int(getattr(config, "talon_adaptive_target_low", 0) or max(1, target - 2))
+    mid = int(getattr(config, "talon_adaptive_target_mid", 0) or max(1, target - 1))
+    high = int(getattr(config, "talon_adaptive_target_high", 0) or target)
+    low, mid, high = sorted([max(1, min(low, num_visual_tokens)), max(1, min(mid, num_visual_tokens)), max(1, min(high, num_visual_tokens))])
 
-    candidates = sorted([
-        max(1, min(low, int(video_features.shape[1]))),
-        max(1, min(mid, int(video_features.shape[1]))),
-        max(1, min(high, int(video_features.shape[1]))),
-    ])
     score = 0.7 * _estimate_video_complexity(video_features) + 0.3 * _estimate_question_difficulty(question_features)
-    score = max(0.0, min(1.0, float(score)))
+    score = max(0.0, min(1.0, score))
+    config.last_talon_complexity_score = score
     floor = float(getattr(config, "talon_complexity_floor", 0.20))
     ceil = float(getattr(config, "talon_complexity_ceil", 0.40))
-    if ceil <= floor:
-        normalized = score
+    norm = score if ceil <= floor else (score - floor) / (ceil - floor)
+    norm = max(0.0, min(1.0, norm)) ** max(1e-6, float(getattr(config, "talon_adaptive_gamma", 1.0)))
+    if norm <= 0.5:
+        chosen = int(round((1.0 - norm / 0.5) * low + (norm / 0.5) * mid))
     else:
-        normalized = (score - floor) / (ceil - floor)
-    normalized = max(0.0, min(1.0, float(normalized)))
-    gamma = max(1e-6, float(getattr(config, "talon_adaptive_gamma", 1.0)))
-    normalized = normalized**gamma
-    config.last_talon_complexity_score = score
+        alpha = (norm - 0.5) / 0.5
+        chosen = int(round((1.0 - alpha) * mid + alpha * high))
 
-    low_t, mid_t, high_t = candidates
-    if normalized <= 0.5:
-        alpha = normalized / 0.5
-        target = int(round((1.0 - alpha) * low_t + alpha * mid_t))
-    else:
-        alpha = (normalized - 0.5) / 0.5
-        target = int(round((1.0 - alpha) * mid_t + alpha * high_t))
-
-    mean_cap = float(getattr(config, "talon_target_mean_cap", 18.75) or 0.0)
+    mean_cap = float(getattr(config, "talon_target_mean_cap", 0.0) or 0.0)
     if mean_cap > 0:
         running_sum = float(getattr(config, "talon_running_target_sum", 0.0) or 0.0)
         running_count = int(getattr(config, "talon_running_target_count", 0) or 0)
-        while target > low_t:
-            projected = (running_sum + float(target)) / float(max(1, running_count + 1))
-            if projected <= mean_cap + 1e-8:
-                break
-            target -= 1
-        setattr(config, "talon_running_target_sum", running_sum + float(target))
+        while chosen > low and (running_sum + float(chosen)) / float(running_count + 1) > mean_cap + 1e-8:
+            chosen -= 1
+        setattr(config, "talon_running_target_sum", running_sum + float(chosen))
         setattr(config, "talon_running_target_count", running_count + 1)
 
-    config.last_talon_target_tokens_per_frame = target
-    return target
+    config.last_talon_target_tokens_per_frame = chosen
+    return chosen
 
 
-def _segment_lengths(video_features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
-    num_frames = int(video_features.shape[0])
-    if num_frames <= 1 or not _safe_bool(getattr(config, "do_segment", True)):
-        return torch.tensor([num_frames], dtype=torch.long, device=video_features.device)
-    if not _safe_bool(getattr(config, "talon_use_segmentation", False)):
-        return torch.tensor([num_frames], dtype=torch.long, device=video_features.device)
-
-    min_segments = int(getattr(config, "min_segment_num", 8))
-    complementary = _safe_bool(getattr(config, "complementary_segment", True))
-    if _safe_bool(getattr(config, "talon_disable_oversegmentation", True)):
-        min_segments = min(min_segments, max(1, int(getattr(config, "talon_max_segments", 4))), num_frames)
-        complementary = False
-
-    frame_features = F.normalize(video_features.mean(dim=1).float(), p=2, dim=-1, eps=1e-6)
-    sims = torch.sum(frame_features[:-1] * frame_features[1:], dim=-1)
-    threshold = float(getattr(config, "segment_threshold", 0.9))
-    cut_indices = torch.where(sims < threshold)[0]
-
-    num_segments = int(cut_indices.numel()) + 1
-    if complementary and num_segments < min_segments and sims.numel() > 0:
-        remaining = min_segments - num_segments
-        masked = sims.clone()
-        masked[masked < threshold] = 1.0
-        extra = torch.topk(masked, k=min(remaining, masked.shape[0]), largest=False).indices
-        cut_indices = torch.cat([cut_indices, extra]).sort().values
-
-    padded = F.pad(cut_indices, (1, 1), value=0)
-    padded[0] = -1
-    padded[-1] = num_frames - 1
-    return torch.diff(padded, n=1, dim=0).to(dtype=torch.long)
+def _resolve_total_budget(
+    num_frames: int,
+    num_visual_tokens: int,
+    config: FlashVidConfig,
+    target_per_frame: int,
+) -> int:
+    num_tokens = num_frames * num_visual_tokens
+    if target_per_frame > 0:
+        budget = num_frames * max(1, min(target_per_frame, num_visual_tokens))
+    else:
+        scale = min(max(float(getattr(config, "talon_budget_scale", 0.60)), 0.01), 2.0)
+        ratio = min(max(float(getattr(config, "retention_ratio", 0.10)), 0.001), 1.0)
+        expansion = max(0.01, float(getattr(config, "expansion", 1.0)))
+        budget = int(math.ceil(num_tokens * min(1.0, ratio * expansion * scale)))
+    min_total = max(1, int(getattr(config, "talon_min_total_tokens", 1) or 1))
+    return max(min_total, min(num_tokens, int(budget)))
 
 
-def _build_local_neighbors(num_visual_tokens: int, config: FlashVidConfig, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
-    _, grid_w = _resolve_grid_hw(num_visual_tokens, config)
-    radius = max(0, int(getattr(config, "talon_transport_radius", 1)))
-    token_ids = torch.arange(num_visual_tokens, device=device)
-    y = token_ids // max(1, grid_w)
-    x = token_ids % max(1, grid_w)
-    offsets = [(dy, dx) for dy in range(-radius, radius + 1) for dx in range(-radius, radius + 1)]
-    if not offsets:
-        offsets = [(0, 0)]
-
-    neighbor_idx = torch.empty((num_visual_tokens, len(offsets)), dtype=torch.long, device=device)
-    valid = torch.zeros((num_visual_tokens, len(offsets)), dtype=torch.bool, device=device)
-    for col, (dy, dx) in enumerate(offsets):
-        ny = y + dy
-        nx = x + dx
-        cand = ny * max(1, grid_w) + nx
-        ok = (ny >= 0) & (nx >= 0) & (nx < max(1, grid_w)) & (cand >= 0) & (cand < num_visual_tokens)
-        neighbor_idx[:, col] = torch.where(ok, cand, token_ids)
-        valid[:, col] = ok
-    valid[:, 0] = True
-    return neighbor_idx, valid
-
-
-def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> _TransportState:
+def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     device = segment_features.device
     identity = torch.arange(num_visual_tokens, dtype=torch.long, device=device)
+    source_to_slot = identity.unsqueeze(0).repeat(num_frames, 1)
     if num_frames <= 1:
-        mapping = identity.unsqueeze(0).repeat(num_frames, 1)
-        return _TransportState(segment_features, mapping)
+        return segment_features, source_to_slot
 
     neighbor_idx, neighbor_valid = _build_local_neighbors(num_visual_tokens, config, device)
     mode = str(getattr(config, "talon_transport_mode", "hard") or "hard").strip().lower()
     temperature = max(1e-4, float(getattr(config, "talon_transport_temperature", 0.07)))
-
     aligned = segment_features.clone()
-    source_to_aligned = torch.empty((num_frames, num_visual_tokens), dtype=torch.long, device=device)
-    source_to_aligned[0] = identity
 
     for t in range(1, num_frames):
         prev = aligned[t - 1]
         cur = segment_features[t]
         prev_norm = F.normalize(prev.float(), p=2, dim=-1, eps=1e-6)
         cur_norm = F.normalize(cur.float(), p=2, dim=-1, eps=1e-6)
-        local_prev = prev_norm[neighbor_idx]
-        sims = torch.sum(cur_norm.unsqueeze(1) * local_prev, dim=-1)
-        sims = sims.masked_fill(~neighbor_valid, -1e9)
+        sims = torch.sum(cur_norm.unsqueeze(1) * prev_norm[neighbor_idx], dim=-1).masked_fill(~neighbor_valid, -1e9)
         best_pos = torch.argmax(sims, dim=1)
-        best_aligned = neighbor_idx[identity, best_pos]
+        best_slot = neighbor_idx[identity, best_pos]
+        source_to_slot[t] = best_slot
 
+        aligned_t = torch.zeros((num_visual_tokens, feat_dim), dtype=cur.dtype, device=device)
+        counts = torch.zeros((num_visual_tokens, 1), dtype=cur.dtype, device=device)
         if mode in ("soft", "entropy", "entropic"):
             weights = torch.softmax(sims / temperature, dim=1).to(cur.dtype)
-            aligned_t = torch.zeros((num_visual_tokens, feat_dim), dtype=cur.dtype, device=device)
-            counts = torch.zeros((num_visual_tokens, 1), dtype=cur.dtype, device=device)
-            flat_aligned = neighbor_idx.reshape(-1)
-            flat_weights = weights.reshape(-1)
+            flat_slot = neighbor_idx.reshape(-1)
             flat_valid = neighbor_valid.reshape(-1)
-            flat_sources = cur.unsqueeze(1).expand(-1, neighbor_idx.shape[1], -1).reshape(-1, feat_dim)
-            flat_aligned = flat_aligned[flat_valid]
-            flat_weights = flat_weights[flat_valid]
-            flat_sources = flat_sources[flat_valid]
-            aligned_t.scatter_add_(0, flat_aligned.unsqueeze(-1).expand(-1, feat_dim), flat_sources * flat_weights.unsqueeze(-1))
-            counts.scatter_add_(0, flat_aligned.unsqueeze(-1), flat_weights.unsqueeze(-1))
+            flat_weights = weights.reshape(-1)[flat_valid]
+            flat_slot = flat_slot[flat_valid]
+            flat_src = cur.unsqueeze(1).expand(-1, neighbor_idx.shape[1], -1).reshape(-1, feat_dim)[flat_valid]
+            aligned_t.scatter_add_(0, flat_slot.unsqueeze(-1).expand(-1, feat_dim), flat_src * flat_weights.unsqueeze(-1))
+            counts.scatter_add_(0, flat_slot.unsqueeze(-1), flat_weights.unsqueeze(-1))
             aligned_t = aligned_t / counts.clamp_min(1e-6)
         else:
-            aligned_t = torch.zeros((num_visual_tokens, feat_dim), dtype=cur.dtype, device=device)
-            counts = torch.zeros((num_visual_tokens, 1), dtype=cur.dtype, device=device)
-            aligned_t.scatter_add_(0, best_aligned.unsqueeze(-1).expand(-1, feat_dim), cur)
-            counts.scatter_add_(0, best_aligned.unsqueeze(-1), torch.ones((num_visual_tokens, 1), dtype=cur.dtype, device=device))
+            aligned_t.scatter_add_(0, best_slot.unsqueeze(-1).expand(-1, feat_dim), cur)
+            counts.scatter_add_(0, best_slot.unsqueeze(-1), torch.ones((num_visual_tokens, 1), dtype=cur.dtype, device=device))
             aligned_t = aligned_t / counts.clamp_min(1.0)
 
-        empty = torch.isnan(aligned_t).any(dim=-1) | (aligned_t.abs().sum(dim=-1) <= 0)
+        empty = counts.squeeze(-1) <= 0
         if empty.any():
-            # Preserve temporal continuity for unmapped aligned slots.
             aligned_t[empty] = prev[empty]
         aligned[t] = aligned_t
-        source_to_aligned[t] = best_aligned
-
-    return _TransportState(aligned=aligned, source_to_aligned=source_to_aligned)
+    return aligned, source_to_slot
 
 
-def _lowrank_basis(aligned_features: torch.Tensor, max_rank: int, config: FlashVidConfig) -> Tuple[torch.Tensor, torch.Tensor]:
-    _, num_visual_tokens, _ = aligned_features.shape
-    max_rank = max(0, min(int(max_rank), int(num_visual_tokens)))
-    if max_rank <= 0:
-        return aligned_features.new_zeros((num_visual_tokens, 0)), aligned_features.new_zeros((0,), dtype=torch.float32)
+def _lowrank_basis(aligned: torch.Tensor, rank: int, config: FlashVidConfig) -> Tuple[torch.Tensor, torch.Tensor]:
+    _, num_visual_tokens, _ = aligned.shape
+    rank = max(0, min(int(rank), num_visual_tokens))
+    if rank <= 0:
+        return aligned.new_zeros((num_visual_tokens, 0)), aligned.new_zeros((0,), dtype=torch.float32)
 
-    method = str(getattr(config, "talon_basis_method", "randomized") or "randomized").strip().lower()
-    if method in ("randomized", "random", "sketch"):
-        oversample = max(0, int(getattr(config, "talon_basis_oversample", 4)))
-        sketch_rank = min(num_visual_tokens, max_rank + oversample)
-        # Treat aligned video as A in R^{P x (T*d)} and approximate the top
-        # left singular vectors without materializing the P x P covariance/eigh path.
-        matrix = aligned_features.float().permute(1, 0, 2).reshape(num_visual_tokens, -1)
-        generator = torch.Generator(device=matrix.device)
-        generator.manual_seed(0)
-        omega = torch.randn(
-            (matrix.shape[1], sketch_rank),
-            dtype=matrix.dtype,
-            device=matrix.device,
-            generator=generator,
-        )
-        q_basis, _ = torch.linalg.qr(torch.matmul(matrix, omega), mode="reduced")
-        small = torch.matmul(q_basis.transpose(0, 1), matrix)
-        small_cov = torch.matmul(small, small.transpose(0, 1))
-        eigvals_small, eigvecs_small = torch.linalg.eigh(small_cov)
-        order = torch.argsort(eigvals_small, descending=True)
-        eigvals = eigvals_small[order][:max_rank].float()
-        basis = torch.matmul(q_basis, eigvecs_small[:, order[:max_rank]])
-        return basis.to(dtype=aligned_features.dtype), eigvals
-
-    cov = torch.zeros((num_visual_tokens, num_visual_tokens), dtype=torch.float32, device=aligned_features.device)
-    for frame in aligned_features:
-        frame_f = frame.float()
-        cov = cov + torch.matmul(frame_f, frame_f.transpose(0, 1))
+    cov = torch.zeros((num_visual_tokens, num_visual_tokens), dtype=torch.float32, device=aligned.device)
+    for frame in aligned:
+        f = frame.float()
+        cov = cov + torch.matmul(f, f.transpose(0, 1))
     eigvals, eigvecs = torch.linalg.eigh(cov)
     order = torch.argsort(eigvals, descending=True)
     eigvals = eigvals[order]
     eigvecs = eigvecs[:, order]
-    return eigvecs[:, :max_rank].to(dtype=aligned_features.dtype), eigvals[:max_rank].float()
+    return eigvecs[:, :rank].to(dtype=aligned.dtype), eigvals.float()
 
 
-def _resolve_memory_budget(num_tokens: int, target_budget: int, config: FlashVidConfig) -> int:
-    dropped = max(0, num_tokens - target_budget)
-    if dropped == 0:
-        return 0
-    ratio = max(0.0, float(getattr(config, "memory_token_ratio", 0.10)))
-    memory_min = max(0, int(getattr(config, "memory_token_min", 1)))
-    memory_max = max(memory_min, int(getattr(config, "memory_token_max", 16)))
-    budget = int(round(target_budget * ratio))
-    budget = min(max(memory_min, budget), memory_max, dropped, max(0, target_budget - 1))
-    return max(0, budget)
+def _reconstruct_source(aligned: torch.Tensor, source_to_slot: torch.Tensor, basis: torch.Tensor) -> torch.Tensor:
+    num_frames, _, _ = aligned.shape
+    if basis.numel() == 0:
+        return torch.zeros_like(aligned)
+    recon = torch.zeros_like(aligned)
+    for t in range(num_frames):
+        coeff = torch.matmul(basis.transpose(0, 1), aligned[t])
+        bg = torch.matmul(basis, coeff)
+        recon[t] = bg[source_to_slot[t]]
+    return recon
 
 
-def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, mode: str) -> List[int]:
+def _frame_importance(
+    cls_attention: torch.Tensor,
+    residual_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    num_frames, num_visual_tokens = cls_attention.shape
+    attn = _normalize_scores(cls_attention.float().mean(dim=1))
+    resid = _normalize_scores(residual_scores.view(num_frames, num_visual_tokens).mean(dim=1))
+    fused = _normalize_scores(fused_scores.view(num_frames, num_visual_tokens).mean(dim=1))
+    boundary = torch.zeros_like(attn)
+    if num_frames > 0:
+        boundary[0] = 1.0
+        boundary[-1] = 1.0
+    motion_w = max(0.0, float(getattr(config, "talon_motion_importance_weight", 0.35)))
+    boundary_w = max(0.0, float(getattr(config, "talon_boundary_importance_weight", 0.10)))
+    question_w = max(0.0, float(getattr(config, "talon_question_frame_weight", 0.20)))
+    attn_w = 1.0
+    total = max(1e-6, attn_w + motion_w + boundary_w + question_w)
+    return _normalize_scores((attn_w * attn + motion_w * resid + boundary_w * boundary + question_w * fused) / total)
+
+
+def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, config: FlashVidConfig) -> List[int]:
     num_frames = int(frame_importance.shape[0])
     if num_frames <= 0:
         return []
-    if total_budget <= 0:
-        return [0 for _ in range(num_frames)]
+    min_anchor = max(0, int(getattr(config, "talon_min_anchor_per_frame", 2)))
+    min_each = min(min_anchor, max(0, total_budget // max(1, num_frames)))
+    budgets = [min_each for _ in range(num_frames)]
+    remaining = int(total_budget - min_each * num_frames)
+    if remaining <= 0:
+        return budgets
 
-    mode = str(mode).strip().lower()
+    mode = str(getattr(config, "talon_budget_mode", "attention") or "attention").strip().lower()
     if mode == "attention":
         weights = frame_importance.float().clamp_min(0.0)
         if float(weights.sum().item()) <= 1e-8:
             weights = torch.ones_like(weights)
         weights = weights / weights.sum()
-        raw = weights * float(total_budget)
+        raw = weights * float(remaining)
         base = torch.floor(raw).to(dtype=torch.long)
-        budgets = base.clone()
-        remaining = int(total_budget - int(base.sum().item()))
-        if remaining > 0:
-            fractional = raw - base.float()
-            order = torch.argsort(fractional, descending=True)
-            budgets[order[:remaining]] += 1
-        return [int(x.item()) for x in budgets]
-
-    base = int(total_budget // num_frames)
-    budgets = [base for _ in range(num_frames)]
-    remaining = int(total_budget - base * num_frames)
-    if remaining <= 0:
+        for i in range(num_frames):
+            budgets[i] += int(base[i].item())
+        leftover = int(remaining - int(base.sum().item()))
+        if leftover > 0:
+            order = torch.argsort(raw - base.float(), descending=True)
+            for idx in order[:leftover]:
+                budgets[int(idx.item())] += 1
         return budgets
-    order = torch.arange(num_frames, device=frame_importance.device)
-    for idx in order[:remaining]:
-        budgets[int(idx.item())] += 1
+
+    base = remaining // num_frames
+    leftover = remaining - base * num_frames
+    budgets = [b + int(base) for b in budgets]
+    for i in range(leftover):
+        budgets[i] += 1
     return budgets
 
 
-def _hybrid_global_frame_select(
-    scores: torch.Tensor,
-    selected_mask: torch.Tensor,
-    budget: int,
+def _select_tokens(
+    fused_scores: torch.Tensor,
+    residual_scores: torch.Tensor,
+    combined_scores: torch.Tensor,
+    total_budget: int,
     num_frames: int,
     num_visual_tokens: int,
     frame_importance: torch.Tensor,
-    budget_mode: str,
-    global_ratio: float = 0.70,
-    min_per_frame: int = 0,
-) -> torch.Tensor:
-    budget = min(max(0, int(budget)), int((~selected_mask).sum().item()))
-    if budget <= 0:
-        return torch.empty((0,), dtype=torch.long, device=scores.device)
+    config: FlashVidConfig,
+) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor]:
+    total_budget = min(max(1, int(total_budget)), int(combined_scores.numel()))
+    budgets = _allocate_frame_budget(total_budget, frame_importance, config)
+    anchor_ratio = min(max(float(getattr(config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.85)
+    global_ratio = min(max(float(getattr(config, "talon_global_topk_ratio", 0.70)), 0.0), 1.0)
 
-    global_ratio = min(max(float(global_ratio), 0.0), 1.0)
-    selected = []
-    occupied = selected_mask.clone()
+    fused_grid = fused_scores.view(num_frames, num_visual_tokens)
+    residual_grid = residual_scores.view(num_frames, num_visual_tokens)
+    combined_grid = combined_scores.view(num_frames, num_visual_tokens)
+    selected_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
+    anchor_mask = torch.zeros_like(selected_mask)
+    event_mask = torch.zeros_like(selected_mask)
+    chosen_parts: List[torch.Tensor] = []
 
-    # Stage-1: global top-k to maximize question/attention utility.
-    global_k = min(budget, max(0, int(round(budget * global_ratio))))
-    if global_k > 0:
-        global_scores = scores.masked_fill(occupied, -1e9)
-        valid_global = int((global_scores > -1e8).sum().item())
-        if valid_global > 0:
-            gk = min(global_k, valid_global)
-            top_global = torch.topk(global_scores, k=gk, dim=0).indices
-            selected.append(top_global)
-            occupied[top_global] = True
-
-    # Stage-2: frame-aware refill to prevent over-collapse on few frames.
-    remaining = budget - sum(int(x.numel()) for x in selected)
-    if remaining <= 0:
-        return torch.cat(selected, dim=0).to(dtype=torch.long) if selected else torch.empty((0,), dtype=torch.long, device=scores.device)
-
-    frame_budgets = _allocate_frame_budget(remaining, frame_importance, budget_mode)
-    score_grid = scores.view(num_frames, num_visual_tokens)
-    occupied_grid = occupied.view(num_frames, num_visual_tokens)
-    frame_pick = []
     for t in range(num_frames):
-        required = max(0, int(min_per_frame))
-        frame_budget = max(required, int(frame_budgets[t]))
-        available = int((~occupied_grid[t]).sum().item())
-        keep_t = min(frame_budget, available)
-        if keep_t <= 0:
+        budget_t = min(max(0, int(budgets[t])), num_visual_tokens)
+        if budget_t <= 0:
             continue
-        local_scores = score_grid[t].masked_fill(occupied_grid[t], -1e9)
-        local_top = torch.topk(local_scores, k=keep_t, dim=0).indices
-        global_idx = t * num_visual_tokens + local_top
-        frame_pick.append(global_idx)
-        occupied[global_idx] = True
+        local_selected = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
+        anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio)))) if budget_t > 1 else budget_t
+        if anchor_k > 0:
+            idx = torch.topk(fused_grid[t], k=anchor_k, dim=0).indices
+            local_selected[idx] = True
+            anchor_mask[t * num_visual_tokens + idx] = True
+        remain = budget_t - int(local_selected.sum().item())
+        if remain > 0:
+            resid = residual_grid[t].masked_fill(local_selected, -1e9)
+            valid = int((resid > -1e8).sum().item())
+            if valid > 0:
+                idx = torch.topk(resid, k=min(remain, valid), dim=0).indices
+                local_selected[idx] = True
+                event_mask[t * num_visual_tokens + idx] = True
+        remain = budget_t - int(local_selected.sum().item())
+        if remain > 0:
+            cmb = combined_grid[t].masked_fill(local_selected, -1e9)
+            valid = int((cmb > -1e8).sum().item())
+            if valid > 0:
+                idx = torch.topk(cmb, k=min(remain, valid), dim=0).indices
+                local_selected[idx] = True
+        local = torch.where(local_selected)[0]
+        chosen_parts.append(t * num_visual_tokens + local)
 
-    if frame_pick:
-        selected.append(torch.cat(frame_pick, dim=0))
-
-    # Stage-3: final global refill for any leftover slots.
-    picked = sum(int(x.numel()) for x in selected)
-    leftover = budget - picked
-    if leftover > 0:
-        refill_scores = scores.masked_fill(occupied, -1e9)
-        valid_refill = int((refill_scores > -1e8).sum().item())
-        if valid_refill > 0:
-            rk = min(leftover, valid_refill)
-            refill = torch.topk(refill_scores, k=rk, dim=0).indices
-            selected.append(refill)
-
-    if not selected:
-        return torch.empty((0,), dtype=torch.long, device=scores.device)
-    return torch.cat(selected, dim=0).unique().to(dtype=torch.long)
-
-
-def _frame_importance(
-    segment_features: torch.Tensor,
-    cls_attention: torch.Tensor,
-    question_features: Optional[torch.Tensor],
-    config: FlashVidConfig,
-) -> torch.Tensor:
-    num_frames = int(segment_features.shape[0])
-    attention = _normalize_scores(cls_attention.float().mean(dim=1))
-    if num_frames <= 1:
-        return attention
-
-    centers = F.normalize(segment_features.float().mean(dim=1), p=2, dim=-1, eps=1e-6)
-    transition = torch.zeros((num_frames,), dtype=torch.float32, device=segment_features.device)
-    delta = 0.5 * (1.0 - torch.sum(centers[:-1] * centers[1:], dim=-1)).clamp(0.0, 2.0)
-    transition[:-1] = torch.maximum(transition[:-1], delta)
-    transition[1:] = torch.maximum(transition[1:], delta)
-    transition = _normalize_scores(transition)
-
-    boundary = torch.zeros_like(transition)
-    boundary[0] = 1.0
-    boundary[-1] = 1.0
-
-    motion_weight = min(max(float(getattr(config, "talon_motion_importance_weight", 0.35)), 0.0), 1.0)
-    boundary_weight = min(max(float(getattr(config, "talon_boundary_importance_weight", 0.10)), 0.0), 1.0)
-    question_weight = 0.0
-    question_frame = torch.zeros_like(attention)
-    if _safe_bool(getattr(config, "question_aware_reweighting", False)) and question_features is not None and question_features.numel() > 0:
-        q = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
-        q_proto = F.normalize(q.mean(dim=0), p=2, dim=-1, eps=1e-6)
-        question_frame = _normalize_scores(torch.matmul(centers, q_proto))
-        question_weight = min(max(float(getattr(config, "talon_question_frame_weight", 0.20)), 0.0), 1.0)
-
-    attention_weight = max(0.0, 1.0 - motion_weight - boundary_weight - question_weight)
-    return _normalize_scores(
-        attention_weight * attention
-        + motion_weight * transition
-        + boundary_weight * boundary
-        + question_weight * question_frame
-    )
-
-
-def _build_memory_tokens(
-    flat_features: torch.Tensor,
-    dropped_indices: torch.Tensor,
-    residual_scores: torch.Tensor,
-    memory_budget: int,
-    num_frames: Optional[int] = None,
-    num_visual_tokens: Optional[int] = None,
-    frame_importance: Optional[torch.Tensor] = None,
-    budget_mode: str = "uniform",
-    frame_balanced: bool = False,
-    memory_mode: str = "raw",
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    feat_dim = flat_features.shape[-1]
-    if memory_budget <= 0 or dropped_indices.numel() == 0:
-        return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
-    raw_mode = str(memory_mode or "raw").strip().lower() in ("raw", "anchor", "anchors", "select")
-
-    if frame_balanced and num_frames is not None and num_visual_tokens is not None and frame_importance is not None:
-        priorities_all = residual_scores.float()
-        frame_budgets = _allocate_frame_budget(memory_budget, frame_importance, budget_mode)
-        tokens = []
-        indices = []
-        for t, budget_t in enumerate(frame_budgets):
-            if budget_t <= 0:
-                continue
-            start = t * int(num_visual_tokens)
-            end = start + int(num_visual_tokens)
-            frame_mask = (dropped_indices >= start) & (dropped_indices < end)
-            frame_dropped = dropped_indices[frame_mask]
-            if frame_dropped.numel() == 0:
-                continue
-            priorities = priorities_all[frame_dropped].clamp_min(1e-6)
-            order = torch.argsort(priorities, descending=True)
-            frame_dropped = frame_dropped[order]
-            priorities = priorities[order]
-            if raw_mode:
-                keep = min(int(budget_t), int(frame_dropped.numel()))
-                tokens.append(flat_features[frame_dropped[:keep]])
-                indices.append(frame_dropped[:keep])
-                continue
-            chunks = torch.chunk(
-                torch.arange(frame_dropped.numel(), device=flat_features.device),
-                min(int(budget_t), int(frame_dropped.numel())),
-            )
-            for chunk in chunks:
-                if chunk.numel() == 0:
-                    continue
-                idx = frame_dropped[chunk]
-                weights = priorities[chunk].to(flat_features.dtype)
-                merged = torch.sum(flat_features[idx] * weights.unsqueeze(-1), dim=0) / weights.sum()
-                tokens.append(merged)
-                indices.append(idx[0])
-        if tokens:
-            if raw_mode:
-                return torch.cat(tokens, dim=0), torch.cat(indices, dim=0)
-            return torch.stack(tokens, dim=0), torch.stack(indices, dim=0)
-
-    priorities = residual_scores[dropped_indices].float()
-    order = torch.argsort(priorities, descending=True)
-    ordered = dropped_indices[order]
-    ordered_priorities = priorities[order].clamp_min(1e-6)
-    num_chunks = min(memory_budget, int(ordered.numel()))
-    if raw_mode:
-        ordered = ordered[:num_chunks]
-        return flat_features[ordered], ordered
-    chunks = torch.chunk(torch.arange(ordered.numel(), device=flat_features.device), num_chunks)
-
-    tokens = []
-    indices = []
-    for chunk in chunks:
-        if chunk.numel() == 0:
-            continue
-        idx = ordered[chunk]
-        weights = ordered_priorities[chunk].to(flat_features.dtype)
-        merged = torch.sum(flat_features[idx] * weights.unsqueeze(-1), dim=0) / weights.sum()
-        tokens.append(merged)
-        indices.append(idx[0])
-    if not tokens:
-        return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
-    return torch.stack(tokens, dim=0), torch.stack(indices, dim=0)
-
-
-def _emit_rescue_tokens(
-    flat_features: torch.Tensor,
-    flat_indices: torch.Tensor,
-    fused_scores: torch.Tensor,
-    residual_scores: torch.Tensor,
-    frame_importance: torch.Tensor,
-    selected_mask: torch.Tensor,
-    budget: int,
-    num_frames: int,
-    num_visual_tokens: int,
-    budget_mode: str,
-    config: FlashVidConfig,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    budget = min(max(0, int(budget)), int((~selected_mask).sum().item()))
-    if budget <= 0:
-        feat_dim = flat_features.shape[-1]
-        return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
-
-    fused_w = float(getattr(config, "talon_rescue_fused_weight", 0.55))
-    residual_w = float(getattr(config, "talon_rescue_residual_weight", 0.35))
-    frame_w = float(getattr(config, "talon_rescue_frame_weight", 0.10))
-    fused_w = max(0.0, fused_w)
-    residual_w = max(0.0, residual_w)
-    frame_w = max(0.0, frame_w)
-    denom = max(1e-6, fused_w + residual_w + frame_w)
-    fused_w, residual_w, frame_w = fused_w / denom, residual_w / denom, frame_w / denom
-
-    frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-    scores = (
-        fused_w * _normalize_scores(fused_scores.float())
-        + residual_w * _normalize_scores(residual_scores.float())
-        + frame_w * _normalize_scores(frame_prior)
-    )
-    scores = scores.masked_fill(selected_mask, -1e9)
-    if _safe_bool(getattr(config, "talon_frame_balanced_selection", True)):
-        top = _hybrid_global_frame_select(
-            scores=scores,
-            selected_mask=selected_mask,
-            budget=budget,
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            frame_importance=frame_importance,
-            budget_mode=budget_mode,
-            global_ratio=float(getattr(config, "talon_rescue_global_ratio", 0.85)),
-            min_per_frame=0,
-        )
+    if chosen_parts:
+        chosen = torch.cat(chosen_parts, dim=0).unique()
     else:
-        valid = int((scores > -1e8).sum().item())
-        if valid <= 0:
-            feat_dim = flat_features.shape[-1]
-            return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
-        top = torch.topk(scores, k=min(budget, valid), dim=0).indices
-    if top.numel() == 0:
-        feat_dim = flat_features.shape[-1]
-        return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
-    selected_mask[top] = True
-    return flat_features[top], flat_indices[top]
-
-
-def _collect_recall_candidates(
-    fused_scores: torch.Tensor,
-    residual_scores: torch.Tensor,
-    frame_importance: torch.Tensor,
-    target_budget: int,
-    num_frames: int,
-    num_visual_tokens: int,
-    budget_mode: str,
-    config: FlashVidConfig,
-) -> torch.Tensor:
-    num_tokens = int(fused_scores.numel())
-    if num_tokens <= 0 or target_budget <= 0:
-        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-
-    semantic_ratio = min(max(float(getattr(config, "talon_recall_semantic_ratio", 0.50)), 0.0), 1.0)
-    event_ratio = min(max(float(getattr(config, "talon_recall_event_ratio", 0.25)), 0.0), 1.0)
-    frame_ratio = min(max(float(getattr(config, "talon_recall_frame_ratio", 0.15)), 0.0), 1.0)
-
-    k_sem = min(num_tokens, max(0, int(round(target_budget * semantic_ratio))))
-    k_event = min(num_tokens, max(0, int(round(target_budget * event_ratio))))
-    k_frame = min(num_tokens, max(0, int(round(target_budget * frame_ratio))))
-
-    picks = []
-    if k_sem > 0:
-        sem = torch.topk(fused_scores.float(), k=k_sem, dim=0).indices
-        picks.append(sem)
-
-    if k_event > 0:
-        frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-        event_score = 0.65 * _normalize_scores(residual_scores.float()) + 0.35 * _normalize_scores(frame_prior)
-        event_score = 0.75 * event_score + 0.25 * _normalize_scores(fused_scores.float())
-        evt = torch.topk(event_score, k=k_event, dim=0).indices
-        picks.append(evt)
-
-    if k_frame > 0:
-        frame_pick = _hybrid_global_frame_select(
-            scores=fused_scores.float(),
-            selected_mask=torch.zeros((num_tokens,), dtype=torch.bool, device=fused_scores.device),
-            budget=k_frame,
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            frame_importance=frame_importance,
-            budget_mode=budget_mode,
-            global_ratio=float(getattr(config, "talon_recall_global_ratio", 0.55)),
-            min_per_frame=1,
-        )
-        if frame_pick.numel() > 0:
-            picks.append(frame_pick)
-
-    if not picks:
-        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-    return torch.cat(picks, dim=0).unique().to(dtype=torch.long)
-
-
-def _collect_flashvid_prior_candidates(
-    segment_features: torch.Tensor,
-    cls_attention: torch.Tensor,
-    selected_mask: torch.Tensor,
-    fused_scores: torch.Tensor,
-    target_budget: int,
-    num_frames: int,
-    num_visual_tokens: int,
-    config: FlashVidConfig,
-) -> torch.Tensor:
-    num_tokens = int(fused_scores.numel())
-    if num_tokens <= 0 or target_budget <= 0:
-        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-
-    ratio = min(max(float(getattr(config, "talon_flash_prior_channel_ratio", 0.12)), 0.0), 1.0)
-    total_budget = min(num_tokens, max(0, int(round(target_budget * ratio))))
-    if total_budget <= 0:
-        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-
-    min_pf = max(0, int(getattr(config, "talon_flash_prior_channel_min_per_frame", 1)))
-    max_pf = max(min_pf, int(getattr(config, "talon_flash_prior_channel_max_per_frame", 4)))
-    per_frame = min(num_visual_tokens, max(min_pf, min(max_pf, max(1, int(round(total_budget / max(1, num_frames)))))))
-    if per_frame <= 0:
-        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-
-    method = str(getattr(config, "talon_flash_prior_channel_method", "attn_div_v2") or "attn_div_v2").strip().lower()
-    if method in ("attn", "attention"):
-        _, frame_idx = attn_based_token_selection(
-            features=segment_features,
-            cls_attention=cls_attention.float(),
-            num_retained_tokens=per_frame,
-        )
-    else:
-        _, frame_idx = attn_div_v2_based_token_selection(
-            features=segment_features,
-            cls_attention=cls_attention.float(),
-            num_retained_tokens=per_frame,
-        )
-    flat_idx = frame_idx + torch.arange(num_frames, device=frame_idx.device).unsqueeze(1) * num_visual_tokens
-    flat_idx = flat_idx.reshape(-1).to(dtype=torch.long)
-    if flat_idx.numel() == 0:
-        return flat_idx
-    flat_idx = flat_idx[~selected_mask[flat_idx]]
-    if flat_idx.numel() == 0:
-        return flat_idx
-    if int(flat_idx.numel()) > total_budget:
-        ranked = torch.topk(fused_scores[flat_idx].float(), k=total_budget, dim=0).indices
-        flat_idx = flat_idx[ranked]
-    return flat_idx.unique()
-
-
-class TalonCompressor:
-    def __init__(self, config: FlashVidConfig):
-        self.config = config
-
-    def compress(
-        self,
-        video_features: torch.Tensor,
-        cls_attention: torch.Tensor,
-        question_features: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        num_frames, num_visual_tokens, _ = video_features.shape
-        ratio = _resolve_retention_ratio(video_features, question_features, self.config)
-        resolved_per_frame_target = _resolve_talon_target_tokens_per_frame(video_features, question_features, self.config)
-        segment_lengths = _segment_lengths(video_features, self.config)
-        global_indices = torch.arange(num_frames * num_visual_tokens, dtype=torch.long, device=video_features.device)
-        global_grid = global_indices.view(num_frames, num_visual_tokens)
-
-        all_tokens: List[torch.Tensor] = []
-        all_indices: List[torch.Tensor] = []
-        debug_totals = _SegmentDebugStats()
-        segment_count = 0
-        offset = 0
-        output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
-        manifold_output = output_mode in ("manifold", "manifold_raw", "raw")
-        unified_selection = _safe_bool(getattr(self.config, "talon_unified_selection", False)) and manifold_output
-        for seg_len_tensor in segment_lengths:
-            seg_len = int(seg_len_tensor.item())
-            segment_kwargs = {
-                "segment_features": video_features[offset : offset + seg_len],
-                "segment_global_indices": global_grid[offset : offset + seg_len],
-                "cls_attention": cls_attention[offset : offset + seg_len],
-                "retention_ratio": ratio,
-                "question_features": question_features,
-                "resolved_per_frame_target": resolved_per_frame_target,
-            }
-            if unified_selection:
-                seg_tokens, seg_indices, seg_debug = self._compress_segment_unified(**segment_kwargs)
-            else:
-                seg_tokens, seg_indices, seg_debug = self._compress_segment_legacy(**segment_kwargs)
-            all_tokens.append(seg_tokens)
-            all_indices.append(seg_indices)
-            debug_totals.target_budget += int(seg_debug.target_budget)
-            debug_totals.anchor_tokens += int(seg_debug.anchor_tokens)
-            debug_totals.rank_tokens += int(seg_debug.rank_tokens)
-            debug_totals.event_tokens += int(seg_debug.event_tokens)
-            debug_totals.recall_tokens += int(seg_debug.recall_tokens)
-            debug_totals.memory_tokens += int(seg_debug.memory_tokens)
-            debug_totals.rank_cap += int(seg_debug.rank_cap)
-            debug_totals.chosen_rank += int(seg_debug.chosen_rank)
-            debug_totals.duplicate_index_count += int(seg_debug.duplicate_index_count)
-            debug_totals.question_aware_active += int(seg_debug.question_aware_active)
-            segment_count += 1
-            offset += seg_len
-
-        final_tokens = torch.cat(all_tokens, dim=0) if all_tokens else video_features.new_zeros((0, video_features.shape[-1]))
-        final_indices = torch.cat(all_indices, dim=0) if all_indices else torch.empty((0,), dtype=torch.long, device=video_features.device)
-        if final_indices.numel() > 0:
-            order = torch.argsort(final_indices)
-            final_tokens = final_tokens[order]
-            final_indices = final_indices[order]
-
-        self.config.num_attn_div_tokens = None
-        self.config.num_sttm_tokens = None
-        self.config.vision_token_length = int(final_tokens.shape[0])
-        self.config.llm_token_length = None
-        self.config.visual_token_length = int(final_tokens.shape[0])
-        self.config.last_talon_target_budget = int(debug_totals.target_budget)
-        self.config.last_talon_anchor_tokens = int(debug_totals.anchor_tokens)
-        self.config.last_talon_rank_tokens = int(debug_totals.rank_tokens)
-        self.config.last_talon_event_tokens = int(debug_totals.event_tokens)
-        self.config.last_talon_recall_tokens = int(debug_totals.recall_tokens)
-        self.config.last_talon_memory_tokens = int(debug_totals.memory_tokens)
-        denom = max(1, int(segment_count))
-        self.config.last_talon_rank_cap = int(round(float(debug_totals.rank_cap) / float(denom)))
-        self.config.last_talon_chosen_rank = int(round(float(debug_totals.chosen_rank) / float(denom)))
-        self.config.last_talon_duplicate_index_count = int(debug_totals.duplicate_index_count)
-        self.config.last_talon_question_aware_active = bool(debug_totals.question_aware_active > 0)
-        self.config.last_talon_segment_count = int(segment_count)
-        return final_tokens, final_indices
-
-    def _compress_segment_unified(
-        self,
-        segment_features: torch.Tensor,
-        segment_global_indices: torch.Tensor,
-        cls_attention: torch.Tensor,
-        retention_ratio: float,
-        question_features: Optional[torch.Tensor],
-        resolved_per_frame_target: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, _SegmentDebugStats]:
-        num_frames, num_visual_tokens, feat_dim = segment_features.shape
-        num_tokens = num_frames * num_visual_tokens
-        device = segment_features.device
-        if num_tokens == 0:
-            return (
-                segment_features.new_zeros((0, feat_dim)),
-                torch.empty((0,), dtype=torch.long, device=device),
-                _SegmentDebugStats(),
-            )
-
-        flat_features = segment_features.reshape(num_tokens, feat_dim)
-        flat_attention = cls_attention.reshape(num_tokens).float()
-        flat_indices = segment_global_indices.reshape(num_tokens)
-        fused_scores, _ = _question_aware_scores(flat_features, flat_attention, question_features, self.config)
-        question_active = int(
-            _safe_bool(getattr(self.config, "question_aware_reweighting", False))
-            and question_features is not None
-            and question_features.numel() > 0
-        )
-
-        target_budget = self._resolve_target_budget(
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            num_tokens=num_tokens,
-            retention_ratio=retention_ratio,
-            resolved_per_frame_target=resolved_per_frame_target,
-        )
-        memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
-        core_budget = max(1, target_budget - memory_budget)
-        debug_stats = _SegmentDebugStats(target_budget=int(target_budget), question_aware_active=question_active)
-
-        selected = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-        frame_importance = _frame_importance(segment_features, cls_attention, question_features, self.config)
-        budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
-
-        # Channel-A: semantic safety anchors.
-        passthrough_budget = self._resolve_passthrough_budget(core_budget)
-        min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
-        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.80)
-        anchor_safety_budget = int(round(core_budget * anchor_safety_ratio))
-        anchor_floor_budget = min(num_tokens, min_anchor_per_frame * num_frames)
-        anchor_budget = min(
-            max(0, core_budget - 1),
-            max(passthrough_budget, anchor_safety_budget, anchor_floor_budget),
-        )
-        if anchor_budget > 0:
-            anchor_local = self._select_passthrough_indices(
-                fused_scores=fused_scores,
-                raw_attention=flat_attention,
-                frame_importance=frame_importance,
-                budget=anchor_budget,
-                num_frames=num_frames,
-                num_visual_tokens=num_visual_tokens,
-                budget_mode=budget_mode,
-            )
-        else:
-            anchor_local = torch.empty((0,), dtype=torch.long, device=device)
-        if anchor_local.numel() > 0:
-            selected[anchor_local] = True
-        debug_stats.anchor_tokens = int(anchor_local.numel())
-
-        # Low-rank background signal (kept lightweight in low-budget manifold mode).
-        talon_budget = max(0, core_budget - int(anchor_local.numel()))
-        per_frame_talon_budget = talon_budget / max(1, num_frames)
-        background_max_ratio = min(max(float(getattr(self.config, "talon_background_max_ratio", 0.45)), 0.0), 1.0)
-        background_rank_cap = int(math.floor(per_frame_talon_budget * background_max_ratio))
-        max_rank_by_budget = max(0, min(talon_budget // max(1, num_frames), background_rank_cap))
-        rank_cap = min(max_rank_by_budget, int(getattr(self.config, "talon_rank_max", 32)), num_visual_tokens)
-        low_budget_threshold = int(getattr(self.config, "talon_low_budget_mode_threshold", 20) or 20)
-        low_budget_rank_cap = max(0, int(getattr(self.config, "talon_low_budget_rank_cap", 0) or 0))
-        if resolved_per_frame_target > 0 and resolved_per_frame_target <= low_budget_threshold:
-            rank_cap = min(rank_cap, low_budget_rank_cap)
-        debug_stats.rank_cap = int(rank_cap)
-
-        transport = _transport_align(segment_features, self.config)
-        basis, eigvals = _lowrank_basis(transport.aligned, rank_cap, self.config)
-        rank_plan = self._select_rank_plan(
-            segment_features=segment_features,
-            transport=transport,
-            basis=basis,
-            eigvals=eigvals,
-            selected=selected,
-            talon_budget=talon_budget,
-        )
-        residual_scores = rank_plan.residual_scores
-        debug_stats.chosen_rank = int(rank_plan.rank)
-
-        rank_local = torch.empty((0,), dtype=torch.long, device=device)
-        if rank_plan.rank > 0 and talon_budget > 0:
-            rank_budget = min(int(rank_plan.rank * num_frames), talon_budget, int((~selected).sum().item()))
-            if rank_budget > 0:
-                anchor_weight = min(max(float(getattr(self.config, "talon_anchor_score_weight", 0.35)), 0.0), 1.0)
-                background_energy = _normalize_scores(torch.norm(rank_plan.reconstruction_source.float(), p=2, dim=-1).reshape(-1))
-                rank_scores = (1.0 - anchor_weight) * background_energy + anchor_weight * _normalize_scores(fused_scores.float())
-                rank_scores = rank_scores.masked_fill(selected, -1e9)
-                if _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
-                    rank_local = _hybrid_global_frame_select(
-                        scores=rank_scores,
-                        selected_mask=selected,
-                        budget=rank_budget,
-                        num_frames=num_frames,
-                        num_visual_tokens=num_visual_tokens,
-                        frame_importance=frame_importance,
-                        budget_mode=budget_mode,
-                        global_ratio=float(getattr(self.config, "talon_background_global_ratio", 0.60)),
-                        min_per_frame=0,
-                    )
-                else:
-                    valid_rank = int((rank_scores > -1e8).sum().item())
-                    if valid_rank > 0:
-                        rank_local = torch.topk(rank_scores, k=min(rank_budget, valid_rank), dim=0).indices
-            if rank_local.numel() > 0:
-                selected[rank_local] = True
-        debug_stats.rank_tokens = int(rank_local.numel())
-
-        # Channel-B: event innovations.
-        remaining_event = max(0, core_budget - int(selected.sum().item()))
-        event_budget_ratio = min(max(float(getattr(self.config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
-        event_budget_cap = int(round(core_budget * event_budget_ratio))
-        remaining_event = min(remaining_event, max(0, event_budget_cap))
-        if remaining_event > 0:
-            residual_core = _normalize_scores(residual_scores)
-            attention_weight = min(max(float(getattr(self.config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)
-            event_scores = (1.0 - attention_weight) * residual_core + attention_weight * fused_scores.float()
-            if _safe_bool(getattr(self.config, "talon_use_question_innovation", True)):
-                q_weight = min(max(float(getattr(self.config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
-                event_scores = (1.0 - q_weight) * event_scores + q_weight * fused_scores.float()
-            event_scores = event_scores.masked_fill(selected, -1e9)
-            if _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
-                event_local = _hybrid_global_frame_select(
-                    scores=event_scores.float(),
-                    selected_mask=selected,
-                    budget=remaining_event,
-                    num_frames=num_frames,
-                    num_visual_tokens=num_visual_tokens,
-                    frame_importance=frame_importance,
-                    budget_mode=budget_mode,
-                    global_ratio=float(getattr(self.config, "talon_global_topk_ratio", 0.70)),
-                    min_per_frame=0,
-                )
-            else:
-                valid_event = int((event_scores > -1e8).sum().item())
-                event_local = (
-                    torch.topk(event_scores, k=min(remaining_event, valid_event), dim=0).indices
-                    if valid_event > 0
-                    else torch.empty((0,), dtype=torch.long, device=device)
-                )
-            if event_local.numel() > 0:
-                selected[event_local] = True
-        else:
-            event_local = torch.empty((0,), dtype=torch.long, device=device)
-        debug_stats.event_tokens = int(event_local.numel())
-
-        # Channel-C: question recall memory (from dropped tokens).
-        dropped = torch.where(~selected)[0]
-        if memory_budget > 0 and dropped.numel() > 0:
-            frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-            recall_fused = max(0.0, float(getattr(self.config, "talon_memory_fused_weight", 0.60)))
-            recall_residual = max(0.0, float(getattr(self.config, "talon_memory_residual_weight", 0.25)))
-            recall_frame = max(0.0, float(getattr(self.config, "talon_memory_frame_weight", 0.15)))
-            recall_denom = max(1e-6, recall_fused + recall_residual + recall_frame)
-            recall_fused /= recall_denom
-            recall_residual /= recall_denom
-            recall_frame /= recall_denom
-            recall_priority = (
-                recall_fused * _normalize_scores(fused_scores.float())
-                + recall_residual * _normalize_scores(residual_scores.float())
-                + recall_frame * _normalize_scores(frame_prior)
-            )
-            recall_mode = str(getattr(self.config, "talon_recall_memory_mode", "raw") or "raw").strip().lower()
-            if recall_mode == "follow":
-                recall_mode = str(getattr(self.config, "talon_memory_mode", "raw") or "raw").strip().lower()
-            _, recall_local = _build_memory_tokens(
-                flat_features=flat_features,
-                dropped_indices=dropped,
-                residual_scores=recall_priority,
-                memory_budget=memory_budget,
-                num_frames=num_frames,
-                num_visual_tokens=num_visual_tokens,
-                frame_importance=frame_importance,
-                budget_mode=budget_mode,
-                frame_balanced=_safe_bool(getattr(self.config, "talon_frame_balanced_memory", True)),
-                memory_mode=recall_mode,
-            )
-        else:
-            recall_local = torch.empty((0,), dtype=torch.long, device=device)
-        debug_stats.recall_tokens = int(recall_local.numel())
-        debug_stats.memory_tokens = int(recall_local.numel())
-
-        # Extra semantic prior candidates: recover a small set of high-attention/raw
-        # anchors for QA stability without changing final token budget.
-        prior_ratio = min(max(float(getattr(self.config, "talon_prior_candidate_ratio", 0.12)), 0.0), 1.0)
-        prior_budget = min(num_tokens, max(0, int(round(target_budget * prior_ratio))))
-        if prior_budget > 0:
-            prior_scores = _normalize_scores(flat_attention.float())
-            prior_scores = (0.75 * prior_scores + 0.25 * _normalize_scores(fused_scores.float())).masked_fill(selected, -1e9)
-            valid_prior = int((prior_scores > -1e8).sum().item())
-            if valid_prior > 0:
-                prior_local = torch.topk(prior_scores, k=min(prior_budget, valid_prior), dim=0).indices.to(dtype=torch.long)
-            else:
-                prior_local = torch.empty((0,), dtype=torch.long, device=device)
-        else:
-            prior_local = torch.empty((0,), dtype=torch.long, device=device)
-
-        flash_prior_local = _collect_flashvid_prior_candidates(
-            segment_features=segment_features,
-            cls_attention=cls_attention,
-            selected_mask=selected,
-            fused_scores=fused_scores,
-            target_budget=target_budget,
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            config=self.config,
-        )
-
-        # Unified final selection: one dedup + one score + one truncate.
-        candidate_parts = [x for x in (anchor_local, rank_local, event_local, recall_local, prior_local, flash_prior_local) if x.numel() > 0]
-        if candidate_parts:
-            candidate_concat = torch.cat(candidate_parts, dim=0).to(dtype=torch.long)
-            candidate_local = candidate_concat.unique()
-            candidate_local = torch.sort(candidate_local).values
-            debug_stats.duplicate_index_count = int(candidate_concat.numel() - candidate_local.numel())
-        else:
-            candidate_local = torch.empty((0,), dtype=torch.long, device=device)
-        if candidate_local.numel() == 0:
-            fallback_k = min(target_budget, num_tokens)
-            fallback_idx = torch.topk(fused_scores.float(), k=fallback_k, dim=0).indices.to(dtype=torch.long)
-            return flat_features[fallback_idx], flat_indices[fallback_idx], debug_stats
-
-        frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-        final_fused = max(0.0, float(getattr(self.config, "talon_final_fused_weight", 0.70)))
-        final_residual = max(0.0, float(getattr(self.config, "talon_final_residual_weight", 0.20)))
-        final_frame = max(0.0, float(getattr(self.config, "talon_final_frame_weight", 0.10)))
-        final_denom = max(1e-6, final_fused + final_residual + final_frame)
-        final_fused /= final_denom
-        final_residual /= final_denom
-        final_frame /= final_denom
-        score_all = (
-            final_fused * _normalize_scores(fused_scores.float())
-            + final_residual * _normalize_scores(residual_scores.float())
-            + final_frame * _normalize_scores(frame_prior)
-        )
-
-        anchor_bonus = float(getattr(self.config, "talon_anchor_keep_bonus", 0.10))
-        recall_bonus = float(getattr(self.config, "talon_recall_keep_bonus", 0.08))
-        prior_bonus = float(getattr(self.config, "talon_prior_keep_bonus", 0.06))
-        if anchor_local.numel() > 0 and abs(anchor_bonus) > 1e-8:
-            score_all[anchor_local] = score_all[anchor_local] + anchor_bonus
-        if recall_local.numel() > 0 and abs(recall_bonus) > 1e-8:
-            score_all[recall_local] = score_all[recall_local] + recall_bonus
-        if prior_local.numel() > 0 and abs(prior_bonus) > 1e-8:
-            score_all[prior_local] = score_all[prior_local] + prior_bonus
-        flash_prior_bonus = float(getattr(self.config, "talon_flash_prior_channel_bonus", 0.06))
-        if flash_prior_local.numel() > 0 and abs(flash_prior_bonus) > 1e-8:
-            score_all[flash_prior_local] = score_all[flash_prior_local] + flash_prior_bonus
-
-        k_final = min(target_budget, int(candidate_local.numel()))
-        anchor_quota_ratio = min(max(float(getattr(self.config, "talon_final_anchor_min_ratio", 0.24)), 0.0), 1.0)
-        recall_quota_ratio = min(max(float(getattr(self.config, "talon_final_recall_min_ratio", 0.10)), 0.0), 1.0)
-        force_anchor = _safe_bool(getattr(self.config, "talon_force_anchor_recall_quota", True))
-
-        chosen_parts: List[torch.Tensor] = []
-        chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-        if force_anchor and anchor_local.numel() > 0:
-            k_anchor = min(int(anchor_local.numel()), max(0, int(round(target_budget * anchor_quota_ratio))))
-            if k_anchor > 0:
-                anchor_pick = anchor_local[torch.topk(score_all[anchor_local], k=k_anchor, dim=0).indices]
-                chosen_parts.append(anchor_pick)
-                chosen_mask[anchor_pick] = True
-        if force_anchor and recall_local.numel() > 0:
-            recall_pool = recall_local[~chosen_mask[recall_local]]
-            k_recall = min(int(recall_pool.numel()), max(0, int(round(target_budget * recall_quota_ratio))))
-            if k_recall > 0:
-                recall_pick = recall_pool[torch.topk(score_all[recall_pool], k=k_recall, dim=0).indices]
-                chosen_parts.append(recall_pick)
-                chosen_mask[recall_pick] = True
-
-        if chosen_parts:
-            chosen_local = torch.cat(chosen_parts, dim=0).unique()
-            chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-            chosen_mask[chosen_local] = True
-            remaining_slots = max(0, k_final - int(chosen_local.numel()))
-            if remaining_slots > 0:
-                remaining_pool = candidate_local[~chosen_mask[candidate_local]]
-                if remaining_pool.numel() > 0:
-                    fill_pick = remaining_pool[torch.topk(score_all[remaining_pool], k=min(remaining_slots, int(remaining_pool.numel())), dim=0).indices]
-                    chosen_local = torch.cat([chosen_local, fill_pick], dim=0).unique()
-        else:
-            chosen_local = candidate_local[torch.topk(score_all[candidate_local], k=k_final, dim=0).indices]
-
-        if int(chosen_local.numel()) < target_budget:
-            chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-            if chosen_local.numel() > 0:
-                chosen_mask[chosen_local] = True
-            fill_scores = score_all.masked_fill(chosen_mask, -1e9)
-            valid_fill = int((fill_scores > -1e8).sum().item())
-            fill_k = min(target_budget - int(chosen_local.numel()), valid_fill)
-            if fill_k > 0:
-                fill_idx = torch.topk(fill_scores, k=fill_k, dim=0).indices
-                chosen_local = torch.cat([chosen_local, fill_idx], dim=0).unique()
-        if int(chosen_local.numel()) > target_budget:
-            chosen_local = chosen_local[torch.topk(score_all[chosen_local], k=target_budget, dim=0).indices]
-        chosen_local = torch.sort(chosen_local.to(dtype=torch.long)).values
-        chosen_mask_final = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-        if chosen_local.numel() > 0:
-            chosen_mask_final[chosen_local] = True
-        debug_stats.anchor_tokens = int(chosen_mask_final[anchor_local].sum().item()) if anchor_local.numel() > 0 else 0
-        debug_stats.rank_tokens = int(chosen_mask_final[rank_local].sum().item()) if rank_local.numel() > 0 else 0
-        debug_stats.event_tokens = int(chosen_mask_final[event_local].sum().item()) if event_local.numel() > 0 else 0
-        debug_stats.recall_tokens = int(chosen_mask_final[recall_local].sum().item()) if recall_local.numel() > 0 else 0
-        debug_stats.memory_tokens = debug_stats.recall_tokens
-        return flat_features[chosen_local], flat_indices[chosen_local], debug_stats
-
-    def _compress_segment_legacy(
-        self,
-        segment_features: torch.Tensor,
-        segment_global_indices: torch.Tensor,
-        cls_attention: torch.Tensor,
-        retention_ratio: float,
-        question_features: Optional[torch.Tensor],
-        resolved_per_frame_target: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, _SegmentDebugStats]:
-        num_frames, num_visual_tokens, feat_dim = segment_features.shape
-        num_tokens = num_frames * num_visual_tokens
-        device = segment_features.device
-        if num_tokens == 0:
-            return (
-                segment_features.new_zeros((0, feat_dim)),
-                torch.empty((0,), dtype=torch.long, device=device),
-                _SegmentDebugStats(),
-            )
-
-        flat_features = segment_features.reshape(num_tokens, feat_dim)
-        flat_attention = cls_attention.reshape(num_tokens).float()
-        flat_indices = segment_global_indices.reshape(num_tokens)
-        fused_scores, _ = _question_aware_scores(flat_features, flat_attention, question_features, self.config)
-        question_active = int(
-            _safe_bool(getattr(self.config, "question_aware_reweighting", False))
-            and question_features is not None
-            and question_features.numel() > 0
-        )
-        fused_grid = fused_scores.view(num_frames, num_visual_tokens)
-
-        target_budget = self._resolve_target_budget(
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            num_tokens=num_tokens,
-            retention_ratio=retention_ratio,
-            resolved_per_frame_target=resolved_per_frame_target,
-        )
-        memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
-        core_budget = max(1, target_budget - memory_budget)
-        debug_stats = _SegmentDebugStats(target_budget=int(target_budget), question_aware_active=question_active)
-
-        selected = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-        core_tokens: List[torch.Tensor] = []
-        core_indices: List[torch.Tensor] = []
-        core_local_indices: List[torch.Tensor] = []
-
-        frame_importance = _frame_importance(segment_features, cls_attention, question_features, self.config)
-        budget_mode = str(getattr(self.config, "talon_budget_mode", "uniform") or "uniform")
-
-        passthrough_budget = self._resolve_passthrough_budget(core_budget)
-        min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
-        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.80)
-        anchor_safety_budget = int(round(core_budget * anchor_safety_ratio))
-        anchor_floor_budget = min(num_tokens, min_anchor_per_frame * num_frames)
-        passthrough_budget = min(
-            max(0, core_budget - 1),
-            max(passthrough_budget, anchor_safety_budget, anchor_floor_budget),
-        )
-        if passthrough_budget > 0:
-            passthrough_idx = self._select_passthrough_indices(
-                fused_scores=fused_scores,
-                raw_attention=flat_attention,
-                frame_importance=frame_importance,
-                budget=passthrough_budget,
-                num_frames=num_frames,
-                num_visual_tokens=num_visual_tokens,
-                budget_mode=budget_mode,
-            )
-            selected[passthrough_idx] = True
-            core_tokens.append(flat_features[passthrough_idx])
-            core_indices.append(flat_indices[passthrough_idx])
-            core_local_indices.append(passthrough_idx)
-        else:
-            passthrough_idx = torch.empty((0,), dtype=torch.long, device=device)
-        debug_stats.anchor_tokens = int(passthrough_idx.numel())
-
-        talon_budget = max(0, core_budget - int(passthrough_idx.numel()))
-        per_frame_talon_budget = talon_budget / max(1, num_frames)
-        background_max_ratio = min(max(float(getattr(self.config, "talon_background_max_ratio", 0.45)), 0.0), 1.0)
-        background_rank_cap = int(math.floor(per_frame_talon_budget * background_max_ratio))
-        max_rank_by_budget = max(0, min(talon_budget // max(1, num_frames), background_rank_cap))
-        rank_cap = min(
-            max_rank_by_budget,
-            int(getattr(self.config, "talon_rank_max", 32)),
-            num_visual_tokens,
-        )
-        debug_stats.rank_cap = int(rank_cap)
-
-        transport = _transport_align(segment_features, self.config)
-        basis, eigvals = _lowrank_basis(transport.aligned, rank_cap, self.config)
-        rank_plan = self._select_rank_plan(
-            segment_features=segment_features,
-            transport=transport,
-            basis=basis,
-            eigvals=eigvals,
-            selected=selected,
-            talon_budget=talon_budget,
-        )
-
-        rank = rank_plan.rank
-        debug_stats.chosen_rank = int(rank)
-        reconstruction_source = rank_plan.reconstruction_source
-        residual_scores = rank_plan.residual_scores
-        output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
-        coefficient_output = output_mode in ("coefficient", "coeff", "strict")
-        rank_local = torch.empty((0,), dtype=torch.long, device=device)
-        event_local = torch.empty((0,), dtype=torch.long, device=device)
-
-        if rank > 0:
-            bg_tokens, bg_indices = self._emit_background_tokens(
-                segment_features=segment_features,
-                segment_global_indices=segment_global_indices,
-                transport=transport,
-                basis=basis[:, :rank],
-                reconstruction_source=reconstruction_source,
-                fused_grid=fused_grid,
-                selected=selected,
-                coefficient_output=coefficient_output,
-            )
-            if bg_tokens.numel() > 0:
-                core_tokens.append(bg_tokens)
-                core_indices.append(bg_indices)
-                rank_local = _global_to_local_indices(flat_indices, bg_indices)
-                core_local_indices.append(rank_local)
-                debug_stats.rank_tokens += int(bg_tokens.shape[0])
-
-        used_after_background = int(selected.sum().item()) - int(passthrough_idx.numel())
-        remaining_innovation = max(0, talon_budget - used_after_background)
-        if remaining_innovation > 0:
-            innovation_tokens, innovation_indices = self._emit_innovations(
-                segment_features=segment_features,
-                segment_global_indices=segment_global_indices,
-                residual_scores=residual_scores,
-                fused_scores=fused_scores,
-                frame_importance=frame_importance,
-                selected=selected,
-                budget=remaining_innovation,
-                budget_mode=budget_mode,
-            )
-            if innovation_tokens.numel() > 0:
-                core_tokens.append(innovation_tokens)
-                core_indices.append(innovation_indices)
-                innovation_local = _global_to_local_indices(flat_indices, innovation_indices)
-                core_local_indices.append(innovation_local)
-                event_local = torch.cat([event_local, innovation_local], dim=0).unique()
-                debug_stats.event_tokens += int(innovation_tokens.shape[0])
-
-        if core_tokens:
-            core_token_tensor = torch.cat(core_tokens, dim=0)
-            core_index_tensor = torch.cat(core_indices, dim=0)
-        else:
-            top1 = torch.topk(fused_scores, k=1, dim=0).indices
-            selected[top1] = True
-            core_token_tensor = flat_features[top1]
-            core_index_tensor = flat_indices[top1]
-            core_local_indices.append(top1)
-
-        # Semantic rescue: reclaim a small set of dropped raw tokens with
-        # high question/reconstruction significance. The budget is borrowed
-        # from memory tokens to keep total output size stable.
-        rescue_enabled = _safe_bool(getattr(self.config, "talon_rescue_enabled", True))
-        if rescue_enabled and memory_budget > 0:
-            rescue_ratio = max(0.0, float(getattr(self.config, "talon_rescue_ratio", 0.08)))
-            proposed_rescue = int(round(target_budget * rescue_ratio))
-            proposed_rescue = max(0, proposed_rescue)
-            if _safe_bool(getattr(self.config, "talon_rescue_from_memory_only", True)):
-                rescue_budget = min(memory_budget, proposed_rescue)
-            else:
-                rescue_budget = min(proposed_rescue, int((~selected).sum().item()))
-            if rescue_budget > 0:
-                rescue_tokens, rescue_indices = _emit_rescue_tokens(
-                    flat_features=flat_features,
-                    flat_indices=flat_indices,
-                    fused_scores=fused_scores,
-                    residual_scores=residual_scores,
-                    frame_importance=frame_importance,
-                    selected_mask=selected,
-                    budget=rescue_budget,
-                    num_frames=num_frames,
-                    num_visual_tokens=num_visual_tokens,
-                    budget_mode=budget_mode,
-                    config=self.config,
-                )
-                if rescue_tokens.numel() > 0:
-                    core_token_tensor = torch.cat([core_token_tensor, rescue_tokens], dim=0)
-                    core_index_tensor = torch.cat([core_index_tensor, rescue_indices], dim=0)
-                    rescue_local = _global_to_local_indices(flat_indices, rescue_indices)
-                    core_local_indices.append(rescue_local)
-                    event_local = torch.cat([event_local, rescue_local], dim=0).unique()
-                    memory_budget = max(0, memory_budget - int(rescue_tokens.shape[0]))
-                    debug_stats.event_tokens += int(rescue_tokens.shape[0])
-
-        dropped = torch.where(~selected)[0]
-        mem_tokens, mem_local_idx = _build_memory_tokens(
-            flat_features=flat_features,
-            dropped_indices=dropped,
-            residual_scores=residual_scores,
-            memory_budget=memory_budget,
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            frame_importance=frame_importance,
-            budget_mode=budget_mode,
-            frame_balanced=_safe_bool(getattr(self.config, "talon_frame_balanced_memory", True)),
-            memory_mode=str(getattr(self.config, "talon_memory_mode", "raw") or "raw"),
-        )
-        if mem_tokens.numel() > 0:
-            all_tokens = torch.cat([core_token_tensor, mem_tokens], dim=0)
-            all_indices = torch.cat([core_index_tensor, flat_indices[mem_local_idx]], dim=0)
-            mem_local = mem_local_idx.to(dtype=torch.long)
-        else:
-            all_tokens = core_token_tensor
-            all_indices = core_index_tensor
-            mem_local = torch.empty((0,), dtype=torch.long, device=device)
-        recall_local = mem_local
-        debug_stats.recall_tokens = int(mem_tokens.shape[0])
-        debug_stats.memory_tokens = int(mem_tokens.shape[0])
-
-        # Final raw-token rerank: union TALON candidates with a small
-        # FlashVID-style high-attention prior, then keep top budget scores.
-        output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
-        do_rerank = _safe_bool(getattr(self.config, "talon_rerank_with_flash_prior", True)) and output_mode in ("manifold", "manifold_raw", "raw")
-        if not do_rerank:
-            debug_stats.duplicate_index_count = int(all_indices.numel() - all_indices.unique().numel())
-            final_local = _global_to_local_indices(flat_indices, all_indices.unique())
-            final_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-            if final_local.numel() > 0:
-                final_mask[final_local] = True
-            debug_stats.anchor_tokens = int(final_mask[passthrough_idx].sum().item()) if passthrough_idx.numel() > 0 else 0
-            debug_stats.rank_tokens = int(final_mask[rank_local].sum().item()) if rank_local.numel() > 0 else 0
-            debug_stats.event_tokens = int(final_mask[event_local].sum().item()) if event_local.numel() > 0 else 0
-            debug_stats.recall_tokens = int(final_mask[recall_local].sum().item()) if recall_local.numel() > 0 else 0
-            debug_stats.memory_tokens = debug_stats.recall_tokens
-            return all_tokens, all_indices, debug_stats
-
-        candidate_local_parts = [x for x in core_local_indices if x.numel() > 0]
-        if mem_local.numel() > 0:
-            candidate_local_parts.append(mem_local)
-        if candidate_local_parts:
-            base_local = torch.cat(candidate_local_parts, dim=0).unique().to(dtype=torch.long)
-            candidate_local = base_local
-        else:
-            base_local = torch.empty((0,), dtype=torch.long, device=device)
-            candidate_local = torch.empty((0,), dtype=torch.long, device=device)
-
-        prior_ratio = min(max(float(getattr(self.config, "talon_flash_prior_ratio", 0.20)), 0.0), 1.0)
-        prior_budget = min(num_tokens, max(0, int(round(target_budget * prior_ratio))))
-        if prior_budget > 0:
-            prior_idx = self._select_passthrough_indices(
-                fused_scores=fused_scores,
-                raw_attention=flat_attention,
-                frame_importance=frame_importance,
-                budget=prior_budget,
-                num_frames=num_frames,
-                num_visual_tokens=num_visual_tokens,
-                budget_mode=budget_mode,
-            )
-            if prior_idx.numel() > 0:
-                candidate_local = torch.cat([candidate_local, prior_idx], dim=0).unique()
-        else:
-            prior_idx = torch.empty((0,), dtype=torch.long, device=device)
-
-        if candidate_local.numel() == 0:
-            return all_tokens, all_indices, debug_stats
-
-        recall_pool = _collect_recall_candidates(
-            fused_scores=fused_scores,
-            residual_scores=residual_scores,
-            frame_importance=frame_importance,
-            target_budget=target_budget,
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            budget_mode=budget_mode,
-            config=self.config,
-        )
-        if recall_pool.numel() > 0:
-            candidate_local = torch.cat([candidate_local, recall_pool], dim=0).unique()
-        duplicate_parts = [x for x in (base_local, prior_idx, recall_pool) if x.numel() > 0]
-        if duplicate_parts:
-            duplicate_concat = torch.cat(duplicate_parts, dim=0).to(dtype=torch.long)
-            debug_stats.duplicate_index_count = int(duplicate_concat.numel() - duplicate_concat.unique().numel())
-
-        frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-        final_fused = max(0.0, float(getattr(self.config, "talon_final_fused_weight", 0.70)))
-        final_residual = max(0.0, float(getattr(self.config, "talon_final_residual_weight", 0.20)))
-        final_frame = max(0.0, float(getattr(self.config, "talon_final_frame_weight", 0.10)))
-        final_denom = max(1e-6, final_fused + final_residual + final_frame)
-        final_fused /= final_denom
-        final_residual /= final_denom
-        final_frame /= final_denom
-        score_all = (
-            final_fused * _normalize_scores(fused_scores.float())
-            + final_residual * _normalize_scores(residual_scores.float())
-            + final_frame * _normalize_scores(frame_prior)
-        )
-
-        anchor_bonus = float(getattr(self.config, "talon_anchor_keep_bonus", 0.10))
-        recall_bonus = float(getattr(self.config, "talon_recall_keep_bonus", 0.08))
-        prior_bonus = float(getattr(self.config, "talon_prior_keep_bonus", 0.06))
-        recall_pool_bonus = float(getattr(self.config, "talon_flash_prior_channel_bonus", 0.06))
-        event_bonus = float(getattr(self.config, "talon_event_keep_bonus", 0.04))
-        if passthrough_idx.numel() > 0 and abs(anchor_bonus) > 1e-8:
-            score_all[passthrough_idx] = score_all[passthrough_idx] + anchor_bonus
-        if mem_local.numel() > 0 and abs(recall_bonus) > 1e-8:
-            score_all[mem_local] = score_all[mem_local] + recall_bonus
-        if prior_idx.numel() > 0 and abs(prior_bonus) > 1e-8:
-            score_all[prior_idx] = score_all[prior_idx] + prior_bonus
-        if recall_pool.numel() > 0 and abs(recall_pool_bonus) > 1e-8:
-            score_all[recall_pool] = score_all[recall_pool] + recall_pool_bonus
-        if base_local.numel() > 0 and abs(event_bonus) > 1e-8:
-            innovation_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-            innovation_mask[base_local] = True
-            if passthrough_idx.numel() > 0:
-                innovation_mask[passthrough_idx] = False
-            if mem_local.numel() > 0:
-                innovation_mask[mem_local] = False
-            innovation_local = torch.where(innovation_mask)[0]
-            if innovation_local.numel() > 0:
-                score_all[innovation_local] = score_all[innovation_local] + event_bonus
-
-        candidate_local = torch.sort(candidate_local.to(dtype=torch.long)).values
-        k_final = min(target_budget, int(candidate_local.numel()))
-        chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-        chosen_parts: List[torch.Tensor] = []
-
-        force_quota = _safe_bool(getattr(self.config, "talon_force_anchor_recall_quota", True))
-        anchor_quota_ratio = min(max(float(getattr(self.config, "talon_final_anchor_min_ratio", 0.24)), 0.0), 1.0)
-        recall_quota_ratio = min(max(float(getattr(self.config, "talon_final_recall_min_ratio", 0.10)), 0.0), 1.0)
-        if force_quota and passthrough_idx.numel() > 0:
-            k_anchor = min(int(passthrough_idx.numel()), max(0, int(round(target_budget * anchor_quota_ratio))))
-            if k_anchor > 0:
-                anchor_pick = passthrough_idx[torch.topk(score_all[passthrough_idx], k=k_anchor, dim=0).indices]
-                chosen_parts.append(anchor_pick)
-                chosen_mask[anchor_pick] = True
-        if force_quota and mem_local.numel() > 0:
-            recall_pool_local = mem_local[~chosen_mask[mem_local]]
-            k_recall = min(int(recall_pool_local.numel()), max(0, int(round(target_budget * recall_quota_ratio))))
-            if k_recall > 0:
-                recall_pick = recall_pool_local[torch.topk(score_all[recall_pool_local], k=k_recall, dim=0).indices]
-                chosen_parts.append(recall_pick)
-                chosen_mask[recall_pick] = True
-
-        base_keep_ratio = min(max(float(getattr(self.config, "talon_legacy_base_keep_ratio", 0.85)), 0.0), 1.0)
-        if base_local.numel() > 0:
-            base_pool = base_local[~chosen_mask[base_local]]
-            keep_base_k = min(int(base_pool.numel()), max(0, int(round(target_budget * base_keep_ratio)) - int(chosen_mask.sum().item())))
-            if keep_base_k > 0:
-                base_pick = base_pool[torch.topk(score_all[base_pool], k=keep_base_k, dim=0).indices]
-                chosen_parts.append(base_pick)
-                chosen_mask[base_pick] = True
-
-        if chosen_parts:
-            chosen_local = torch.cat(chosen_parts, dim=0).unique()
-            chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-            chosen_mask[chosen_local] = True
-        else:
-            chosen_local = torch.empty((0,), dtype=torch.long, device=device)
-
-        remaining_slots = max(0, k_final - int(chosen_local.numel()))
-        if remaining_slots > 0:
-            remaining_pool = candidate_local[~chosen_mask[candidate_local]]
-            if remaining_pool.numel() > 0:
-                fill_pick = remaining_pool[
-                    torch.topk(score_all[remaining_pool], k=min(remaining_slots, int(remaining_pool.numel())), dim=0).indices
-                ]
-                chosen_local = torch.cat([chosen_local, fill_pick], dim=0).unique()
-                chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-                chosen_mask[chosen_local] = True
-
-        if int(chosen_local.numel()) < target_budget:
-            fill_scores = score_all.masked_fill(chosen_mask, -1e9)
-            fill_k = min(target_budget - int(chosen_local.numel()), int((fill_scores > -1e8).sum().item()))
-            if fill_k > 0:
-                fill_idx = torch.topk(fill_scores, k=fill_k, dim=0).indices
-                chosen_local = torch.cat([chosen_local, fill_idx], dim=0).unique()
-
-        if int(chosen_local.numel()) > target_budget:
-            chosen_local = chosen_local[torch.topk(score_all[chosen_local], k=target_budget, dim=0).indices]
-        chosen_local = torch.sort(chosen_local.to(dtype=torch.long)).values
-        chosen_mask_final = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
-        if chosen_local.numel() > 0:
-            chosen_mask_final[chosen_local] = True
-        debug_stats.anchor_tokens = int(chosen_mask_final[passthrough_idx].sum().item()) if passthrough_idx.numel() > 0 else 0
-        debug_stats.rank_tokens = int(chosen_mask_final[rank_local].sum().item()) if rank_local.numel() > 0 else 0
-        debug_stats.event_tokens = int(chosen_mask_final[event_local].sum().item()) if event_local.numel() > 0 else 0
-        debug_stats.recall_tokens = int(chosen_mask_final[recall_local].sum().item()) if recall_local.numel() > 0 else 0
-        debug_stats.memory_tokens = debug_stats.recall_tokens
-        return flat_features[chosen_local], flat_indices[chosen_local], debug_stats
-
-    def _resolve_target_budget(
-        self,
-        num_frames: int,
-        num_visual_tokens: int,
-        num_tokens: int,
-        retention_ratio: float,
-        resolved_per_frame_target: int = 0,
-    ) -> int:
-        per_frame_target = int(resolved_per_frame_target or getattr(self.config, "talon_target_tokens_per_frame", 0) or 0)
-        if per_frame_target > 0:
-            budget = num_frames * max(1, min(per_frame_target, num_visual_tokens))
-        else:
-            budget_scale = float(getattr(self.config, "talon_budget_scale", 0.60))
-            budget_scale = min(max(budget_scale, 0.05), 1.50)
-            effective_ratio = retention_ratio * float(getattr(self.config, "expansion", 1.0)) * budget_scale
-            effective_ratio = min(1.0, max(0.005, effective_ratio))
-            budget = int(math.ceil(num_tokens * effective_ratio))
-
-        min_total = max(1, int(getattr(self.config, "talon_min_total_tokens", 1) or 1))
-        return max(1, min(num_tokens, max(min_total, int(budget))))
-
-    def _resolve_passthrough_budget(self, core_budget: int) -> int:
-        ratio = min(max(float(getattr(self.config, "talon_passthrough_ratio", 0.15)), 0.0), 0.90)
-        min_tokens = max(0, int(getattr(self.config, "talon_passthrough_min", 2)))
-        max_passthrough = max(0, int(core_budget) - 1)
-        budget = min(max_passthrough, max(0, int(round(core_budget * ratio))))
-        if budget > 0:
-            budget = max(min(min_tokens, max_passthrough), budget)
-        return budget
-
-    def _select_passthrough_indices(
-        self,
-        fused_scores: torch.Tensor,
-        raw_attention: torch.Tensor,
-        frame_importance: torch.Tensor,
-        budget: int,
-        num_frames: int,
-        num_visual_tokens: int,
-        budget_mode: str,
-    ) -> torch.Tensor:
-        budget = min(max(0, int(budget)), int(fused_scores.numel()))
-        if budget <= 0:
-            return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-        if not _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
-            return torch.topk(fused_scores, k=budget, dim=0).indices
-        # Anchor safety first: keep a small number of per-frame high-attention anchors.
-        attention_grid = _normalize_scores(raw_attention).view(num_frames, num_visual_tokens)
-        min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
-        anchor_budget = min(budget, num_frames * min_anchor_per_frame) if min_anchor_per_frame > 0 else 0
-        anchor_selected = []
-        if anchor_budget > 0:
-            for t in range(num_frames):
-                k_t = min(min_anchor_per_frame, num_visual_tokens)
-                if k_t <= 0:
-                    continue
-                local = torch.topk(attention_grid[t], k=k_t, dim=0).indices
-                anchor_selected.append(t * num_visual_tokens + local)
-            if anchor_selected:
-                anchor_selected = torch.cat(anchor_selected, dim=0).unique()
-                if anchor_selected.numel() > anchor_budget:
-                    anchor_scores = fused_scores[anchor_selected]
-                    keep_order = torch.topk(anchor_scores, k=anchor_budget, dim=0).indices
-                    anchor_selected = anchor_selected[keep_order]
-            else:
-                anchor_selected = torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-        else:
-            anchor_selected = torch.empty((0,), dtype=torch.long, device=fused_scores.device)
-
-        selected_mask = torch.zeros_like(fused_scores, dtype=torch.bool)
-        if anchor_selected.numel() > 0:
-            selected_mask[anchor_selected] = True
-        remaining_budget = max(0, budget - int(anchor_selected.numel()))
-        global_ratio = float(getattr(self.config, "talon_global_topk_ratio", 0.70))
-        hybrid_selected = _hybrid_global_frame_select(
-            scores=fused_scores.float(),
-            selected_mask=selected_mask,
-            budget=remaining_budget,
-            num_frames=num_frames,
-            num_visual_tokens=num_visual_tokens,
-            frame_importance=frame_importance,
-            budget_mode=budget_mode,
-            global_ratio=global_ratio,
-            min_per_frame=0,
-        )
-        if anchor_selected.numel() == 0:
-            return hybrid_selected
-        if hybrid_selected.numel() == 0:
-            return anchor_selected
-        return torch.cat([anchor_selected, hybrid_selected], dim=0).unique().to(dtype=torch.long)
-
-    def _select_rank_plan(
-        self,
-        segment_features: torch.Tensor,
-        transport: _TransportState,
-        basis: torch.Tensor,
-        eigvals: torch.Tensor,
-        selected: torch.Tensor,
-        talon_budget: int,
-    ) -> _RankPlan:
-        num_frames, num_visual_tokens, feat_dim = segment_features.shape
-        max_rank = int(basis.shape[1])
-        min_rank = max(0, int(getattr(self.config, "talon_rank_min", 2)))
-        strategy = str(getattr(self.config, "talon_budget_strategy", "marginal") or "marginal").strip().lower()
-        if strategy == "ratio":
-            raw = int(round((talon_budget / max(1, num_frames)) * float(getattr(self.config, "talon_rank_ratio", 0.40))))
-            candidates = [min(max(raw, min_rank if talon_budget >= min_rank * num_frames else 0), max_rank)]
-        else:
-            candidates = list(range(0, max_rank + 1))
-            if max_rank >= min_rank and talon_budget >= min_rank * num_frames:
-                candidates = [r for r in candidates if r == 0 or r >= min_rank]
-
-        best_rank = 0
-        best_score = None
-        best_residual_scores = torch.norm(segment_features.float(), p=2, dim=-1).reshape(-1) ** 2
-        best_reconstruction = torch.zeros_like(segment_features)
-        spectral_weight = float(getattr(self.config, "talon_rd_spectral_weight", 1.0))
-        innovation_weight = float(getattr(self.config, "talon_rd_innovation_weight", 1.0))
-
-        if _safe_bool(getattr(self.config, "talon_fast_rank_plan", True)):
-            # Rate-distortion proxy: choose the background rank from spectral tail
-            # and raw-token innovation energy, then reconstruct only once.
-            flat_energy = torch.norm(segment_features.float(), p=2, dim=-1).reshape(-1) ** 2
-            flat_energy = flat_energy.masked_fill(selected, 0.0)
-            sorted_energy = torch.sort(flat_energy, descending=True).values
-            prefix = F.pad(torch.cumsum(sorted_energy, dim=0), (1, 0), value=0.0)
-            total_energy = prefix[-1]
-
-            for rank in candidates:
-                rank_cost = int(rank) * num_frames
-                if rank_cost > talon_budget:
-                    continue
-                innovation_budget = min(max(0, talon_budget - rank_cost), sorted_energy.numel())
-                residual_tail_proxy = total_energy - prefix[innovation_budget]
-                spectral_tail = eigvals[rank:].sum() if rank < eigvals.numel() else eigvals.new_tensor(0.0)
-                score = spectral_weight * spectral_tail + innovation_weight * residual_tail_proxy
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best_rank = int(rank)
-
-            best_reconstruction = self._reconstruct_source(transport, basis[:, :best_rank])
-            residual = segment_features.float() - best_reconstruction.float()
-            best_residual_scores = torch.norm(residual, p=2, dim=-1).reshape(-1) ** 2
-            return _RankPlan(
-                rank=best_rank,
-                residual_scores=best_residual_scores,
-                reconstruction_source=best_reconstruction,
-            )
-
-        for rank in candidates:
-            rank_cost = int(rank) * num_frames
-            if rank_cost > talon_budget:
-                continue
-            reconstruction = self._reconstruct_source(transport, basis[:, :rank])
-            residual = segment_features.float() - reconstruction.float()
-            residual_scores = torch.norm(residual, p=2, dim=-1).reshape(-1) ** 2
-            candidate_scores = residual_scores.masked_fill(selected, -1.0)
-            innovation_budget = max(0, talon_budget - rank_cost)
-            if innovation_budget > 0 and (candidate_scores > 0).any():
-                keep_k = min(innovation_budget, int((candidate_scores > 0).sum().item()))
-                kept = torch.topk(candidate_scores, k=keep_k, dim=0).values.sum()
-            else:
-                kept = candidate_scores.new_tensor(0.0)
-            residual_tail = residual_scores.masked_fill(selected, 0.0).sum() - kept
-            spectral_tail = eigvals[rank:].sum() if rank < eigvals.numel() else eigvals.new_tensor(0.0)
-            score = spectral_weight * spectral_tail + innovation_weight * residual_tail
-            if best_score is None or score < best_score:
-                best_score = score
-                best_rank = int(rank)
-                best_residual_scores = residual_scores
-                best_reconstruction = reconstruction
-
-        return _RankPlan(rank=best_rank, residual_scores=best_residual_scores, reconstruction_source=best_reconstruction)
-
-    def _reconstruct_source(self, transport: _TransportState, basis: torch.Tensor) -> torch.Tensor:
-        aligned = transport.aligned
-        num_frames, num_visual_tokens, feat_dim = aligned.shape
-        if basis.numel() == 0:
-            return torch.zeros_like(aligned)
-        source_recon = torch.zeros_like(aligned)
-        for t in range(num_frames):
-            coeff = torch.matmul(basis.transpose(0, 1), aligned[t])
-            bg = torch.matmul(basis, coeff)
-            source_recon[t] = bg[transport.source_to_aligned[t]]
-        return source_recon
-
-    def _emit_background_tokens(
-        self,
-        segment_features: torch.Tensor,
-        segment_global_indices: torch.Tensor,
-        transport: _TransportState,
-        basis: torch.Tensor,
-        reconstruction_source: torch.Tensor,
-        fused_grid: torch.Tensor,
-        selected: torch.Tensor,
-        coefficient_output: bool,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        num_frames, num_visual_tokens, feat_dim = segment_features.shape
-        rank = int(basis.shape[1])
-        if rank <= 0:
-            return segment_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=segment_features.device)
-
-        blend = min(max(float(getattr(self.config, "talon_reconstruction_blend", 0.25)), 0.0), 1.0)
-        anchor_weight = min(max(float(getattr(self.config, "talon_anchor_score_weight", 0.35)), 0.0), 1.0)
-        tokens = []
-        indices = []
-        for t in range(num_frames):
-            frame_offset = t * num_visual_tokens
-            frame_selected = selected[frame_offset : frame_offset + num_visual_tokens]
-            if coefficient_output:
-                coeff = torch.matmul(basis.transpose(0, 1), transport.aligned[t])
-                aligned_scores = _normalize_scores(torch.norm(reconstruction_source[t].float(), p=2, dim=-1))
-                aligned_scores = (1.0 - anchor_weight) * aligned_scores + anchor_weight * fused_grid[t]
-                if frame_selected.any():
-                    aligned_scores = aligned_scores.masked_fill(frame_selected, -1e9)
-                k = min(rank, int((~frame_selected).sum().item()))
-                if k <= 0:
-                    continue
-                anchor_idx = torch.topk(aligned_scores, k=k, dim=0).indices
-                tokens.append(coeff[:k])
-                indices.append(segment_global_indices[t, anchor_idx])
-                selected[frame_offset + anchor_idx] = True
-            else:
-                energy = _normalize_scores(torch.norm(reconstruction_source[t].float(), p=2, dim=-1))
-                anchor_scores = (1.0 - anchor_weight) * energy + anchor_weight * fused_grid[t]
-                if frame_selected.any():
-                    anchor_scores = anchor_scores.masked_fill(frame_selected, -1e9)
-                k = min(rank, int((~frame_selected).sum().item()))
-                if k <= 0:
-                    continue
-                anchor_idx = torch.topk(anchor_scores, k=k, dim=0).indices
-                raw = segment_features[t, anchor_idx]
-                recon = reconstruction_source[t, anchor_idx]
-                tokens.append((1.0 - blend) * raw + blend * recon)
-                indices.append(segment_global_indices[t, anchor_idx])
-                selected[frame_offset + anchor_idx] = True
-
-        if not tokens:
-            return segment_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=segment_features.device)
-        return torch.cat(tokens, dim=0), torch.cat(indices, dim=0)
-
-    def _emit_innovations(
-        self,
-        segment_features: torch.Tensor,
-        segment_global_indices: torch.Tensor,
-        residual_scores: torch.Tensor,
-        fused_scores: torch.Tensor,
-        frame_importance: torch.Tensor,
-        selected: torch.Tensor,
-        budget: int,
-        budget_mode: str,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        num_frames, num_visual_tokens, feat_dim = segment_features.shape
-        residual_core = _normalize_scores(residual_scores)
-        attention_weight = min(max(float(getattr(self.config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)
-        scores = (1.0 - attention_weight) * residual_core + attention_weight * fused_scores.float()
-        if _safe_bool(getattr(self.config, "talon_use_question_innovation", True)):
-            q_weight = min(max(float(getattr(self.config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
-            scores = (1.0 - q_weight) * scores + q_weight * fused_scores.float()
-        scores = scores.masked_fill(selected, -1e9)
-        k = min(int(budget), int((~selected).sum().item()))
-        if k <= 0:
-            return segment_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=segment_features.device)
-
-        if _safe_bool(getattr(self.config, "talon_frame_balanced_selection", True)):
-            top = _hybrid_global_frame_select(
-                scores=scores.float(),
-                selected_mask=selected,
-                budget=k,
-                num_frames=num_frames,
-                num_visual_tokens=num_visual_tokens,
-                frame_importance=frame_importance,
-                budget_mode=budget_mode,
-                global_ratio=float(getattr(self.config, "talon_global_topk_ratio", 0.70)),
-                min_per_frame=0,
-            )
-        else:
-            top = torch.topk(scores, k=k, dim=0).indices
-
-        selected[top] = True
-        flat_features = segment_features.reshape(num_frames * num_visual_tokens, feat_dim)
-        flat_indices = segment_global_indices.reshape(num_frames * num_visual_tokens)
-        return flat_features[top], flat_indices[top]
+        chosen = torch.empty((0,), dtype=torch.long, device=combined_scores.device)
+    if chosen.numel() > 0:
+        selected_mask[chosen] = True
+
+    target_global = max(0, int(round(total_budget * global_ratio)))
+    current_global = int(chosen.numel())
+    if target_global > current_global:
+        scores = combined_scores.masked_fill(selected_mask, -1e9)
+        fill_k = min(target_global - current_global, int((scores > -1e8).sum().item()))
+        if fill_k > 0:
+            fill = torch.topk(scores, k=fill_k, dim=0).indices
+            chosen = torch.cat([chosen, fill], dim=0).unique()
+            selected_mask[fill] = True
+
+    if int(chosen.numel()) < total_budget:
+        scores = combined_scores.masked_fill(selected_mask, -1e9)
+        fill_k = min(total_budget - int(chosen.numel()), int((scores > -1e8).sum().item()))
+        if fill_k > 0:
+            chosen = torch.cat([chosen, torch.topk(scores, k=fill_k, dim=0).indices], dim=0).unique()
+
+    if int(chosen.numel()) > total_budget:
+        chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
+    chosen = torch.sort(chosen.to(dtype=torch.long)).values
+    return chosen, budgets, anchor_mask, event_mask
 
 
 def talon_compression(
@@ -1846,8 +384,96 @@ def talon_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    return TalonCompressor(flashvid_config).compress(
-        video_features=video_features,
-        cls_attention=cls_attention,
-        question_features=question_features,
+    """Clean TALON: transport-aligned low-rank background + sparse raw-token innovation.
+
+    This implementation intentionally emits only original visual tokens. Low-rank
+    background is used to score innovation, not to create synthetic coefficient or
+    memory tokens, which avoids distribution shift in frozen VLMs.
+    """
+    num_frames, num_visual_tokens, feat_dim = video_features.shape
+    num_tokens = num_frames * num_visual_tokens
+    device = video_features.device
+    flat_features = video_features.reshape(num_tokens, feat_dim)
+    flat_indices = torch.arange(num_tokens, dtype=torch.long, device=device)
+    flat_attention = cls_attention.reshape(num_tokens).float()
+
+    target_per_frame = _resolve_target_per_frame(video_features, question_features, flashvid_config)
+    total_budget = _resolve_total_budget(num_frames, num_visual_tokens, flashvid_config, target_per_frame)
+
+    fused_scores, question_scores = _question_aware_scores(flat_features, flat_attention, question_features, flashvid_config)
+    aligned, source_to_slot = _transport_align(video_features, flashvid_config)
+
+    max_rank = min(
+        max(0, int(getattr(flashvid_config, "talon_rank_max", 32))),
+        num_visual_tokens,
+        max(0, int(round((total_budget / max(1, num_frames)) * float(getattr(flashvid_config, "talon_background_max_ratio", 0.45))))),
     )
+    min_rank = max(0, int(getattr(flashvid_config, "talon_rank_min", 2)))
+    if max_rank > 0 and max_rank < min_rank:
+        max_rank = min(max_rank, num_visual_tokens)
+    rank = max_rank
+    basis, eigvals = _lowrank_basis(aligned, rank=rank, config=flashvid_config)
+    reconstruction = _reconstruct_source(aligned, source_to_slot, basis)
+    residual_scores = torch.mean((video_features.float() - reconstruction.float()) ** 2, dim=-1).reshape(num_tokens)
+    residual_norm = _normalize_scores(residual_scores)
+
+    innovation_attention_weight = min(max(float(getattr(flashvid_config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)
+    innovation_scores = _normalize_scores((1.0 - innovation_attention_weight) * residual_norm + innovation_attention_weight * fused_scores)
+    if question_scores is not None and _safe_bool(getattr(flashvid_config, "talon_use_question_innovation", True)):
+        q_weight = min(max(float(getattr(flashvid_config, "talon_innovation_qweight", 0.25)), 0.0), 1.0)
+        innovation_scores = _normalize_scores((1.0 - q_weight) * innovation_scores + q_weight * question_scores)
+
+    final_fused_weight = min(max(float(getattr(flashvid_config, "talon_final_fused_weight", 0.70)), 0.0), 1.0)
+    final_residual_weight = min(max(float(getattr(flashvid_config, "talon_final_residual_weight", 0.20)), 0.0), 1.0)
+    final_frame_weight = min(max(float(getattr(flashvid_config, "talon_final_frame_weight", 0.10)), 0.0), 1.0)
+    frame_importance = _frame_importance(cls_attention, residual_scores, fused_scores, flashvid_config)
+    frame_scores = frame_importance.repeat_interleave(num_visual_tokens)
+    denom = max(1e-6, final_fused_weight + final_residual_weight + final_frame_weight)
+    combined_scores = _normalize_scores(
+        (final_fused_weight / denom) * fused_scores
+        + (final_residual_weight / denom) * innovation_scores
+        + (final_frame_weight / denom) * frame_scores
+    )
+
+    chosen, budgets, anchor_mask, event_mask = _select_tokens(
+        fused_scores=fused_scores,
+        residual_scores=innovation_scores,
+        combined_scores=combined_scores,
+        total_budget=total_budget,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        frame_importance=frame_importance,
+        config=flashvid_config,
+    )
+    if chosen.numel() == 0:
+        chosen = torch.topk(combined_scores, k=1, dim=0).indices.sort().values
+
+    chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+    chosen_mask[chosen] = True
+    anchor_tokens = int((chosen_mask & anchor_mask).sum().item())
+    event_tokens = int((chosen_mask & event_mask).sum().item())
+    # Residual top-k that entered via the final combined/global fill is still an event.
+    if event_tokens < int(chosen.numel()) - anchor_tokens:
+        event_threshold_k = max(0, int(chosen.numel()) - anchor_tokens)
+        residual_pick = chosen[torch.topk(innovation_scores[chosen], k=event_threshold_k, dim=0).indices]
+        event_tokens = int(residual_pick.numel())
+
+    flashvid_config.num_attn_div_tokens = None
+    flashvid_config.num_sttm_tokens = None
+    flashvid_config.vision_token_length = int(chosen.numel())
+    flashvid_config.llm_token_length = None
+    flashvid_config.visual_token_length = int(chosen.numel())
+    flashvid_config.last_talon_target_tokens_per_frame = target_per_frame if target_per_frame > 0 else None
+    flashvid_config.last_talon_target_budget = int(total_budget)
+    flashvid_config.last_talon_anchor_tokens = int(anchor_tokens)
+    flashvid_config.last_talon_rank_tokens = 0
+    flashvid_config.last_talon_event_tokens = int(max(0, min(int(chosen.numel()) - anchor_tokens, event_tokens)))
+    flashvid_config.last_talon_recall_tokens = 0
+    flashvid_config.last_talon_memory_tokens = 0
+    flashvid_config.last_talon_segment_count = 1
+    flashvid_config.last_talon_rank_cap = int(max_rank)
+    flashvid_config.last_talon_chosen_rank = int(rank)
+    flashvid_config.last_talon_duplicate_index_count = int(chosen.numel()) - int(chosen.unique().numel())
+    flashvid_config.last_talon_question_aware_active = question_scores is not None
+
+    return flat_features[chosen], flat_indices[chosen]
