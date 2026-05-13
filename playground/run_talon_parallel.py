@@ -334,7 +334,7 @@ def main() -> None:
     parser.add_argument("--talon_question_pooling", default="mean")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     parser.add_argument("--talon_frame_local_budget_ratio", type=float, default=1.0)
-    parser.add_argument("--talon_echo_residual_weight", type=float, default=0.35)
+    parser.add_argument("--talon_echo_residual_weight", type=float, default=0.0)
     parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
     parser.add_argument("--talon_echo_temperature", type=float, default=0.07)
     args = parser.parse_args()

@@ -529,7 +529,7 @@ def talon_compression(
     reconstruction = _reconstruct_source(aligned, source_to_slot, basis)
     lowrank_residual = torch.mean((video_features.float() - reconstruction.float()) ** 2, dim=-1)
     echo_residual = _echo_residual(video_features, flashvid_config)
-    echo_weight = min(max(float(getattr(flashvid_config, "talon_echo_residual_weight", 0.35)), 0.0), 1.0)
+    echo_weight = min(max(float(getattr(flashvid_config, "talon_echo_residual_weight", 0.0)), 0.0), 1.0)
     residual_scores = _normalize_scores(
         (1.0 - echo_weight) * _normalize_scores(lowrank_residual.reshape(num_tokens))
         + echo_weight * _normalize_scores(echo_residual.reshape(num_tokens))

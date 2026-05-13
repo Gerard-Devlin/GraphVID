@@ -126,7 +126,7 @@ def flashvid(
     talon_transport_temperature: float = 0.07,
     talon_echo_temperature: float = 0.07,
     talon_echo_topk_neighbors: int = 4,
-    talon_echo_residual_weight: float = 0.35,
+    talon_echo_residual_weight: float = 0.0,
     talon_rd_spectral_weight: float = 1.0,
     talon_rd_innovation_weight: float = 1.0,
     talon_use_question_innovation: bool = True,

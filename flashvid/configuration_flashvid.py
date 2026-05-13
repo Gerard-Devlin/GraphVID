@@ -86,7 +86,7 @@ class FlashVidConfig:
     talon_transport_temperature: float = field(default=0.07)
     talon_echo_temperature: float = field(default=0.07)
     talon_echo_topk_neighbors: int = field(default=4)
-    talon_echo_residual_weight: float = field(default=0.35)
+    talon_echo_residual_weight: float = field(default=0.0)
     talon_rd_spectral_weight: float = field(default=1.0)
     talon_rd_innovation_weight: float = field(default=1.0)
     talon_use_question_innovation: bool = field(default=True)
