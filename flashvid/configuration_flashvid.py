@@ -109,6 +109,8 @@ class FlashVidConfig:
     echoprune_relevance_weight: float = field(default=0.45)
     echoprune_echo_weight: float = field(default=0.45)
     echoprune_continuation_weight: float = field(default=0.10)
+    echoprune_echo_suppression_weight: float = field(default=0.35)
+    echoprune_min_anchor_per_frame: int = field(default=6)
     talon_core_rank: int = field(default=4)
     talon_core_anchor_ratio: float = field(default=0.35)
     talon_core_relevance_weight: float = field(default=0.40)

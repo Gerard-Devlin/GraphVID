@@ -85,6 +85,8 @@ class BenchmarkArgs:
     echoprune_relevance_weight: float = field(default=0.45)
     echoprune_echo_weight: float = field(default=0.45)
     echoprune_continuation_weight: float = field(default=0.10)
+    echoprune_echo_suppression_weight: float = field(default=0.35)
+    echoprune_min_anchor_per_frame: int = field(default=6)
     talon_core_rank: int = field(default=4)
     talon_core_anchor_ratio: float = field(default=0.35)
     talon_core_relevance_weight: float = field(default=0.40)
@@ -1295,6 +1297,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         echoprune_relevance_weight=args.echoprune_relevance_weight,
         echoprune_echo_weight=args.echoprune_echo_weight,
         echoprune_continuation_weight=args.echoprune_continuation_weight,
+        echoprune_echo_suppression_weight=args.echoprune_echo_suppression_weight,
+        echoprune_min_anchor_per_frame=args.echoprune_min_anchor_per_frame,
         talon_core_rank=args.talon_core_rank,
         talon_core_anchor_ratio=args.talon_core_anchor_ratio,
         talon_core_relevance_weight=args.talon_core_relevance_weight,
@@ -1441,6 +1445,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         echoprune_relevance_weight=args.echoprune_relevance_weight,
         echoprune_echo_weight=args.echoprune_echo_weight,
         echoprune_continuation_weight=args.echoprune_continuation_weight,
+        echoprune_echo_suppression_weight=args.echoprune_echo_suppression_weight,
+        echoprune_min_anchor_per_frame=args.echoprune_min_anchor_per_frame,
         talon_core_rank=args.talon_core_rank,
         talon_core_anchor_ratio=args.talon_core_anchor_ratio,
         talon_core_relevance_weight=args.talon_core_relevance_weight,
