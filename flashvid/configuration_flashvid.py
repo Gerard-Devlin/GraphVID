@@ -117,6 +117,7 @@ class FlashVidConfig:
     talon_low_budget_mode_threshold: int = field(default=20)
     talon_low_budget_rank_cap: int = field(default=1)
     talon_background_global_ratio: float = field(default=0.60)
+    talon_event_budget_ratio: float = field(default=0.45)
     talon_memory_fused_weight: float = field(default=0.50)
     talon_memory_residual_weight: float = field(default=0.35)
     talon_memory_frame_weight: float = field(default=0.15)

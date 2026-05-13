@@ -81,6 +81,7 @@ class BenchmarkArgs:
     talon_low_budget_mode_threshold: int = field(default=20)
     talon_low_budget_rank_cap: int = field(default=1)
     talon_background_global_ratio: float = field(default=0.60)
+    talon_event_budget_ratio: float = field(default=0.45)
     talon_memory_fused_weight: float = field(default=0.50)
     talon_memory_residual_weight: float = field(default=0.35)
     talon_memory_frame_weight: float = field(default=0.15)
@@ -1066,6 +1067,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
         talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
         talon_background_global_ratio=args.talon_background_global_ratio,
+        talon_event_budget_ratio=args.talon_event_budget_ratio,
         talon_memory_fused_weight=args.talon_memory_fused_weight,
         talon_memory_residual_weight=args.talon_memory_residual_weight,
         talon_memory_frame_weight=args.talon_memory_frame_weight,
@@ -1173,6 +1175,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
         talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
         talon_background_global_ratio=args.talon_background_global_ratio,
+        talon_event_budget_ratio=args.talon_event_budget_ratio,
         talon_memory_fused_weight=args.talon_memory_fused_weight,
         talon_memory_residual_weight=args.talon_memory_residual_weight,
         talon_memory_frame_weight=args.talon_memory_frame_weight,
@@ -1227,7 +1230,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
             "Ours config   : "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
-            f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}"
+            f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
+            f"event_cap={args.talon_event_budget_ratio:.2f}"
         )
     print(SEPARATOR)
 

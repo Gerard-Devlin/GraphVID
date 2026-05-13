@@ -903,6 +903,9 @@ class TalonCompressor:
 
         # Channel-B: event innovations.
         remaining_event = max(0, core_budget - int(selected.sum().item()))
+        event_budget_ratio = min(max(float(getattr(self.config, "talon_event_budget_ratio", 0.45)), 0.0), 1.0)
+        event_budget_cap = int(round(core_budget * event_budget_ratio))
+        remaining_event = min(remaining_event, max(0, event_budget_cap))
         if remaining_event > 0:
             residual_core = _normalize_scores(residual_scores)
             attention_weight = min(max(float(getattr(self.config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)
@@ -940,8 +943,8 @@ class TalonCompressor:
         dropped = torch.where(~selected)[0]
         if memory_budget > 0 and dropped.numel() > 0:
             frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-            recall_fused = max(0.0, float(getattr(self.config, "talon_memory_fused_weight", 0.50)))
-            recall_residual = max(0.0, float(getattr(self.config, "talon_memory_residual_weight", 0.35)))
+            recall_fused = max(0.0, float(getattr(self.config, "talon_memory_fused_weight", 0.60)))
+            recall_residual = max(0.0, float(getattr(self.config, "talon_memory_residual_weight", 0.25)))
             recall_frame = max(0.0, float(getattr(self.config, "talon_memory_frame_weight", 0.15)))
             recall_denom = max(1e-6, recall_fused + recall_residual + recall_frame)
             recall_fused /= recall_denom
@@ -985,9 +988,9 @@ class TalonCompressor:
             return flat_features[fallback_idx], flat_indices[fallback_idx], debug_stats
 
         frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-        final_fused = max(0.0, float(getattr(self.config, "talon_final_fused_weight", 0.55)))
-        final_residual = max(0.0, float(getattr(self.config, "talon_final_residual_weight", 0.30)))
-        final_frame = max(0.0, float(getattr(self.config, "talon_final_frame_weight", 0.15)))
+        final_fused = max(0.0, float(getattr(self.config, "talon_final_fused_weight", 0.70)))
+        final_residual = max(0.0, float(getattr(self.config, "talon_final_residual_weight", 0.20)))
+        final_frame = max(0.0, float(getattr(self.config, "talon_final_frame_weight", 0.10)))
         final_denom = max(1e-6, final_fused + final_residual + final_frame)
         final_fused /= final_denom
         final_residual /= final_denom
