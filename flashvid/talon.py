@@ -548,6 +548,65 @@ def _build_memory_tokens(
     return torch.stack(tokens, dim=0), torch.stack(indices, dim=0)
 
 
+def _emit_rescue_tokens(
+    flat_features: torch.Tensor,
+    flat_indices: torch.Tensor,
+    fused_scores: torch.Tensor,
+    residual_scores: torch.Tensor,
+    frame_importance: torch.Tensor,
+    selected_mask: torch.Tensor,
+    budget: int,
+    num_frames: int,
+    num_visual_tokens: int,
+    budget_mode: str,
+    config: FlashVidConfig,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    budget = min(max(0, int(budget)), int((~selected_mask).sum().item()))
+    if budget <= 0:
+        feat_dim = flat_features.shape[-1]
+        return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
+
+    fused_w = float(getattr(config, "talon_rescue_fused_weight", 0.55))
+    residual_w = float(getattr(config, "talon_rescue_residual_weight", 0.35))
+    frame_w = float(getattr(config, "talon_rescue_frame_weight", 0.10))
+    fused_w = max(0.0, fused_w)
+    residual_w = max(0.0, residual_w)
+    frame_w = max(0.0, frame_w)
+    denom = max(1e-6, fused_w + residual_w + frame_w)
+    fused_w, residual_w, frame_w = fused_w / denom, residual_w / denom, frame_w / denom
+
+    frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
+    scores = (
+        fused_w * _normalize_scores(fused_scores.float())
+        + residual_w * _normalize_scores(residual_scores.float())
+        + frame_w * _normalize_scores(frame_prior)
+    )
+    scores = scores.masked_fill(selected_mask, -1e9)
+    if _safe_bool(getattr(config, "talon_frame_balanced_selection", True)):
+        top = _hybrid_global_frame_select(
+            scores=scores,
+            selected_mask=selected_mask,
+            budget=budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            frame_importance=frame_importance,
+            budget_mode=budget_mode,
+            global_ratio=float(getattr(config, "talon_rescue_global_ratio", 0.85)),
+            min_per_frame=0,
+        )
+    else:
+        valid = int((scores > -1e8).sum().item())
+        if valid <= 0:
+            feat_dim = flat_features.shape[-1]
+            return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
+        top = torch.topk(scores, k=min(budget, valid), dim=0).indices
+    if top.numel() == 0:
+        feat_dim = flat_features.shape[-1]
+        return flat_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=flat_features.device)
+    selected_mask[top] = True
+    return flat_features[top], flat_indices[top]
+
+
 class TalonCompressor:
     def __init__(self, config: FlashVidConfig):
         self.config = config
@@ -727,6 +786,37 @@ class TalonCompressor:
             selected[top1] = True
             core_token_tensor = flat_features[top1]
             core_index_tensor = flat_indices[top1]
+
+        # Semantic rescue: reclaim a small set of dropped raw tokens with
+        # high question/reconstruction significance. The budget is borrowed
+        # from memory tokens to keep total output size stable.
+        rescue_enabled = _safe_bool(getattr(self.config, "talon_rescue_enabled", True))
+        if rescue_enabled and memory_budget > 0:
+            rescue_ratio = max(0.0, float(getattr(self.config, "talon_rescue_ratio", 0.08)))
+            proposed_rescue = int(round(target_budget * rescue_ratio))
+            proposed_rescue = max(0, proposed_rescue)
+            if _safe_bool(getattr(self.config, "talon_rescue_from_memory_only", True)):
+                rescue_budget = min(memory_budget, proposed_rescue)
+            else:
+                rescue_budget = min(proposed_rescue, int((~selected).sum().item()))
+            if rescue_budget > 0:
+                rescue_tokens, rescue_indices = _emit_rescue_tokens(
+                    flat_features=flat_features,
+                    flat_indices=flat_indices,
+                    fused_scores=fused_scores,
+                    residual_scores=residual_scores,
+                    frame_importance=frame_importance,
+                    selected_mask=selected,
+                    budget=rescue_budget,
+                    num_frames=num_frames,
+                    num_visual_tokens=num_visual_tokens,
+                    budget_mode=budget_mode,
+                    config=self.config,
+                )
+                if rescue_tokens.numel() > 0:
+                    core_token_tensor = torch.cat([core_token_tensor, rescue_tokens], dim=0)
+                    core_index_tensor = torch.cat([core_index_tensor, rescue_indices], dim=0)
+                    memory_budget = max(0, memory_budget - int(rescue_tokens.shape[0]))
 
         dropped = torch.where(~selected)[0]
         mem_tokens, mem_local_idx = _build_memory_tokens(
