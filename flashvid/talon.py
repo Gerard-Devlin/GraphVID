@@ -390,9 +390,13 @@ def _select_tokens(
             anchor_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0 and question_grid is not None:
-            recall_ratio = min(max(float(getattr(config, "talon_question_recall_ratio", 0.18)), 0.0), 0.60)
+            recall_ratio = min(max(float(getattr(config, "talon_question_recall_ratio", 0.06)), 0.0), 0.60)
             recall_k = min(remain, max(0, int(round(budget_t * recall_ratio))))
-            qscore = question_grid[t].masked_fill(local_selected, -1e9)
+            recall_q_weight = min(max(float(getattr(config, "talon_question_recall_qweight", 0.65)), 0.0), 1.0)
+            recall_score = _normalize_scores(
+                recall_q_weight * question_grid[t] + (1.0 - recall_q_weight) * fused_grid[t]
+            )
+            qscore = recall_score.masked_fill(local_selected, -1e9)
             valid = int((qscore > -1e8).sum().item())
             if recall_k > 0 and valid > 0:
                 idx = torch.topk(qscore, k=min(recall_k, valid), dim=0).indices
