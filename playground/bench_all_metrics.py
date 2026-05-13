@@ -163,8 +163,32 @@ class BenchmarkArgs:
 
 
 def _extract_choice_letter(text: str) -> str:
-    match = re.search(r"[ABCD]", (text or "").upper())
-    return match.group(0) if match else ""
+    if not text:
+        return ""
+    t = (text or "").strip().upper()
+    if not t:
+        return ""
+
+    # 1) Strict single-token answer forms: "A", "(B)", "C.", "[D]".
+    m = re.match(r"^\s*[\(\[]?\s*([ABCD])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?[\s]*$", t)
+    if m:
+        return m.group(1)
+
+    # 2) Common prefixed forms: "Answer: B", "Option C", "Choice is D".
+    prefixed_patterns = [
+        r"\b(?:ANSWER|OPTION|CHOICE)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
+        r"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
+    ]
+    for pat in prefixed_patterns:
+        m = re.search(pat, t)
+        if m:
+            return m.group(1)
+
+    # 3) Fallback: first standalone option token (avoid letters inside words).
+    m = re.search(r"\b([ABCD])\b", t)
+    if m:
+        return m.group(1)
+    return ""
 
 
 def _stats(values: list[float]) -> dict[str, float | int | None]:
