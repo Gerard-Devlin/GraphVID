@@ -115,7 +115,7 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--talon_anchor_safety_ratio",
             "0.72",
             "--talon_budget_mode",
-            "attention",
+            args.talon_budget_mode,
             "--talon_global_topk_ratio",
             "0.70",
             "--talon_event_budget_ratio",
@@ -371,6 +371,7 @@ def main() -> None:
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     parser.add_argument("--talon_monotonic_base_tokens_per_frame", type=int, default=20)
     parser.add_argument("--talon_frame_local_budget_ratio", type=float, default=1.0)
+    parser.add_argument("--talon_budget_mode", default="attention", choices=["attention", "uniform"])
     parser.add_argument("--talon_echo_residual_weight", type=float, default=0.0)
     parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
     parser.add_argument("--talon_echo_temperature", type=float, default=0.07)
