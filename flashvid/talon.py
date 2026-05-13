@@ -347,6 +347,7 @@ def _diverse_topk(
 def _select_tokens(
     frame_features: torch.Tensor,
     fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
     residual_scores: torch.Tensor,
     combined_scores: torch.Tensor,
     total_budget: int,
@@ -361,11 +362,13 @@ def _select_tokens(
     global_ratio = min(max(float(getattr(config, "talon_global_topk_ratio", 0.70)), 0.0), 1.0)
 
     fused_grid = fused_scores.view(num_frames, num_visual_tokens)
+    question_grid = question_scores.view(num_frames, num_visual_tokens) if question_scores is not None else None
     residual_grid = residual_scores.view(num_frames, num_visual_tokens)
     combined_grid = combined_scores.view(num_frames, num_visual_tokens)
     selected_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
     anchor_mask = torch.zeros_like(selected_mask)
     event_mask = torch.zeros_like(selected_mask)
+    recall_mask = torch.zeros_like(selected_mask)
     chosen_parts: List[torch.Tensor] = []
 
     for t in range(num_frames):
@@ -385,6 +388,16 @@ def _select_tokens(
             idx = _diverse_topk(frame_features[t], fused_grid[t], anchor_k, config)
             local_selected[idx] = True
             anchor_mask[t * num_visual_tokens + idx] = True
+        remain = budget_t - int(local_selected.sum().item())
+        if remain > 0 and question_grid is not None:
+            recall_ratio = min(max(float(getattr(config, "talon_question_recall_ratio", 0.18)), 0.0), 0.60)
+            recall_k = min(remain, max(0, int(round(budget_t * recall_ratio))))
+            qscore = question_grid[t].masked_fill(local_selected, -1e9)
+            valid = int((qscore > -1e8).sum().item())
+            if recall_k > 0 and valid > 0:
+                idx = torch.topk(qscore, k=min(recall_k, valid), dim=0).indices
+                local_selected[idx] = True
+                recall_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0:
             event_ratio = min(max(float(getattr(config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
@@ -431,7 +444,7 @@ def _select_tokens(
     if int(chosen.numel()) > total_budget:
         chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
     chosen = torch.sort(chosen.to(dtype=torch.long)).values
-    return chosen, budgets, anchor_mask, event_mask
+    return chosen, budgets, anchor_mask, event_mask, recall_mask
 
 
 def talon_compression(
@@ -491,9 +504,10 @@ def talon_compression(
         + (final_frame_weight / denom) * frame_scores
     )
 
-    chosen, budgets, anchor_mask, event_mask = _select_tokens(
+    chosen, budgets, anchor_mask, event_mask, recall_mask = _select_tokens(
         frame_features=video_features,
         fused_scores=fused_scores,
+        question_scores=question_scores,
         residual_scores=innovation_scores,
         combined_scores=combined_scores,
         total_budget=total_budget,
@@ -508,10 +522,11 @@ def talon_compression(
     chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
     chosen_mask[chosen] = True
     anchor_tokens = int((chosen_mask & anchor_mask).sum().item())
+    recall_tokens = int((chosen_mask & recall_mask).sum().item())
     event_tokens = int((chosen_mask & event_mask).sum().item())
     # Residual top-k that entered via the final combined/global fill is still an event.
-    if event_tokens < int(chosen.numel()) - anchor_tokens:
-        event_threshold_k = max(0, int(chosen.numel()) - anchor_tokens)
+    if event_tokens < int(chosen.numel()) - anchor_tokens - recall_tokens:
+        event_threshold_k = max(0, int(chosen.numel()) - anchor_tokens - recall_tokens)
         residual_pick = chosen[torch.topk(innovation_scores[chosen], k=event_threshold_k, dim=0).indices]
         event_tokens = int(residual_pick.numel())
 
@@ -525,7 +540,7 @@ def talon_compression(
     flashvid_config.last_talon_anchor_tokens = int(anchor_tokens)
     flashvid_config.last_talon_rank_tokens = 0
     flashvid_config.last_talon_event_tokens = int(max(0, min(int(chosen.numel()) - anchor_tokens, event_tokens)))
-    flashvid_config.last_talon_recall_tokens = 0
+    flashvid_config.last_talon_recall_tokens = int(recall_tokens)
     flashvid_config.last_talon_memory_tokens = 0
     flashvid_config.last_talon_segment_count = 1
     flashvid_config.last_talon_rank_cap = int(max_rank)
