@@ -16,6 +16,17 @@ def _str_bool(value: bool) -> str:
     return "True" if value else "False"
 
 
+def _parse_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "y", "on"):
+        return True
+    if text in ("0", "false", "no", "n", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"invalid boolean value: {value!r}")
+
+
 def _query_free_gpus(free_ratio: float, min_free_mb: int) -> list[int]:
     cmd = [
         "nvidia-smi",
