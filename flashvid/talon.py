@@ -580,13 +580,18 @@ def talon_compression(
         if int(chosen.numel()) < total_budget:
             selected_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
             selected_mask[chosen] = True
-            extra_scores = combined_scores.masked_fill(selected_mask, -1e9)
+            # Extra budget should be conservative: the stable t=20 path already
+            # captures innovation/recall. Additional tokens are safer as semantic
+            # anchors than as residual-heavy event picks, which can distract a
+            # frozen VLM even when the token count increases.
+            extra_scores = fused_scores.masked_fill(selected_mask, -1e9)
             fill_k = min(total_budget - int(chosen.numel()), int((extra_scores > -1e8).sum().item()))
             if fill_k > 0:
                 extra = torch.topk(extra_scores, k=fill_k, dim=0).indices
                 chosen = torch.cat([chosen, extra], dim=0).unique()
+                anchor_mask[extra] = True
         if int(chosen.numel()) > total_budget:
-            chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
+            chosen = chosen[torch.topk(fused_scores[chosen], k=total_budget, dim=0).indices]
         chosen = torch.sort(chosen.to(dtype=torch.long)).values
         budgets = _allocate_frame_budget(total_budget, frame_importance, flashvid_config)
     else:
