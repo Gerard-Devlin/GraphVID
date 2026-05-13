@@ -1761,12 +1761,10 @@ def run(args: BenchmarkArgs):
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
         print(
             "[talon-active][ours] "
-            f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
-            f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
-            f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}, "
+            f"path=clean, qaware={args.question_aware_reweighting}, "
             f"target/frame={args.talon_target_tokens_per_frame}, "
             f"talon_core_target={args.talon_core_target_tokens_per_frame}, "
-            f"core_rank={args.talon_core_rank}"
+            f"rank_max={args.talon_rank_max}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]

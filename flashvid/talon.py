@@ -267,7 +267,13 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, co
     if num_frames <= 0:
         return []
     min_anchor = max(0, int(getattr(config, "talon_min_anchor_per_frame", 2)))
-    min_each = min(min_anchor, max(0, total_budget // max(1, num_frames)))
+    avg_budget = float(total_budget) / float(max(1, num_frames))
+    # Video QA is very sensitive to temporal coverage. In the low-budget regime,
+    # do not let attention-weighted allocation starve "boring" frames that may
+    # contain the evidence for a later question.
+    coverage_floor_ratio = min(max(float(getattr(config, "talon_frame_coverage_floor_ratio", 0.65)), 0.0), 1.0)
+    coverage_floor = int(math.floor(avg_budget * coverage_floor_ratio))
+    min_each = min(max(min_anchor, coverage_floor), max(0, total_budget // max(1, num_frames)))
     budgets = [min_each for _ in range(num_frames)]
     remaining = int(total_budget - min_each * num_frames)
     if remaining <= 0:
@@ -326,17 +332,26 @@ def _select_tokens(
         if budget_t <= 0:
             continue
         local_selected = torch.zeros((num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
-        anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio)))) if budget_t > 1 else budget_t
+        # TALON's residual branch is useful for innovation recall, but it should
+        # not dominate raw-token selection in frozen VLMs. Keep semantic anchors
+        # as the backbone, especially when target/frame is only ~18-22.
+        if budget_t <= 24:
+            anchor_ratio_eff = max(anchor_ratio, 0.70)
+        else:
+            anchor_ratio_eff = anchor_ratio
+        anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio_eff)))) if budget_t > 1 else budget_t
         if anchor_k > 0:
             idx = torch.topk(fused_grid[t], k=anchor_k, dim=0).indices
             local_selected[idx] = True
             anchor_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0:
+            event_ratio = min(max(float(getattr(config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
+            event_k = min(remain, max(0, int(round(budget_t * event_ratio))))
             resid = residual_grid[t].masked_fill(local_selected, -1e9)
             valid = int((resid > -1e8).sum().item())
-            if valid > 0:
-                idx = torch.topk(resid, k=min(remain, valid), dim=0).indices
+            if event_k > 0 and valid > 0:
+                idx = torch.topk(resid, k=min(event_k, valid), dim=0).indices
                 local_selected[idx] = True
                 event_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
