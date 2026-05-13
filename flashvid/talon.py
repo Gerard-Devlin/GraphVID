@@ -109,7 +109,7 @@ def _resolve_target_per_frame(
     target = max(1, min(target, num_visual_tokens))
 
     if _safe_bool(getattr(config, "talon_force_fixed_target", False)) or not _safe_bool(
-        getattr(config, "talon_adaptive_target_enabled", True)
+        getattr(config, "talon_adaptive_target_enabled", False)
     ):
         config.last_talon_target_tokens_per_frame = target
         config.last_talon_complexity_score = None
@@ -315,7 +315,7 @@ def _diverse_topk(
     if k <= 0:
         return torch.empty((0,), dtype=torch.long, device=scores.device)
 
-    diversity_weight = min(max(float(getattr(config, "talon_anchor_diversity_weight", 0.16)), 0.0), 0.80)
+    diversity_weight = min(max(float(getattr(config, "talon_anchor_diversity_weight", 0.0)), 0.0), 0.80)
     candidate_multiplier = max(1.0, float(getattr(config, "talon_anchor_candidate_multiplier", 4.0)))
     candidate_count = min(int(scores.numel()), max(k, int(math.ceil(k * candidate_multiplier))))
     candidates = torch.topk(scores.float(), k=candidate_count, dim=0).indices
