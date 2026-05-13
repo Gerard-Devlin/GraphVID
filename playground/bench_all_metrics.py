@@ -79,18 +79,21 @@ class BenchmarkArgs:
     talon_target_mean_cap: float = field(default=18.75)
     talon_unified_selection: bool = field(default=True)
     talon_low_budget_mode_threshold: int = field(default=20)
-    talon_low_budget_rank_cap: int = field(default=1)
+    talon_low_budget_rank_cap: int = field(default=0)
     talon_background_global_ratio: float = field(default=0.60)
-    talon_event_budget_ratio: float = field(default=0.45)
+    talon_event_budget_ratio: float = field(default=0.30)
     talon_memory_fused_weight: float = field(default=0.50)
     talon_memory_residual_weight: float = field(default=0.35)
     talon_memory_frame_weight: float = field(default=0.15)
     talon_recall_memory_mode: str = field(default="raw")
-    talon_final_fused_weight: float = field(default=0.55)
-    talon_final_residual_weight: float = field(default=0.30)
-    talon_final_frame_weight: float = field(default=0.15)
-    talon_anchor_keep_bonus: float = field(default=0.08)
-    talon_recall_keep_bonus: float = field(default=0.05)
+    talon_final_fused_weight: float = field(default=0.70)
+    talon_final_residual_weight: float = field(default=0.20)
+    talon_final_frame_weight: float = field(default=0.10)
+    talon_anchor_keep_bonus: float = field(default=0.10)
+    talon_recall_keep_bonus: float = field(default=0.08)
+    talon_final_anchor_min_ratio: float = field(default=0.24)
+    talon_final_recall_min_ratio: float = field(default=0.10)
+    talon_force_anchor_recall_quota: bool = field(default=True)
     talon_global_topk_ratio: float = field(default=0.70)
     talon_rescue_enabled: bool = field(default=True)
     talon_rescue_ratio: float = field(default=0.08)
@@ -123,7 +126,7 @@ class BenchmarkArgs:
     talon_question_frame_weight: float = field(default=0.20)
     talon_frame_balanced_memory: bool = field(default=True)
     talon_memory_mode: str = field(default="raw")
-    talon_anchor_safety_ratio: float = field(default=0.20)
+    talon_anchor_safety_ratio: float = field(default=0.28)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -1077,6 +1080,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_final_frame_weight=args.talon_final_frame_weight,
         talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
+        talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
+        talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
         talon_global_topk_ratio=args.talon_global_topk_ratio,
         talon_rescue_enabled=args.talon_rescue_enabled,
         talon_rescue_ratio=args.talon_rescue_ratio,
@@ -1185,6 +1191,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_final_frame_weight=args.talon_final_frame_weight,
         talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
+        talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
+        talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
         talon_global_topk_ratio=args.talon_global_topk_ratio,
         talon_rescue_enabled=args.talon_rescue_enabled,
         talon_rescue_ratio=args.talon_rescue_ratio,

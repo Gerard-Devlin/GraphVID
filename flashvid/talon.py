@@ -826,7 +826,7 @@ class TalonCompressor:
         # Channel-A: semantic safety anchors.
         passthrough_budget = self._resolve_passthrough_budget(core_budget)
         min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
-        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.20)), 0.0), 0.80)
+        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.80)
         anchor_safety_budget = int(round(core_budget * anchor_safety_ratio))
         anchor_floor_budget = min(num_tokens, min_anchor_per_frame * num_frames)
         anchor_budget = min(
@@ -857,7 +857,7 @@ class TalonCompressor:
         max_rank_by_budget = max(0, min(talon_budget // max(1, num_frames), background_rank_cap))
         rank_cap = min(max_rank_by_budget, int(getattr(self.config, "talon_rank_max", 32)), num_visual_tokens)
         low_budget_threshold = int(getattr(self.config, "talon_low_budget_mode_threshold", 20) or 20)
-        low_budget_rank_cap = max(0, int(getattr(self.config, "talon_low_budget_rank_cap", 1) or 1))
+        low_budget_rank_cap = max(0, int(getattr(self.config, "talon_low_budget_rank_cap", 0) or 0))
         if resolved_per_frame_target > 0 and resolved_per_frame_target <= low_budget_threshold:
             rank_cap = min(rank_cap, low_budget_rank_cap)
 
@@ -903,7 +903,7 @@ class TalonCompressor:
 
         # Channel-B: event innovations.
         remaining_event = max(0, core_budget - int(selected.sum().item()))
-        event_budget_ratio = min(max(float(getattr(self.config, "talon_event_budget_ratio", 0.45)), 0.0), 1.0)
+        event_budget_ratio = min(max(float(getattr(self.config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
         event_budget_cap = int(round(core_budget * event_budget_ratio))
         remaining_event = min(remaining_event, max(0, event_budget_cap))
         if remaining_event > 0:
@@ -1001,15 +1001,47 @@ class TalonCompressor:
             + final_frame * _normalize_scores(frame_prior)
         )
 
-        anchor_bonus = float(getattr(self.config, "talon_anchor_keep_bonus", 0.08))
-        recall_bonus = float(getattr(self.config, "talon_recall_keep_bonus", 0.05))
+        anchor_bonus = float(getattr(self.config, "talon_anchor_keep_bonus", 0.10))
+        recall_bonus = float(getattr(self.config, "talon_recall_keep_bonus", 0.08))
         if anchor_local.numel() > 0 and abs(anchor_bonus) > 1e-8:
             score_all[anchor_local] = score_all[anchor_local] + anchor_bonus
         if recall_local.numel() > 0 and abs(recall_bonus) > 1e-8:
             score_all[recall_local] = score_all[recall_local] + recall_bonus
 
         k_final = min(target_budget, int(candidate_local.numel()))
-        chosen_local = candidate_local[torch.topk(score_all[candidate_local], k=k_final, dim=0).indices]
+        anchor_quota_ratio = min(max(float(getattr(self.config, "talon_final_anchor_min_ratio", 0.24)), 0.0), 1.0)
+        recall_quota_ratio = min(max(float(getattr(self.config, "talon_final_recall_min_ratio", 0.10)), 0.0), 1.0)
+        force_anchor = _safe_bool(getattr(self.config, "talon_force_anchor_recall_quota", True))
+
+        chosen_parts: List[torch.Tensor] = []
+        chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+        if force_anchor and anchor_local.numel() > 0:
+            k_anchor = min(int(anchor_local.numel()), max(0, int(round(target_budget * anchor_quota_ratio))))
+            if k_anchor > 0:
+                anchor_pick = anchor_local[torch.topk(score_all[anchor_local], k=k_anchor, dim=0).indices]
+                chosen_parts.append(anchor_pick)
+                chosen_mask[anchor_pick] = True
+        if force_anchor and recall_local.numel() > 0:
+            recall_pool = recall_local[~chosen_mask[recall_local]]
+            k_recall = min(int(recall_pool.numel()), max(0, int(round(target_budget * recall_quota_ratio))))
+            if k_recall > 0:
+                recall_pick = recall_pool[torch.topk(score_all[recall_pool], k=k_recall, dim=0).indices]
+                chosen_parts.append(recall_pick)
+                chosen_mask[recall_pick] = True
+
+        if chosen_parts:
+            chosen_local = torch.cat(chosen_parts, dim=0).unique()
+            chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+            chosen_mask[chosen_local] = True
+            remaining_slots = max(0, k_final - int(chosen_local.numel()))
+            if remaining_slots > 0:
+                remaining_pool = candidate_local[~chosen_mask[candidate_local]]
+                if remaining_pool.numel() > 0:
+                    fill_pick = remaining_pool[torch.topk(score_all[remaining_pool], k=min(remaining_slots, int(remaining_pool.numel())), dim=0).indices]
+                    chosen_local = torch.cat([chosen_local, fill_pick], dim=0).unique()
+        else:
+            chosen_local = candidate_local[torch.topk(score_all[candidate_local], k=k_final, dim=0).indices]
+
         if int(chosen_local.numel()) < target_budget:
             chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
             if chosen_local.numel() > 0:
@@ -1066,7 +1098,7 @@ class TalonCompressor:
 
         passthrough_budget = self._resolve_passthrough_budget(core_budget)
         min_anchor_per_frame = max(0, int(getattr(self.config, "talon_min_anchor_per_frame", 2)))
-        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.20)), 0.0), 0.80)
+        anchor_safety_ratio = min(max(float(getattr(self.config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.80)
         anchor_safety_budget = int(round(core_budget * anchor_safety_ratio))
         anchor_floor_budget = min(num_tokens, min_anchor_per_frame * num_frames)
         passthrough_budget = min(
