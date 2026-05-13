@@ -109,6 +109,20 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "0.70",
             "--talon_event_budget_ratio",
             "0.30",
+            "--talon_duration_aware",
+            _str_bool(args.talon_duration_aware),
+            "--talon_medium_anchor_safety_ratio",
+            str(args.talon_medium_anchor_safety_ratio),
+            "--talon_medium_event_budget_ratio",
+            str(args.talon_medium_event_budget_ratio),
+            "--talon_medium_global_topk_ratio",
+            str(args.talon_medium_global_topk_ratio),
+            "--talon_long_anchor_safety_ratio",
+            str(args.talon_long_anchor_safety_ratio),
+            "--talon_long_event_budget_ratio",
+            str(args.talon_long_event_budget_ratio),
+            "--talon_long_global_topk_ratio",
+            str(args.talon_long_global_topk_ratio),
             "--talon_rank_min",
             "1",
             "--talon_rank_max",
@@ -340,6 +354,13 @@ def main() -> None:
     parser.add_argument("--talon_echo_residual_weight", type=float, default=0.0)
     parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
     parser.add_argument("--talon_echo_temperature", type=float, default=0.07)
+    parser.add_argument("--talon_duration_aware", type=_parse_bool, default=False)
+    parser.add_argument("--talon_medium_anchor_safety_ratio", type=float, default=0.78)
+    parser.add_argument("--talon_medium_event_budget_ratio", type=float, default=0.18)
+    parser.add_argument("--talon_medium_global_topk_ratio", type=float, default=0.80)
+    parser.add_argument("--talon_long_anchor_safety_ratio", type=float, default=0.80)
+    parser.add_argument("--talon_long_event_budget_ratio", type=float, default=0.14)
+    parser.add_argument("--talon_long_global_topk_ratio", type=float, default=0.85)
     args = parser.parse_args()
 
     if args.gpu_ids.strip():

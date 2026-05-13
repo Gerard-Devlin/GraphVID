@@ -131,6 +131,13 @@ class BenchmarkArgs:
     talon_recall_event_ratio: float = field(default=0.25)
     talon_recall_frame_ratio: float = field(default=0.15)
     talon_recall_global_ratio: float = field(default=0.55)
+    talon_duration_aware: bool = field(default=False)
+    talon_medium_anchor_safety_ratio: float = field(default=0.78)
+    talon_medium_event_budget_ratio: float = field(default=0.18)
+    talon_medium_global_topk_ratio: float = field(default=0.80)
+    talon_long_anchor_safety_ratio: float = field(default=0.80)
+    talon_long_event_budget_ratio: float = field(default=0.14)
+    talon_long_global_topk_ratio: float = field(default=0.85)
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -921,6 +928,10 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     record = {
         "question_id": sample.get("question_id"),
         "videoID": sample.get("videoID"),
+        "duration": sample.get("duration"),
+        "category": sample.get("category"),
+        "task_category": sample.get("task_category"),
+        "sub_category": sample.get("sub_category"),
         "answer": sample.get("answer"),
         "pred_answer": "",
         "correct": None,
@@ -955,6 +966,11 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     }
 
     try:
+        if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
+            cfg = getattr(model_bundle["model"], "flashvid_config")
+            setattr(cfg, "current_video_duration", sample.get("duration"))
+            setattr(cfg, "current_task_category", sample.get("task_category"))
+            setattr(cfg, "current_category", sample.get("category"))
         prepared_inputs = _prepare_inputs(model_bundle, args, sample)
         result = _run_benchmark_once(model_bundle, args, prepared_inputs, use_acceleration=use_acceleration)
         raw_v = result["raw_visual_tokens"]
@@ -1411,6 +1427,13 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_recall_event_ratio=args.talon_recall_event_ratio,
         talon_recall_frame_ratio=args.talon_recall_frame_ratio,
         talon_recall_global_ratio=args.talon_recall_global_ratio,
+        talon_duration_aware=args.talon_duration_aware,
+        talon_medium_anchor_safety_ratio=args.talon_medium_anchor_safety_ratio,
+        talon_medium_event_budget_ratio=args.talon_medium_event_budget_ratio,
+        talon_medium_global_topk_ratio=args.talon_medium_global_topk_ratio,
+        talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
+        talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
+        talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1543,6 +1566,13 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_recall_event_ratio=args.talon_recall_event_ratio,
         talon_recall_frame_ratio=args.talon_recall_frame_ratio,
         talon_recall_global_ratio=args.talon_recall_global_ratio,
+        talon_duration_aware=args.talon_duration_aware,
+        talon_medium_anchor_safety_ratio=args.talon_medium_anchor_safety_ratio,
+        talon_medium_event_budget_ratio=args.talon_medium_event_budget_ratio,
+        talon_medium_global_topk_ratio=args.talon_medium_global_topk_ratio,
+        talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
+        talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
+        talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,

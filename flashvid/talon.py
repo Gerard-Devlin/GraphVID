@@ -400,6 +400,35 @@ def _select_tokens(
     budgets = _allocate_frame_budget(local_budget, frame_importance, config)
     anchor_ratio = min(max(float(getattr(config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.85)
     global_ratio = min(max(float(getattr(config, "talon_global_topk_ratio", 0.70)), 0.0), 1.0)
+    event_ratio_cfg = min(max(float(getattr(config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if _safe_bool(getattr(config, "talon_duration_aware", False)):
+        if duration == "medium":
+            anchor_ratio = min(
+                0.85,
+                max(anchor_ratio, float(getattr(config, "talon_medium_anchor_safety_ratio", 0.78))),
+            )
+            event_ratio_cfg = min(
+                event_ratio_cfg,
+                max(0.0, float(getattr(config, "talon_medium_event_budget_ratio", 0.18))),
+            )
+            global_ratio = max(
+                global_ratio,
+                min(1.0, max(0.0, float(getattr(config, "talon_medium_global_topk_ratio", 0.80)))),
+            )
+        elif duration == "long":
+            anchor_ratio = min(
+                0.85,
+                max(anchor_ratio, float(getattr(config, "talon_long_anchor_safety_ratio", 0.80))),
+            )
+            event_ratio_cfg = min(
+                event_ratio_cfg,
+                max(0.0, float(getattr(config, "talon_long_event_budget_ratio", 0.14))),
+            )
+            global_ratio = max(
+                global_ratio,
+                min(1.0, max(0.0, float(getattr(config, "talon_long_global_topk_ratio", 0.85)))),
+            )
 
     fused_grid = fused_scores.view(num_frames, num_visual_tokens)
     question_grid = question_scores.view(num_frames, num_visual_tokens) if question_scores is not None else None
@@ -444,8 +473,7 @@ def _select_tokens(
                 recall_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0:
-            event_ratio = min(max(float(getattr(config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
-            event_k = min(remain, max(0, int(round(budget_t * event_ratio))))
+            event_k = min(remain, max(0, int(round(budget_t * event_ratio_cfg))))
             resid = residual_grid[t].masked_fill(local_selected, -1e9)
             valid = int((resid > -1e8).sum().item())
             if event_k > 0 and valid > 0:
