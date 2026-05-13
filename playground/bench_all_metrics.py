@@ -162,6 +162,9 @@ class BenchmarkArgs:
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
     talon_transport_temperature: float = field(default=0.07)
+    talon_echo_temperature: float = field(default=0.07)
+    talon_echo_topk_neighbors: int = field(default=4)
+    talon_echo_residual_weight: float = field(default=0.35)
     talon_rd_spectral_weight: float = field(default=1.0)
     talon_rd_innovation_weight: float = field(default=1.0)
     talon_use_question_innovation: bool = field(default=True)
@@ -1337,6 +1340,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
         talon_transport_temperature=args.talon_transport_temperature,
+        talon_echo_temperature=args.talon_echo_temperature,
+        talon_echo_topk_neighbors=args.talon_echo_topk_neighbors,
+        talon_echo_residual_weight=args.talon_echo_residual_weight,
         talon_rd_spectral_weight=args.talon_rd_spectral_weight,
         talon_rd_innovation_weight=args.talon_rd_innovation_weight,
         talon_use_question_innovation=args.talon_use_question_innovation,
@@ -1471,6 +1477,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
         talon_transport_temperature=args.talon_transport_temperature,
+        talon_echo_temperature=args.talon_echo_temperature,
+        talon_echo_topk_neighbors=args.talon_echo_topk_neighbors,
+        talon_echo_residual_weight=args.talon_echo_residual_weight,
         talon_rd_spectral_weight=args.talon_rd_spectral_weight,
         talon_rd_innovation_weight=args.talon_rd_innovation_weight,
         talon_use_question_innovation=args.talon_use_question_innovation,

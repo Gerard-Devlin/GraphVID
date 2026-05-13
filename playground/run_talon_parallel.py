@@ -115,6 +115,12 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "0.35",
             "--talon_innovation_attention_weight",
             "0.65",
+            "--talon_echo_residual_weight",
+            str(args.talon_echo_residual_weight),
+            "--talon_echo_topk_neighbors",
+            str(args.talon_echo_topk_neighbors),
+            "--talon_echo_temperature",
+            str(args.talon_echo_temperature),
             "--talon_final_fused_weight",
             "0.70",
             "--talon_final_residual_weight",
@@ -328,6 +334,9 @@ def main() -> None:
     parser.add_argument("--talon_question_pooling", default="mean")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     parser.add_argument("--talon_frame_local_budget_ratio", type=float, default=1.0)
+    parser.add_argument("--talon_echo_residual_weight", type=float, default=0.35)
+    parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
+    parser.add_argument("--talon_echo_temperature", type=float, default=0.07)
     args = parser.parse_args()
 
     if args.gpu_ids.strip():
