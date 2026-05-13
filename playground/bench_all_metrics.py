@@ -32,6 +32,7 @@ class BenchmarkArgs:
     # Data
     dataset_jsonl: str = field(default="videomme.jsonl")
     hf_home: str | None = field(default=None)
+    start_index: int = field(default=0)
     limit: int | None = field(default=100)
     shuffle: bool = field(default=True)
     num_frames: int = field(default=64)
@@ -337,17 +338,20 @@ def _resolve_video_path(video_id: str, hf_home_override: str | None) -> str:
     raise FileNotFoundError(f"missing video for videoID={video_id} under {base_dir}")
 
 
-def _load_dataset(dataset_jsonl: str, limit: int | None, shuffle: bool) -> list[dict[str, Any]]:
+def _load_dataset(dataset_jsonl: str, limit: int | None, shuffle: bool, start_index: int = 0) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     with Path(dataset_jsonl).open(encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
             records.append(json.loads(line))
-            if limit is not None and len(records) >= limit:
-                break
     if shuffle:
         random.shuffle(records)
+    start_index = max(0, int(start_index or 0))
+    if start_index > 0:
+        records = records[start_index:]
+    if limit is not None:
+        records = records[: max(0, int(limit))]
     return records
 
 
@@ -1535,6 +1539,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Attention impl: {effective_attn} (requested: {args.attn_implementation})")
     print(f"Dataset       : {args.dataset_jsonl}")
     print(f"HF_HOME       : {args.hf_home or os.getenv('HF_HOME', '~/.cache/huggingface')}")
+    print(f"Start index   : {args.start_index}")
     print(f"Limit         : {args.limit}")
     print(f"Shuffle       : {args.shuffle}")
     print(f"Frames        : {args.num_frames}")
@@ -1671,7 +1676,7 @@ def _print_summary(summary: dict[str, Any]):
 
 
 def run(args: BenchmarkArgs):
-    samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle)
+    samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
     if not (args.run_baseline or args.run_flashvid or args.run_ours):
