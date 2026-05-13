@@ -668,6 +668,10 @@ def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
         "talon_core_innovation_tokens": None,
         "talon_core_duplicate_index_count": None,
         "talon_core_question_aware_active": None,
+        "talon_core_budget_min": None,
+        "talon_core_budget_max": None,
+        "talon_core_grid_h": None,
+        "talon_core_grid_w": None,
     }
     if not hasattr(model, "flashvid_config"):
         return empty
@@ -678,6 +682,10 @@ def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
     innovation_tokens = getattr(cfg, "last_talon_core_innovation_tokens", None)
     duplicate_count = getattr(cfg, "last_talon_core_duplicate_index_count", None)
     question_active = getattr(cfg, "last_talon_core_question_aware_active", None)
+    budget_min = getattr(cfg, "last_talon_core_budget_min", None)
+    budget_max = getattr(cfg, "last_talon_core_budget_max", None)
+    grid_h = getattr(cfg, "last_talon_core_grid_h", None)
+    grid_w = getattr(cfg, "last_talon_core_grid_w", None)
     return {
         "talon_core_target_budget": float(target_budget) if target_budget is not None else None,
         "talon_core_residual_mean": float(residual_mean) if residual_mean is not None else None,
@@ -685,6 +693,10 @@ def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
         "talon_core_innovation_tokens": float(innovation_tokens) if innovation_tokens is not None else None,
         "talon_core_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
         "talon_core_question_aware_active": float(bool(question_active)) if question_active is not None else None,
+        "talon_core_budget_min": float(budget_min) if budget_min is not None else None,
+        "talon_core_budget_max": float(budget_max) if budget_max is not None else None,
+        "talon_core_grid_h": float(grid_h) if grid_h is not None else None,
+        "talon_core_grid_w": float(grid_w) if grid_w is not None else None,
     }
 
 
@@ -740,6 +752,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_innovation_per_run = []
     talon_core_duplicate_per_run = []
     talon_core_question_active_per_run = []
+    talon_core_budget_min_per_run = []
+    talon_core_budget_max_per_run = []
+    talon_core_grid_h_per_run = []
+    talon_core_grid_w_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -813,6 +829,14 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             talon_core_duplicate_per_run.append(float(talon_core_metrics["talon_core_duplicate_index_count"]))
         if talon_core_metrics["talon_core_question_aware_active"] is not None:
             talon_core_question_active_per_run.append(float(talon_core_metrics["talon_core_question_aware_active"]))
+        if talon_core_metrics["talon_core_budget_min"] is not None:
+            talon_core_budget_min_per_run.append(float(talon_core_metrics["talon_core_budget_min"]))
+        if talon_core_metrics["talon_core_budget_max"] is not None:
+            talon_core_budget_max_per_run.append(float(talon_core_metrics["talon_core_budget_max"]))
+        if talon_core_metrics["talon_core_grid_h"] is not None:
+            talon_core_grid_h_per_run.append(float(talon_core_metrics["talon_core_grid_h"]))
+        if talon_core_metrics["talon_core_grid_w"] is not None:
+            talon_core_grid_w_per_run.append(float(talon_core_metrics["talon_core_grid_w"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
@@ -836,6 +860,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_innovation_tokens = float(np.mean(talon_core_innovation_per_run)) if talon_core_innovation_per_run else None
     talon_core_duplicate_index_count = float(np.mean(talon_core_duplicate_per_run)) if talon_core_duplicate_per_run else None
     talon_core_question_aware_active = float(np.mean(talon_core_question_active_per_run)) if talon_core_question_active_per_run else None
+    talon_core_budget_min = float(np.mean(talon_core_budget_min_per_run)) if talon_core_budget_min_per_run else None
+    talon_core_budget_max = float(np.mean(talon_core_budget_max_per_run)) if talon_core_budget_max_per_run else None
+    talon_core_grid_h = float(np.mean(talon_core_grid_h_per_run)) if talon_core_grid_h_per_run else None
+    talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -866,6 +894,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_core_innovation_tokens": talon_core_innovation_tokens,
         "talon_core_duplicate_index_count": talon_core_duplicate_index_count,
         "talon_core_question_aware_active": talon_core_question_aware_active,
+        "talon_core_budget_min": talon_core_budget_min,
+        "talon_core_budget_max": talon_core_budget_max,
+        "talon_core_grid_h": talon_core_grid_h,
+        "talon_core_grid_w": talon_core_grid_w,
     }
 
 
@@ -946,6 +978,10 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_core_innovation_tokens": result.get("talon_core_innovation_tokens"),
                 "talon_core_duplicate_index_count": result.get("talon_core_duplicate_index_count"),
                 "talon_core_question_aware_active": result.get("talon_core_question_aware_active"),
+                "talon_core_budget_min": result.get("talon_core_budget_min"),
+                "talon_core_budget_max": result.get("talon_core_budget_max"),
+                "talon_core_grid_h": result.get("talon_core_grid_h"),
+                "talon_core_grid_w": result.get("talon_core_grid_w"),
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -1113,6 +1149,26 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("talon_core_question_aware_active") is not None
     ]
+    talon_core_budget_min = [
+        float(r["talon_core_budget_min"])
+        for r in valid
+        if r.get("talon_core_budget_min") is not None
+    ]
+    talon_core_budget_max = [
+        float(r["talon_core_budget_max"])
+        for r in valid
+        if r.get("talon_core_budget_max") is not None
+    ]
+    talon_core_grid_h = [
+        float(r["talon_core_grid_h"])
+        for r in valid
+        if r.get("talon_core_grid_h") is not None
+    ]
+    talon_core_grid_w = [
+        float(r["talon_core_grid_w"])
+        for r in valid
+        if r.get("talon_core_grid_w") is not None
+    ]
     reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
         float(r["vision_visual_token_reduction_ratio"])
@@ -1149,6 +1205,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_core_innovation_tokens": _stats(talon_core_innovation_tokens),
         "talon_core_duplicate_index_count": _stats(talon_core_duplicate_count),
         "talon_core_question_aware_active": _stats(talon_core_question_active),
+        "talon_core_budget_min": _stats(talon_core_budget_min),
+        "talon_core_budget_max": _stats(talon_core_budget_max),
+        "talon_core_grid_h": _stats(talon_core_grid_h),
+        "talon_core_grid_w": _stats(talon_core_grid_w),
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1536,6 +1596,10 @@ def _print_summary(summary: dict[str, Any]):
         talon_core_innovation_mean = phase.get("talon_core_innovation_tokens", {}).get("mean")
         talon_core_dup_mean = phase.get("talon_core_duplicate_index_count", {}).get("mean")
         talon_core_question_active_mean = phase.get("talon_core_question_aware_active", {}).get("mean")
+        talon_core_budget_min_mean = phase.get("talon_core_budget_min", {}).get("mean")
+        talon_core_budget_max_mean = phase.get("talon_core_budget_max", {}).get("mean")
+        talon_core_grid_h_mean = phase.get("talon_core_grid_h", {}).get("mean")
+        talon_core_grid_w_mean = phase.get("talon_core_grid_w", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -1573,6 +1637,13 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  talon-core duplicate index mean: {talon_core_dup_mean:.2f}")
         if talon_core_question_active_mean is not None:
             print(f"  talon-core question-aware active mean: {talon_core_question_active_mean:.2f}")
+        if talon_core_budget_min_mean is not None:
+            print(
+                "  talon-core frame budget min/max mean: "
+                f"{talon_core_budget_min_mean:.2f}/{(talon_core_budget_max_mean or 0.0):.2f}"
+            )
+        if talon_core_grid_h_mean is not None:
+            print(f"  talon-core grid H/W mean: {talon_core_grid_h_mean:.2f}/{(talon_core_grid_w_mean or 0.0):.2f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:

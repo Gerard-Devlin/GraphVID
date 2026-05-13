@@ -170,7 +170,7 @@ def _select_raw_tokens(
     num_visual_tokens: int,
     frame_importance: torch.Tensor,
     config: FlashVidConfig,
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, List[int]]:
     total_budget = min(max(1, int(total_budget)), int(combined_scores.numel()))
     min_keep = max(0, int(getattr(config, "talon_core_min_keep_per_frame", 1)))
     budgets = _allocate_frame_budget(
@@ -222,7 +222,7 @@ def _select_raw_tokens(
             chosen = torch.cat([chosen, torch.topk(fill_scores, k=fill_k, dim=0).indices], dim=0).unique()
     if int(chosen.numel()) > total_budget:
         chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
-    return torch.sort(chosen.to(dtype=torch.long)).values
+    return torch.sort(chosen.to(dtype=torch.long)).values, budgets
 
 
 def _resolve_target_budget(num_frames: int, num_visual_tokens: int, config: FlashVidConfig) -> int:
@@ -266,7 +266,7 @@ def talon_core_compression(
 
     target_budget = _resolve_target_budget(num_frames, num_visual_tokens, flashvid_config)
     frame_importance = _frame_importance(cls_attention, innovation)
-    chosen = _select_raw_tokens(
+    chosen, frame_budgets = _select_raw_tokens(
         relevance_scores=relevance,
         innovation_scores=innovation,
         combined_scores=combined,
@@ -294,4 +294,9 @@ def talon_core_compression(
     flashvid_config.last_talon_core_innovation_tokens = innovation_tokens
     flashvid_config.last_talon_core_duplicate_index_count = int(chosen.numel()) - int(chosen.unique().numel())
     flashvid_config.last_talon_core_question_aware_active = bool(question_active)
+    flashvid_config.last_talon_core_budget_min = min(frame_budgets) if frame_budgets else None
+    flashvid_config.last_talon_core_budget_max = max(frame_budgets) if frame_budgets else None
+    grid_h, grid_w = _resolve_grid_hw(num_visual_tokens, flashvid_config)
+    flashvid_config.last_talon_core_grid_h = int(grid_h)
+    flashvid_config.last_talon_core_grid_w = int(grid_w)
     return flat_features[chosen], flat_indices[chosen]

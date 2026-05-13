@@ -130,7 +130,11 @@ def _use_original_qwen3vl_text_stack(flashvid_config: Optional[FlashVidConfig]) 
     if flashvid_config is None:
         return False
     variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
-    if variant not in ("talon", "talon_core"):
+    # TALON-Core keeps raw visual tokens, so it can safely use the patched text
+    # stack with layer-wise DeepStack injection. Falling back to the original
+    # text stack would replace DeepStack with a one-shot prefuse approximation,
+    # which is a hidden accuracy regression relative to FlashVID.
+    if variant != "talon":
         return False
     if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
         return False

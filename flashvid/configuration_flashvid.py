@@ -186,6 +186,10 @@ class FlashVidConfig:
     last_talon_core_innovation_tokens: Optional[int] = field(default=None)
     last_talon_core_duplicate_index_count: Optional[int] = field(default=None)
     last_talon_core_question_aware_active: Optional[bool] = field(default=None)
+    last_talon_core_budget_min: Optional[int] = field(default=None)
+    last_talon_core_budget_max: Optional[int] = field(default=None)
+    last_talon_core_grid_h: Optional[int] = field(default=None)
+    last_talon_core_grid_w: Optional[int] = field(default=None)
 
     # Spatial grid metadata (set by model hooks when available).
     H: Optional[int] = field(default=None)
