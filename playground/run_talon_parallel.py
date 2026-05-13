@@ -91,8 +91,14 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_question_recall_ratio),
             "--talon_question_recall_qweight",
             str(args.talon_question_recall_qweight),
+            "--talon_question_pooling",
+            args.talon_question_pooling,
+            "--talon_question_pooling_topk",
+            str(args.talon_question_pooling_topk),
             "--talon_anchor_diversity_weight",
             "0.0",
+            "--talon_frame_local_budget_ratio",
+            str(args.talon_frame_local_budget_ratio),
             "--talon_anchor_safety_ratio",
             "0.72",
             "--talon_budget_mode",
@@ -319,6 +325,9 @@ def main() -> None:
     parser.add_argument("--talon_target_mean_cap", type=float, default=0.0)
     parser.add_argument("--talon_question_recall_ratio", type=float, default=0.08)
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
+    parser.add_argument("--talon_question_pooling", default="mean")
+    parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
+    parser.add_argument("--talon_frame_local_budget_ratio", type=float, default=1.0)
     args = parser.parse_args()
 
     if args.gpu_ids.strip():

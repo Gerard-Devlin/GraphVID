@@ -153,8 +153,11 @@ class BenchmarkArgs:
     talon_anchor_diversity_weight: float = field(default=0.0)
     talon_anchor_candidate_multiplier: float = field(default=4.0)
     talon_frame_coverage_floor_ratio: float = field(default=0.65)
+    talon_frame_local_budget_ratio: float = field(default=1.0)
     talon_question_recall_ratio: float = field(default=0.06)
     talon_question_recall_qweight: float = field(default=0.65)
+    talon_question_pooling: str = field(default="mean")
+    talon_question_pooling_topk: int = field(default=4)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -1325,8 +1328,11 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
         talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
         talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
+        talon_frame_local_budget_ratio=args.talon_frame_local_budget_ratio,
         talon_question_recall_ratio=args.talon_question_recall_ratio,
         talon_question_recall_qweight=args.talon_question_recall_qweight,
+        talon_question_pooling=args.talon_question_pooling,
+        talon_question_pooling_topk=args.talon_question_pooling_topk,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -1456,8 +1462,11 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
         talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
         talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
+        talon_frame_local_budget_ratio=args.talon_frame_local_budget_ratio,
         talon_question_recall_ratio=args.talon_question_recall_ratio,
         talon_question_recall_qweight=args.talon_question_recall_qweight,
+        talon_question_pooling=args.talon_question_pooling,
+        talon_question_pooling_topk=args.talon_question_pooling_topk,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,

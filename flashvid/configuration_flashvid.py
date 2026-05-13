@@ -75,8 +75,11 @@ class FlashVidConfig:
     talon_anchor_diversity_weight: float = field(default=0.0)
     talon_anchor_candidate_multiplier: float = field(default=4.0)
     talon_frame_coverage_floor_ratio: float = field(default=0.65)
+    talon_frame_local_budget_ratio: float = field(default=1.0)
     talon_question_recall_ratio: float = field(default=0.06)
     talon_question_recall_qweight: float = field(default=0.65)
+    talon_question_pooling: str = field(default="mean")
+    talon_question_pooling_topk: int = field(default=4)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft

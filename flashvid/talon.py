@@ -66,8 +66,19 @@ def _question_aware_scores(
         return attention_scores, None
 
     token_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
-    question_proto = F.normalize(question_features.float().mean(dim=0), p=2, dim=-1, eps=1e-6)
-    question_scores = _normalize_scores(torch.matmul(token_features, question_proto))
+    question_tokens = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
+    pooling = str(getattr(config, "talon_question_pooling", "mean") or "mean").strip().lower()
+    if pooling in ("max", "topk", "token_max", "token_topk"):
+        token_question_sim = torch.matmul(token_features, question_tokens.transpose(0, 1))
+        if pooling in ("topk", "token_topk"):
+            topk = max(1, int(getattr(config, "talon_question_pooling_topk", 4) or 4))
+            topk = min(topk, int(token_question_sim.shape[-1]))
+            question_scores = _normalize_scores(torch.topk(token_question_sim, k=topk, dim=-1).values.mean(dim=-1))
+        else:
+            question_scores = _normalize_scores(token_question_sim.max(dim=-1).values)
+    else:
+        question_proto = F.normalize(question_tokens.mean(dim=0), p=2, dim=-1, eps=1e-6)
+        question_scores = _normalize_scores(torch.matmul(token_features, question_proto))
     beta = min(max(float(getattr(config, "question_reweight_beta", 0.35)), 0.0), 1.0)
     fused = _normalize_scores((1.0 - beta) * attention_scores + beta * question_scores)
     return fused, question_scores
@@ -357,7 +368,9 @@ def _select_tokens(
     config: FlashVidConfig,
 ) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor]:
     total_budget = min(max(1, int(total_budget)), int(combined_scores.numel()))
-    budgets = _allocate_frame_budget(total_budget, frame_importance, config)
+    local_budget_ratio = min(max(float(getattr(config, "talon_frame_local_budget_ratio", 1.0)), 0.10), 1.0)
+    local_budget = min(total_budget, max(1, int(round(float(total_budget) * local_budget_ratio))))
+    budgets = _allocate_frame_budget(local_budget, frame_importance, config)
     anchor_ratio = min(max(float(getattr(config, "talon_anchor_safety_ratio", 0.28)), 0.0), 0.85)
     global_ratio = min(max(float(getattr(config, "talon_global_topk_ratio", 0.70)), 0.0), 1.0)
 
