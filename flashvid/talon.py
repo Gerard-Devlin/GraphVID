@@ -799,11 +799,7 @@ class TalonCompressor:
             if unified_selection:
                 seg_tokens, seg_indices, seg_debug = self._compress_segment_unified(**segment_kwargs)
             else:
-                seg_tokens, seg_indices = self._compress_segment_legacy(**segment_kwargs)
-                seg_debug = _SegmentDebugStats(
-                    target_budget=int(seg_tokens.shape[0]),
-                    anchor_tokens=int(seg_tokens.shape[0]),
-                )
+                seg_tokens, seg_indices, seg_debug = self._compress_segment_legacy(**segment_kwargs)
             all_tokens.append(seg_tokens)
             all_indices.append(seg_indices)
             debug_totals.target_budget += int(seg_debug.target_budget)
@@ -1149,12 +1145,16 @@ class TalonCompressor:
         retention_ratio: float,
         question_features: Optional[torch.Tensor],
         resolved_per_frame_target: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, _SegmentDebugStats]:
         num_frames, num_visual_tokens, feat_dim = segment_features.shape
         num_tokens = num_frames * num_visual_tokens
         device = segment_features.device
         if num_tokens == 0:
-            return segment_features.new_zeros((0, feat_dim)), torch.empty((0,), dtype=torch.long, device=device)
+            return (
+                segment_features.new_zeros((0, feat_dim)),
+                torch.empty((0,), dtype=torch.long, device=device),
+                _SegmentDebugStats(),
+            )
 
         flat_features = segment_features.reshape(num_tokens, feat_dim)
         flat_attention = cls_attention.reshape(num_tokens).float()
@@ -1171,6 +1171,7 @@ class TalonCompressor:
         )
         memory_budget = _resolve_memory_budget(num_tokens, target_budget, self.config)
         core_budget = max(1, target_budget - memory_budget)
+        debug_stats = _SegmentDebugStats(target_budget=int(target_budget))
 
         selected = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
         core_tokens: List[torch.Tensor] = []
@@ -1205,6 +1206,7 @@ class TalonCompressor:
             core_local_indices.append(passthrough_idx)
         else:
             passthrough_idx = torch.empty((0,), dtype=torch.long, device=device)
+        debug_stats.anchor_tokens = int(passthrough_idx.numel())
 
         talon_budget = max(0, core_budget - int(passthrough_idx.numel()))
         per_frame_talon_budget = talon_budget / max(1, num_frames)
@@ -1249,6 +1251,7 @@ class TalonCompressor:
                 core_tokens.append(bg_tokens)
                 core_indices.append(bg_indices)
                 core_local_indices.append(_global_to_local_indices(flat_indices, bg_indices))
+                debug_stats.rank_tokens += int(bg_tokens.shape[0])
 
         used_after_background = int(selected.sum().item()) - int(passthrough_idx.numel())
         remaining_innovation = max(0, talon_budget - used_after_background)
@@ -1267,6 +1270,7 @@ class TalonCompressor:
                 core_tokens.append(innovation_tokens)
                 core_indices.append(innovation_indices)
                 core_local_indices.append(_global_to_local_indices(flat_indices, innovation_indices))
+                debug_stats.event_tokens += int(innovation_tokens.shape[0])
 
         if core_tokens:
             core_token_tensor = torch.cat(core_tokens, dim=0)
@@ -1309,6 +1313,7 @@ class TalonCompressor:
                     core_index_tensor = torch.cat([core_index_tensor, rescue_indices], dim=0)
                     core_local_indices.append(_global_to_local_indices(flat_indices, rescue_indices))
                     memory_budget = max(0, memory_budget - int(rescue_tokens.shape[0]))
+                    debug_stats.event_tokens += int(rescue_tokens.shape[0])
 
         dropped = torch.where(~selected)[0]
         mem_tokens, mem_local_idx = _build_memory_tokens(
@@ -1331,20 +1336,24 @@ class TalonCompressor:
             all_tokens = core_token_tensor
             all_indices = core_index_tensor
             mem_local = torch.empty((0,), dtype=torch.long, device=device)
+        debug_stats.recall_tokens = int(mem_tokens.shape[0])
+        debug_stats.memory_tokens = int(mem_tokens.shape[0])
 
         # Final raw-token rerank: union TALON candidates with a small
         # FlashVID-style high-attention prior, then keep top budget scores.
         output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
         do_rerank = _safe_bool(getattr(self.config, "talon_rerank_with_flash_prior", True)) and output_mode in ("manifold", "manifold_raw", "raw")
         if not do_rerank:
-            return all_tokens, all_indices
+            return all_tokens, all_indices, debug_stats
 
         candidate_local_parts = [x for x in core_local_indices if x.numel() > 0]
         if mem_local.numel() > 0:
             candidate_local_parts.append(mem_local)
         if candidate_local_parts:
-            candidate_local = torch.cat(candidate_local_parts, dim=0).unique()
+            base_local = torch.cat(candidate_local_parts, dim=0).unique().to(dtype=torch.long)
+            candidate_local = base_local
         else:
+            base_local = torch.empty((0,), dtype=torch.long, device=device)
             candidate_local = torch.empty((0,), dtype=torch.long, device=device)
 
         prior_ratio = min(max(float(getattr(self.config, "talon_flash_prior_ratio", 0.20)), 0.0), 1.0)
@@ -1361,9 +1370,11 @@ class TalonCompressor:
             )
             if prior_idx.numel() > 0:
                 candidate_local = torch.cat([candidate_local, prior_idx], dim=0).unique()
+        else:
+            prior_idx = torch.empty((0,), dtype=torch.long, device=device)
 
         if candidate_local.numel() == 0:
-            return all_tokens, all_indices
+            return all_tokens, all_indices, debug_stats
 
         recall_pool = _collect_recall_candidates(
             fused_scores=fused_scores,
@@ -1379,22 +1390,103 @@ class TalonCompressor:
             candidate_local = torch.cat([candidate_local, recall_pool], dim=0).unique()
 
         frame_prior = frame_importance.float().repeat_interleave(num_visual_tokens)
-        candidate_scores = (
-            0.60 * _normalize_scores(fused_scores[candidate_local].float())
-            + 0.30 * _normalize_scores(residual_scores[candidate_local].float())
-            + 0.10 * _normalize_scores(frame_prior[candidate_local])
+        final_fused = max(0.0, float(getattr(self.config, "talon_final_fused_weight", 0.70)))
+        final_residual = max(0.0, float(getattr(self.config, "talon_final_residual_weight", 0.20)))
+        final_frame = max(0.0, float(getattr(self.config, "talon_final_frame_weight", 0.10)))
+        final_denom = max(1e-6, final_fused + final_residual + final_frame)
+        final_fused /= final_denom
+        final_residual /= final_denom
+        final_frame /= final_denom
+        score_all = (
+            final_fused * _normalize_scores(fused_scores.float())
+            + final_residual * _normalize_scores(residual_scores.float())
+            + final_frame * _normalize_scores(frame_prior)
         )
+
+        anchor_bonus = float(getattr(self.config, "talon_anchor_keep_bonus", 0.10))
+        recall_bonus = float(getattr(self.config, "talon_recall_keep_bonus", 0.08))
+        prior_bonus = float(getattr(self.config, "talon_prior_keep_bonus", 0.06))
+        recall_pool_bonus = float(getattr(self.config, "talon_flash_prior_channel_bonus", 0.06))
+        event_bonus = float(getattr(self.config, "talon_event_keep_bonus", 0.04))
+        if passthrough_idx.numel() > 0 and abs(anchor_bonus) > 1e-8:
+            score_all[passthrough_idx] = score_all[passthrough_idx] + anchor_bonus
+        if mem_local.numel() > 0 and abs(recall_bonus) > 1e-8:
+            score_all[mem_local] = score_all[mem_local] + recall_bonus
+        if prior_idx.numel() > 0 and abs(prior_bonus) > 1e-8:
+            score_all[prior_idx] = score_all[prior_idx] + prior_bonus
+        if recall_pool.numel() > 0 and abs(recall_pool_bonus) > 1e-8:
+            score_all[recall_pool] = score_all[recall_pool] + recall_pool_bonus
+        if base_local.numel() > 0 and abs(event_bonus) > 1e-8:
+            innovation_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+            innovation_mask[base_local] = True
+            if passthrough_idx.numel() > 0:
+                innovation_mask[passthrough_idx] = False
+            if mem_local.numel() > 0:
+                innovation_mask[mem_local] = False
+            innovation_local = torch.where(innovation_mask)[0]
+            if innovation_local.numel() > 0:
+                score_all[innovation_local] = score_all[innovation_local] + event_bonus
+
+        candidate_local = torch.sort(candidate_local.to(dtype=torch.long)).values
         k_final = min(target_budget, int(candidate_local.numel()))
-        chosen_local = candidate_local[torch.topk(candidate_scores, k=k_final, dim=0).indices]
-        if chosen_local.numel() < target_budget:
-            fill_scores = fused_scores.masked_fill(torch.isin(torch.arange(num_tokens, device=device), chosen_local), -1e9)
+        chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+        chosen_parts: List[torch.Tensor] = []
+
+        force_quota = _safe_bool(getattr(self.config, "talon_force_anchor_recall_quota", True))
+        anchor_quota_ratio = min(max(float(getattr(self.config, "talon_final_anchor_min_ratio", 0.24)), 0.0), 1.0)
+        recall_quota_ratio = min(max(float(getattr(self.config, "talon_final_recall_min_ratio", 0.10)), 0.0), 1.0)
+        if force_quota and passthrough_idx.numel() > 0:
+            k_anchor = min(int(passthrough_idx.numel()), max(0, int(round(target_budget * anchor_quota_ratio))))
+            if k_anchor > 0:
+                anchor_pick = passthrough_idx[torch.topk(score_all[passthrough_idx], k=k_anchor, dim=0).indices]
+                chosen_parts.append(anchor_pick)
+                chosen_mask[anchor_pick] = True
+        if force_quota and mem_local.numel() > 0:
+            recall_pool_local = mem_local[~chosen_mask[mem_local]]
+            k_recall = min(int(recall_pool_local.numel()), max(0, int(round(target_budget * recall_quota_ratio))))
+            if k_recall > 0:
+                recall_pick = recall_pool_local[torch.topk(score_all[recall_pool_local], k=k_recall, dim=0).indices]
+                chosen_parts.append(recall_pick)
+                chosen_mask[recall_pick] = True
+
+        base_keep_ratio = min(max(float(getattr(self.config, "talon_legacy_base_keep_ratio", 0.85)), 0.0), 1.0)
+        if base_local.numel() > 0:
+            base_pool = base_local[~chosen_mask[base_local]]
+            keep_base_k = min(int(base_pool.numel()), max(0, int(round(target_budget * base_keep_ratio)) - int(chosen_mask.sum().item())))
+            if keep_base_k > 0:
+                base_pick = base_pool[torch.topk(score_all[base_pool], k=keep_base_k, dim=0).indices]
+                chosen_parts.append(base_pick)
+                chosen_mask[base_pick] = True
+
+        if chosen_parts:
+            chosen_local = torch.cat(chosen_parts, dim=0).unique()
+            chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+            chosen_mask[chosen_local] = True
+        else:
+            chosen_local = torch.empty((0,), dtype=torch.long, device=device)
+
+        remaining_slots = max(0, k_final - int(chosen_local.numel()))
+        if remaining_slots > 0:
+            remaining_pool = candidate_local[~chosen_mask[candidate_local]]
+            if remaining_pool.numel() > 0:
+                fill_pick = remaining_pool[
+                    torch.topk(score_all[remaining_pool], k=min(remaining_slots, int(remaining_pool.numel())), dim=0).indices
+                ]
+                chosen_local = torch.cat([chosen_local, fill_pick], dim=0).unique()
+                chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
+                chosen_mask[chosen_local] = True
+
+        if int(chosen_local.numel()) < target_budget:
+            fill_scores = score_all.masked_fill(chosen_mask, -1e9)
             fill_k = min(target_budget - int(chosen_local.numel()), int((fill_scores > -1e8).sum().item()))
             if fill_k > 0:
                 fill_idx = torch.topk(fill_scores, k=fill_k, dim=0).indices
                 chosen_local = torch.cat([chosen_local, fill_idx], dim=0).unique()
 
-        chosen_local = chosen_local[:target_budget].to(dtype=torch.long)
-        return flat_features[chosen_local], flat_indices[chosen_local]
+        if int(chosen_local.numel()) > target_budget:
+            chosen_local = chosen_local[torch.topk(score_all[chosen_local], k=target_budget, dim=0).indices]
+        chosen_local = torch.sort(chosen_local.to(dtype=torch.long)).values
+        return flat_features[chosen_local], flat_indices[chosen_local], debug_stats
 
     def _resolve_target_budget(
         self,
