@@ -130,29 +130,18 @@ def flashvid(
     talon_disable_oversegmentation: bool = True,
     talon_max_segments: int = 4,
     talon_deepstack_mode: str = "keep",
-    # Echo-Lite params.
-    echo_target_tokens_per_frame: int = 0,
-    echo_neighbor_radius: int = 1,
-    echo_topk_neighbors: int = 4,
-    echo_temperature: float = 0.07,
-    echo_weight_residual: float = 0.55,
-    echo_weight_attention: float = 0.35,
-    echo_weight_question: float = 0.10,
-    echo_frame_budget_mode: str = "attention",
-    echo_min_keep_per_frame: int = 1,
-    echo_use_segmentation: bool = False,
-    echo_global_topk_ratio: float = 0.70,
-    echoprune_anchor_ratio: float = 0.35,
-    echoprune_relevance_weight: float = 0.45,
-    echoprune_echo_weight: float = 0.45,
-    echoprune_continuation_weight: float = 0.10,
-    echoprune_echo_suppression_weight: float = 0.35,
-    echoprune_min_anchor_per_frame: int = 6,
+    # TALON-Core params.
+    talon_core_target_tokens_per_frame: int = 0,
+    talon_core_neighbor_radius: int = 1,
+    talon_core_topk_neighbors: int = 4,
+    talon_core_temperature: float = 0.07,
     talon_core_rank: int = 4,
     talon_core_anchor_ratio: float = 0.35,
-    talon_core_relevance_weight: float = 0.40,
-    talon_core_echo_weight: float = 0.35,
+    talon_core_relevance_weight: float = 0.42,
+    talon_core_temporal_weight: float = 0.33,
     talon_core_lowrank_weight: float = 0.25,
+    talon_core_frame_budget_mode: str = "attention",
+    talon_core_min_keep_per_frame: int = 1,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -242,7 +231,6 @@ def flashvid(
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "talon" enables transport-aligned low-rank + sparse innovation compression;
-            "echoprune" enables temporal echo residual token selection;
             "talon_core" adds low-rank residual scoring while keeping raw tokens.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -364,8 +352,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "echoprune", "talon_core"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|echoprune|talon_core")
+    if variant not in ("flashvid", "talon", "talon_core"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|talon_core")
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -425,28 +413,17 @@ def flashvid(
         talon_disable_oversegmentation=talon_disable_oversegmentation,
         talon_max_segments=talon_max_segments,
         talon_deepstack_mode=talon_deepstack_mode,
-        echo_target_tokens_per_frame=echo_target_tokens_per_frame,
-        echo_neighbor_radius=echo_neighbor_radius,
-        echo_topk_neighbors=echo_topk_neighbors,
-        echo_temperature=echo_temperature,
-        echo_weight_residual=echo_weight_residual,
-        echo_weight_attention=echo_weight_attention,
-        echo_weight_question=echo_weight_question,
-        echo_frame_budget_mode=echo_frame_budget_mode,
-        echo_min_keep_per_frame=echo_min_keep_per_frame,
-        echo_use_segmentation=echo_use_segmentation,
-        echo_global_topk_ratio=echo_global_topk_ratio,
-        echoprune_anchor_ratio=echoprune_anchor_ratio,
-        echoprune_relevance_weight=echoprune_relevance_weight,
-        echoprune_echo_weight=echoprune_echo_weight,
-        echoprune_continuation_weight=echoprune_continuation_weight,
-        echoprune_echo_suppression_weight=echoprune_echo_suppression_weight,
-        echoprune_min_anchor_per_frame=echoprune_min_anchor_per_frame,
+        talon_core_target_tokens_per_frame=talon_core_target_tokens_per_frame,
+        talon_core_neighbor_radius=talon_core_neighbor_radius,
+        talon_core_topk_neighbors=talon_core_topk_neighbors,
+        talon_core_temperature=talon_core_temperature,
         talon_core_rank=talon_core_rank,
         talon_core_anchor_ratio=talon_core_anchor_ratio,
         talon_core_relevance_weight=talon_core_relevance_weight,
-        talon_core_echo_weight=talon_core_echo_weight,
+        talon_core_temporal_weight=talon_core_temporal_weight,
         talon_core_lowrank_weight=talon_core_lowrank_weight,
+        talon_core_frame_budget_mode=talon_core_frame_budget_mode,
+        talon_core_min_keep_per_frame=talon_core_min_keep_per_frame,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

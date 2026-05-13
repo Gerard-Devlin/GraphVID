@@ -70,28 +70,17 @@ class BenchmarkArgs:
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
-    echo_target_tokens_per_frame: int = field(default=0)
-    echo_neighbor_radius: int = field(default=1)
-    echo_topk_neighbors: int = field(default=4)
-    echo_temperature: float = field(default=0.07)
-    echo_weight_residual: float = field(default=0.55)
-    echo_weight_attention: float = field(default=0.35)
-    echo_weight_question: float = field(default=0.10)
-    echo_frame_budget_mode: str = field(default="attention")
-    echo_min_keep_per_frame: int = field(default=1)
-    echo_use_segmentation: bool = field(default=False)
-    echo_global_topk_ratio: float = field(default=0.70)
-    echoprune_anchor_ratio: float = field(default=0.35)
-    echoprune_relevance_weight: float = field(default=0.45)
-    echoprune_echo_weight: float = field(default=0.45)
-    echoprune_continuation_weight: float = field(default=0.10)
-    echoprune_echo_suppression_weight: float = field(default=0.35)
-    echoprune_min_anchor_per_frame: int = field(default=6)
+    talon_core_target_tokens_per_frame: int = field(default=0)
+    talon_core_neighbor_radius: int = field(default=1)
+    talon_core_topk_neighbors: int = field(default=4)
+    talon_core_temperature: float = field(default=0.07)
     talon_core_rank: int = field(default=4)
     talon_core_anchor_ratio: float = field(default=0.35)
-    talon_core_relevance_weight: float = field(default=0.40)
-    talon_core_echo_weight: float = field(default=0.35)
+    talon_core_relevance_weight: float = field(default=0.42)
+    talon_core_temporal_weight: float = field(default=0.33)
     talon_core_lowrank_weight: float = field(default=0.25)
+    talon_core_frame_budget_mode: str = field(default="attention")
+    talon_core_min_keep_per_frame: int = field(default=1)
     talon_adaptive_target_low: int = field(default=0)
     talon_adaptive_target_mid: int = field(default=0)
     talon_adaptive_target_high: int = field(default=0)
@@ -671,31 +660,31 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     }
 
 
-def _get_echo_debug_metrics(model) -> dict[str, float | None]:
+def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
     empty = {
-        "echo_target_budget": None,
-        "echo_residual_mean": None,
-        "echo_semantic_tokens": None,
-        "echo_novelty_tokens": None,
-        "echo_duplicate_index_count": None,
-        "echo_question_aware_active": None,
+        "talon_core_target_budget": None,
+        "talon_core_residual_mean": None,
+        "talon_core_semantic_tokens": None,
+        "talon_core_innovation_tokens": None,
+        "talon_core_duplicate_index_count": None,
+        "talon_core_question_aware_active": None,
     }
     if not hasattr(model, "flashvid_config"):
         return empty
     cfg = getattr(model, "flashvid_config")
-    target_budget = getattr(cfg, "last_echo_target_budget", None)
-    residual_mean = getattr(cfg, "last_echo_residual_mean", None)
-    semantic_tokens = getattr(cfg, "last_echo_semantic_tokens", None)
-    novelty_tokens = getattr(cfg, "last_echo_novelty_tokens", None)
-    duplicate_count = getattr(cfg, "last_echo_duplicate_index_count", None)
-    question_active = getattr(cfg, "last_echo_question_aware_active", None)
+    target_budget = getattr(cfg, "last_talon_core_target_budget", None)
+    residual_mean = getattr(cfg, "last_talon_core_residual_mean", None)
+    semantic_tokens = getattr(cfg, "last_talon_core_semantic_tokens", None)
+    innovation_tokens = getattr(cfg, "last_talon_core_innovation_tokens", None)
+    duplicate_count = getattr(cfg, "last_talon_core_duplicate_index_count", None)
+    question_active = getattr(cfg, "last_talon_core_question_aware_active", None)
     return {
-        "echo_target_budget": float(target_budget) if target_budget is not None else None,
-        "echo_residual_mean": float(residual_mean) if residual_mean is not None else None,
-        "echo_semantic_tokens": float(semantic_tokens) if semantic_tokens is not None else None,
-        "echo_novelty_tokens": float(novelty_tokens) if novelty_tokens is not None else None,
-        "echo_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
-        "echo_question_aware_active": float(bool(question_active)) if question_active is not None else None,
+        "talon_core_target_budget": float(target_budget) if target_budget is not None else None,
+        "talon_core_residual_mean": float(residual_mean) if residual_mean is not None else None,
+        "talon_core_semantic_tokens": float(semantic_tokens) if semantic_tokens is not None else None,
+        "talon_core_innovation_tokens": float(innovation_tokens) if innovation_tokens is not None else None,
+        "talon_core_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
+        "talon_core_question_aware_active": float(bool(question_active)) if question_active is not None else None,
     }
 
 
@@ -745,12 +734,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_chosen_rank_per_run = []
     talon_duplicate_per_run = []
     talon_question_active_per_run = []
-    echo_target_budget_per_run = []
-    echo_residual_mean_per_run = []
-    echo_semantic_per_run = []
-    echo_novelty_per_run = []
-    echo_duplicate_per_run = []
-    echo_question_active_per_run = []
+    talon_core_target_budget_per_run = []
+    talon_core_residual_mean_per_run = []
+    talon_core_semantic_per_run = []
+    talon_core_innovation_per_run = []
+    talon_core_duplicate_per_run = []
+    talon_core_question_active_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -785,7 +774,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         gen_tokens_per_run.append(float(gen_tokens))
         final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
         debug_metrics = _get_talon_debug_metrics(model)
-        echo_metrics = _get_echo_debug_metrics(model)
+        talon_core_metrics = _get_talon_core_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
         if debug_metrics["talon_target_tokens_per_frame"] is not None:
@@ -812,18 +801,18 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             talon_duplicate_per_run.append(float(debug_metrics["talon_duplicate_index_count"]))
         if debug_metrics["talon_question_aware_active"] is not None:
             talon_question_active_per_run.append(float(debug_metrics["talon_question_aware_active"]))
-        if echo_metrics["echo_target_budget"] is not None:
-            echo_target_budget_per_run.append(float(echo_metrics["echo_target_budget"]))
-        if echo_metrics["echo_residual_mean"] is not None:
-            echo_residual_mean_per_run.append(float(echo_metrics["echo_residual_mean"]))
-        if echo_metrics["echo_semantic_tokens"] is not None:
-            echo_semantic_per_run.append(float(echo_metrics["echo_semantic_tokens"]))
-        if echo_metrics["echo_novelty_tokens"] is not None:
-            echo_novelty_per_run.append(float(echo_metrics["echo_novelty_tokens"]))
-        if echo_metrics["echo_duplicate_index_count"] is not None:
-            echo_duplicate_per_run.append(float(echo_metrics["echo_duplicate_index_count"]))
-        if echo_metrics["echo_question_aware_active"] is not None:
-            echo_question_active_per_run.append(float(echo_metrics["echo_question_aware_active"]))
+        if talon_core_metrics["talon_core_target_budget"] is not None:
+            talon_core_target_budget_per_run.append(float(talon_core_metrics["talon_core_target_budget"]))
+        if talon_core_metrics["talon_core_residual_mean"] is not None:
+            talon_core_residual_mean_per_run.append(float(talon_core_metrics["talon_core_residual_mean"]))
+        if talon_core_metrics["talon_core_semantic_tokens"] is not None:
+            talon_core_semantic_per_run.append(float(talon_core_metrics["talon_core_semantic_tokens"]))
+        if talon_core_metrics["talon_core_innovation_tokens"] is not None:
+            talon_core_innovation_per_run.append(float(talon_core_metrics["talon_core_innovation_tokens"]))
+        if talon_core_metrics["talon_core_duplicate_index_count"] is not None:
+            talon_core_duplicate_per_run.append(float(talon_core_metrics["talon_core_duplicate_index_count"]))
+        if talon_core_metrics["talon_core_question_aware_active"] is not None:
+            talon_core_question_active_per_run.append(float(talon_core_metrics["talon_core_question_aware_active"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
@@ -841,12 +830,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_chosen_rank = float(np.mean(talon_chosen_rank_per_run)) if talon_chosen_rank_per_run else None
     talon_duplicate_index_count = float(np.mean(talon_duplicate_per_run)) if talon_duplicate_per_run else None
     talon_question_aware_active = float(np.mean(talon_question_active_per_run)) if talon_question_active_per_run else None
-    echo_target_budget = float(np.mean(echo_target_budget_per_run)) if echo_target_budget_per_run else None
-    echo_residual_mean = float(np.mean(echo_residual_mean_per_run)) if echo_residual_mean_per_run else None
-    echo_semantic_tokens = float(np.mean(echo_semantic_per_run)) if echo_semantic_per_run else None
-    echo_novelty_tokens = float(np.mean(echo_novelty_per_run)) if echo_novelty_per_run else None
-    echo_duplicate_index_count = float(np.mean(echo_duplicate_per_run)) if echo_duplicate_per_run else None
-    echo_question_aware_active = float(np.mean(echo_question_active_per_run)) if echo_question_active_per_run else None
+    talon_core_target_budget = float(np.mean(talon_core_target_budget_per_run)) if talon_core_target_budget_per_run else None
+    talon_core_residual_mean = float(np.mean(talon_core_residual_mean_per_run)) if talon_core_residual_mean_per_run else None
+    talon_core_semantic_tokens = float(np.mean(talon_core_semantic_per_run)) if talon_core_semantic_per_run else None
+    talon_core_innovation_tokens = float(np.mean(talon_core_innovation_per_run)) if talon_core_innovation_per_run else None
+    talon_core_duplicate_index_count = float(np.mean(talon_core_duplicate_per_run)) if talon_core_duplicate_per_run else None
+    talon_core_question_aware_active = float(np.mean(talon_core_question_active_per_run)) if talon_core_question_active_per_run else None
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -871,12 +860,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_chosen_rank": talon_chosen_rank,
         "talon_duplicate_index_count": talon_duplicate_index_count,
         "talon_question_aware_active": talon_question_aware_active,
-        "echo_target_budget": echo_target_budget,
-        "echo_residual_mean": echo_residual_mean,
-        "echo_semantic_tokens": echo_semantic_tokens,
-        "echo_novelty_tokens": echo_novelty_tokens,
-        "echo_duplicate_index_count": echo_duplicate_index_count,
-        "echo_question_aware_active": echo_question_aware_active,
+        "talon_core_target_budget": talon_core_target_budget,
+        "talon_core_residual_mean": talon_core_residual_mean,
+        "talon_core_semantic_tokens": talon_core_semantic_tokens,
+        "talon_core_innovation_tokens": talon_core_innovation_tokens,
+        "talon_core_duplicate_index_count": talon_core_duplicate_index_count,
+        "talon_core_question_aware_active": talon_core_question_aware_active,
     }
 
 
@@ -905,12 +894,12 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "talon_chosen_rank": None,
         "talon_duplicate_index_count": None,
         "talon_question_aware_active": None,
-        "echo_target_budget": None,
-        "echo_residual_mean": None,
-        "echo_semantic_tokens": None,
-        "echo_novelty_tokens": None,
-        "echo_duplicate_index_count": None,
-        "echo_question_aware_active": None,
+        "talon_core_target_budget": None,
+        "talon_core_residual_mean": None,
+        "talon_core_semantic_tokens": None,
+        "talon_core_innovation_tokens": None,
+        "talon_core_duplicate_index_count": None,
+        "talon_core_question_aware_active": None,
         "visual_token_reduction_ratio": None,
         "vision_visual_token_reduction_ratio": None,
         "error": None,
@@ -951,12 +940,12 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_chosen_rank": result.get("talon_chosen_rank"),
                 "talon_duplicate_index_count": result.get("talon_duplicate_index_count"),
                 "talon_question_aware_active": result.get("talon_question_aware_active"),
-                "echo_target_budget": result.get("echo_target_budget"),
-                "echo_residual_mean": result.get("echo_residual_mean"),
-                "echo_semantic_tokens": result.get("echo_semantic_tokens"),
-                "echo_novelty_tokens": result.get("echo_novelty_tokens"),
-                "echo_duplicate_index_count": result.get("echo_duplicate_index_count"),
-                "echo_question_aware_active": result.get("echo_question_aware_active"),
+                "talon_core_target_budget": result.get("talon_core_target_budget"),
+                "talon_core_residual_mean": result.get("talon_core_residual_mean"),
+                "talon_core_semantic_tokens": result.get("talon_core_semantic_tokens"),
+                "talon_core_innovation_tokens": result.get("talon_core_innovation_tokens"),
+                "talon_core_duplicate_index_count": result.get("talon_core_duplicate_index_count"),
+                "talon_core_question_aware_active": result.get("talon_core_question_aware_active"),
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -1094,35 +1083,35 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("talon_question_aware_active") is not None
     ]
-    echo_target_budget = [
-        float(r["echo_target_budget"])
+    talon_core_target_budget = [
+        float(r["talon_core_target_budget"])
         for r in valid
-        if r.get("echo_target_budget") is not None
+        if r.get("talon_core_target_budget") is not None
     ]
-    echo_residual_mean = [
-        float(r["echo_residual_mean"])
+    talon_core_residual_mean = [
+        float(r["talon_core_residual_mean"])
         for r in valid
-        if r.get("echo_residual_mean") is not None
+        if r.get("talon_core_residual_mean") is not None
     ]
-    echo_semantic_tokens = [
-        float(r["echo_semantic_tokens"])
+    talon_core_semantic_tokens = [
+        float(r["talon_core_semantic_tokens"])
         for r in valid
-        if r.get("echo_semantic_tokens") is not None
+        if r.get("talon_core_semantic_tokens") is not None
     ]
-    echo_novelty_tokens = [
-        float(r["echo_novelty_tokens"])
+    talon_core_innovation_tokens = [
+        float(r["talon_core_innovation_tokens"])
         for r in valid
-        if r.get("echo_novelty_tokens") is not None
+        if r.get("talon_core_innovation_tokens") is not None
     ]
-    echo_duplicate_count = [
-        float(r["echo_duplicate_index_count"])
+    talon_core_duplicate_count = [
+        float(r["talon_core_duplicate_index_count"])
         for r in valid
-        if r.get("echo_duplicate_index_count") is not None
+        if r.get("talon_core_duplicate_index_count") is not None
     ]
-    echo_question_active = [
-        float(r["echo_question_aware_active"])
+    talon_core_question_active = [
+        float(r["talon_core_question_aware_active"])
         for r in valid
-        if r.get("echo_question_aware_active") is not None
+        if r.get("talon_core_question_aware_active") is not None
     ]
     reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
@@ -1154,12 +1143,12 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_chosen_rank": _stats(talon_chosen_rank),
         "talon_duplicate_index_count": _stats(talon_duplicate_count),
         "talon_question_aware_active": _stats(talon_question_active),
-        "echo_target_budget": _stats(echo_target_budget),
-        "echo_residual_mean": _stats(echo_residual_mean),
-        "echo_semantic_tokens": _stats(echo_semantic_tokens),
-        "echo_novelty_tokens": _stats(echo_novelty_tokens),
-        "echo_duplicate_index_count": _stats(echo_duplicate_count),
-        "echo_question_aware_active": _stats(echo_question_active),
+        "talon_core_target_budget": _stats(talon_core_target_budget),
+        "talon_core_residual_mean": _stats(talon_core_residual_mean),
+        "talon_core_semantic_tokens": _stats(talon_core_semantic_tokens),
+        "talon_core_innovation_tokens": _stats(talon_core_innovation_tokens),
+        "talon_core_duplicate_index_count": _stats(talon_core_duplicate_count),
+        "talon_core_question_aware_active": _stats(talon_core_question_active),
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1282,28 +1271,17 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
         talon_deepstack_mode=args.talon_deepstack_mode,
-        echo_target_tokens_per_frame=args.echo_target_tokens_per_frame,
-        echo_neighbor_radius=args.echo_neighbor_radius,
-        echo_topk_neighbors=args.echo_topk_neighbors,
-        echo_temperature=args.echo_temperature,
-        echo_weight_residual=args.echo_weight_residual,
-        echo_weight_attention=args.echo_weight_attention,
-        echo_weight_question=args.echo_weight_question,
-        echo_frame_budget_mode=args.echo_frame_budget_mode,
-        echo_min_keep_per_frame=args.echo_min_keep_per_frame,
-        echo_use_segmentation=args.echo_use_segmentation,
-        echo_global_topk_ratio=args.echo_global_topk_ratio,
-        echoprune_anchor_ratio=args.echoprune_anchor_ratio,
-        echoprune_relevance_weight=args.echoprune_relevance_weight,
-        echoprune_echo_weight=args.echoprune_echo_weight,
-        echoprune_continuation_weight=args.echoprune_continuation_weight,
-        echoprune_echo_suppression_weight=args.echoprune_echo_suppression_weight,
-        echoprune_min_anchor_per_frame=args.echoprune_min_anchor_per_frame,
+        talon_core_target_tokens_per_frame=args.talon_core_target_tokens_per_frame,
+        talon_core_neighbor_radius=args.talon_core_neighbor_radius,
+        talon_core_topk_neighbors=args.talon_core_topk_neighbors,
+        talon_core_temperature=args.talon_core_temperature,
         talon_core_rank=args.talon_core_rank,
         talon_core_anchor_ratio=args.talon_core_anchor_ratio,
         talon_core_relevance_weight=args.talon_core_relevance_weight,
-        talon_core_echo_weight=args.talon_core_echo_weight,
+        talon_core_temporal_weight=args.talon_core_temporal_weight,
         talon_core_lowrank_weight=args.talon_core_lowrank_weight,
+        talon_core_frame_budget_mode=args.talon_core_frame_budget_mode,
+        talon_core_min_keep_per_frame=args.talon_core_min_keep_per_frame,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -1430,28 +1408,17 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
         talon_deepstack_mode=args.talon_deepstack_mode,
-        echo_target_tokens_per_frame=args.echo_target_tokens_per_frame,
-        echo_neighbor_radius=args.echo_neighbor_radius,
-        echo_topk_neighbors=args.echo_topk_neighbors,
-        echo_temperature=args.echo_temperature,
-        echo_weight_residual=args.echo_weight_residual,
-        echo_weight_attention=args.echo_weight_attention,
-        echo_weight_question=args.echo_weight_question,
-        echo_frame_budget_mode=args.echo_frame_budget_mode,
-        echo_min_keep_per_frame=args.echo_min_keep_per_frame,
-        echo_use_segmentation=args.echo_use_segmentation,
-        echo_global_topk_ratio=args.echo_global_topk_ratio,
-        echoprune_anchor_ratio=args.echoprune_anchor_ratio,
-        echoprune_relevance_weight=args.echoprune_relevance_weight,
-        echoprune_echo_weight=args.echoprune_echo_weight,
-        echoprune_continuation_weight=args.echoprune_continuation_weight,
-        echoprune_echo_suppression_weight=args.echoprune_echo_suppression_weight,
-        echoprune_min_anchor_per_frame=args.echoprune_min_anchor_per_frame,
+        talon_core_target_tokens_per_frame=args.talon_core_target_tokens_per_frame,
+        talon_core_neighbor_radius=args.talon_core_neighbor_radius,
+        talon_core_topk_neighbors=args.talon_core_topk_neighbors,
+        talon_core_temperature=args.talon_core_temperature,
         talon_core_rank=args.talon_core_rank,
         talon_core_anchor_ratio=args.talon_core_anchor_ratio,
         talon_core_relevance_weight=args.talon_core_relevance_weight,
-        talon_core_echo_weight=args.talon_core_echo_weight,
+        talon_core_temporal_weight=args.talon_core_temporal_weight,
         talon_core_lowrank_weight=args.talon_core_lowrank_weight,
+        talon_core_frame_budget_mode=args.talon_core_frame_budget_mode,
+        talon_core_min_keep_per_frame=args.talon_core_min_keep_per_frame,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -1531,7 +1498,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
             f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
-            f"echo_target={args.echo_target_tokens_per_frame}, core_rank={args.talon_core_rank}, "
+            f"talon_core_target={args.talon_core_target_tokens_per_frame}, core_rank={args.talon_core_rank}, "
             f"event_cap={args.talon_event_budget_ratio:.2f}"
         )
     print(SEPARATOR)
@@ -1563,12 +1530,12 @@ def _print_summary(summary: dict[str, Any]):
         talon_chosen_rank_mean = phase.get("talon_chosen_rank", {}).get("mean")
         talon_dup_mean = phase.get("talon_duplicate_index_count", {}).get("mean")
         talon_question_active_mean = phase.get("talon_question_aware_active", {}).get("mean")
-        echo_budget_mean = phase.get("echo_target_budget", {}).get("mean")
-        echo_residual_mean = phase.get("echo_residual_mean", {}).get("mean")
-        echo_semantic_mean = phase.get("echo_semantic_tokens", {}).get("mean")
-        echo_novelty_mean = phase.get("echo_novelty_tokens", {}).get("mean")
-        echo_dup_mean = phase.get("echo_duplicate_index_count", {}).get("mean")
-        echo_question_active_mean = phase.get("echo_question_aware_active", {}).get("mean")
+        talon_core_budget_mean = phase.get("talon_core_target_budget", {}).get("mean")
+        talon_core_residual_mean = phase.get("talon_core_residual_mean", {}).get("mean")
+        talon_core_semantic_mean = phase.get("talon_core_semantic_tokens", {}).get("mean")
+        talon_core_innovation_mean = phase.get("talon_core_innovation_tokens", {}).get("mean")
+        talon_core_dup_mean = phase.get("talon_core_duplicate_index_count", {}).get("mean")
+        talon_core_question_active_mean = phase.get("talon_core_question_aware_active", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -1593,16 +1560,19 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  talon duplicate index mean: {talon_dup_mean:.2f}")
         if talon_question_active_mean is not None:
             print(f"  talon question-aware active mean: {talon_question_active_mean:.2f}")
-        if echo_budget_mean is not None:
-            print(f"  echo target budget mean: {echo_budget_mean:.2f}")
-        if echo_residual_mean is not None:
-            print(f"  echo residual mean: {echo_residual_mean:.6f}")
-        if echo_semantic_mean is not None:
-            print(f"  echo semantic/novelty mean: {echo_semantic_mean:.2f}/{(echo_novelty_mean or 0.0):.2f}")
-        if echo_dup_mean is not None:
-            print(f"  echo duplicate index mean: {echo_dup_mean:.2f}")
-        if echo_question_active_mean is not None:
-            print(f"  echo question-aware active mean: {echo_question_active_mean:.2f}")
+        if talon_core_budget_mean is not None:
+            print(f"  talon-core target budget mean: {talon_core_budget_mean:.2f}")
+        if talon_core_residual_mean is not None:
+            print(f"  talon-core residual mean: {talon_core_residual_mean:.6f}")
+        if talon_core_semantic_mean is not None:
+            print(
+                "  talon-core semantic/innovation mean: "
+                f"{talon_core_semantic_mean:.2f}/{(talon_core_innovation_mean or 0.0):.2f}"
+            )
+        if talon_core_dup_mean is not None:
+            print(f"  talon-core duplicate index mean: {talon_core_dup_mean:.2f}")
+        if talon_core_question_active_mean is not None:
+            print(f"  talon-core question-aware active mean: {talon_core_question_active_mean:.2f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -1723,7 +1693,8 @@ def run(args: BenchmarkArgs):
             f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
             f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
             f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}, "
-            f"target/frame={args.talon_target_tokens_per_frame}, echo_target={args.echo_target_tokens_per_frame}, "
+            f"target/frame={args.talon_target_tokens_per_frame}, "
+            f"talon_core_target={args.talon_core_target_tokens_per_frame}, "
             f"core_rank={args.talon_core_rank}"
         )
         phase_bundle = _acquire_phase_bundle()

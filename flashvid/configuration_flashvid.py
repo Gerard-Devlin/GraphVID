@@ -46,7 +46,7 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
-    # "talon_core": echo residual + low-rank residual raw-token selection path.
+    # "talon_core": temporal residual + low-rank residual raw-token selection path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
