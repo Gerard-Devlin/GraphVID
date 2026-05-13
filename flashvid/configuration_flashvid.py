@@ -113,7 +113,7 @@ class FlashVidConfig:
     talon_target_mean_cap: float = field(default=18.75)
     talon_running_target_sum: float = field(default=0.0)
     talon_running_target_count: int = field(default=0)
-    talon_unified_selection: bool = field(default=True)
+    talon_unified_selection: bool = field(default=False)
     talon_low_budget_mode_threshold: int = field(default=20)
     talon_low_budget_rank_cap: int = field(default=0)
     talon_background_global_ratio: float = field(default=0.60)

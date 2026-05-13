@@ -785,7 +785,7 @@ class TalonCompressor:
         offset = 0
         output_mode = str(getattr(self.config, "talon_output_mode", "manifold") or "manifold").strip().lower()
         manifold_output = output_mode in ("manifold", "manifold_raw", "raw")
-        unified_selection = _safe_bool(getattr(self.config, "talon_unified_selection", True)) and manifold_output
+        unified_selection = _safe_bool(getattr(self.config, "talon_unified_selection", False)) and manifold_output
         for seg_len_tensor in segment_lengths:
             seg_len = int(seg_len_tensor.item())
             segment_kwargs = {

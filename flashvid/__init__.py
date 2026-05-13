@@ -147,7 +147,7 @@ def flashvid(
     talon_adaptive_target_enabled: bool = True,
     talon_force_fixed_target: bool = False,
     talon_target_mean_cap: float = 18.75,
-    talon_unified_selection: bool = True,
+    talon_unified_selection: bool = False,
     talon_low_budget_mode_threshold: int = 20,
     talon_low_budget_rank_cap: int = 0,
     talon_background_global_ratio: float = 0.60,
