@@ -46,6 +46,7 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
+    # "echo_lite": temporal echo residual + semantic token selection path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
@@ -90,6 +91,19 @@ class FlashVidConfig:
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
     talon_deepstack_mode: str = field(default="keep")  # disable | keep | auto
+
+    # Echo-Lite compression.
+    echo_target_tokens_per_frame: int = field(default=0)
+    echo_neighbor_radius: int = field(default=1)
+    echo_topk_neighbors: int = field(default=4)
+    echo_temperature: float = field(default=0.07)
+    echo_weight_residual: float = field(default=0.55)
+    echo_weight_attention: float = field(default=0.35)
+    echo_weight_question: float = field(default=0.10)
+    echo_frame_budget_mode: str = field(default="attention")  # uniform | attention
+    echo_min_keep_per_frame: int = field(default=1)
+    echo_use_segmentation: bool = field(default=False)
+    echo_global_topk_ratio: float = field(default=0.70)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)
@@ -166,6 +180,12 @@ class FlashVidConfig:
     last_talon_chosen_rank: Optional[int] = field(default=None)
     last_talon_duplicate_index_count: Optional[int] = field(default=None)
     last_talon_question_aware_active: Optional[bool] = field(default=None)
+    last_echo_target_budget: Optional[int] = field(default=None)
+    last_echo_residual_mean: Optional[float] = field(default=None)
+    last_echo_semantic_tokens: Optional[int] = field(default=None)
+    last_echo_novelty_tokens: Optional[int] = field(default=None)
+    last_echo_duplicate_index_count: Optional[int] = field(default=None)
+    last_echo_question_aware_active: Optional[bool] = field(default=None)
 
     # Spatial grid metadata (set by model hooks when available).
     H: Optional[int] = field(default=None)

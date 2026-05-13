@@ -133,8 +133,17 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
+    if compression_variant == "echo_lite":
+        from .echo_lite import echo_lite_compression
+
+        return echo_lite_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
     if compression_variant != "flashvid":
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon")
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|echo_lite")
 
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,

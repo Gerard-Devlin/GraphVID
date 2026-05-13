@@ -106,7 +106,8 @@ def _talon_full_bypass_eligible(
 ) -> bool:
     if flashvid_config is None or pixel_values_videos is None or video_grid_thw is None:
         return False
-    if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() != "talon":
+    variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+    if variant not in ("talon", "echo_lite"):
         return False
     if bool(getattr(flashvid_config, "adaptive_token_budget", False)):
         return False
@@ -117,7 +118,8 @@ def _talon_full_bypass_eligible(
     decode_policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
     if decode_policy not in ("none", "off", "disabled"):
         return False
-    frame_target = int(getattr(flashvid_config, "talon_target_tokens_per_frame", 0) or 0)
+    frame_target_attr = "echo_target_tokens_per_frame" if variant == "echo_lite" else "talon_target_tokens_per_frame"
+    frame_target = int(getattr(flashvid_config, frame_target_attr, 0) or 0)
     if frame_target <= 0:
         return False
     num_visual_tokens = int((video_grid_thw[0][1].item() * video_grid_thw[0][2].item()) // max(1, spatial_merge_size**2))
@@ -127,7 +129,8 @@ def _talon_full_bypass_eligible(
 def _use_original_qwen3vl_text_stack(flashvid_config: Optional[FlashVidConfig]) -> bool:
     if flashvid_config is None:
         return False
-    if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() != "talon":
+    variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+    if variant not in ("talon", "echo_lite"):
         return False
     if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
         return False

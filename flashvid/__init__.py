@@ -130,6 +130,18 @@ def flashvid(
     talon_disable_oversegmentation: bool = True,
     talon_max_segments: int = 4,
     talon_deepstack_mode: str = "keep",
+    # Echo-Lite params.
+    echo_target_tokens_per_frame: int = 0,
+    echo_neighbor_radius: int = 1,
+    echo_topk_neighbors: int = 4,
+    echo_temperature: float = 0.07,
+    echo_weight_residual: float = 0.55,
+    echo_weight_attention: float = 0.35,
+    echo_weight_question: float = 0.10,
+    echo_frame_budget_mode: str = "attention",
+    echo_min_keep_per_frame: int = 1,
+    echo_use_segmentation: bool = False,
+    echo_global_topk_ratio: float = 0.70,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -218,7 +230,8 @@ def flashvid(
         temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
-            "talon" enables transport-aligned low-rank + sparse innovation compression.
+            "talon" enables transport-aligned low-rank + sparse innovation compression;
+            "echo_lite" enables temporal echo residual token selection.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
         talon_transport_radius (int, optional): Local transport radius for frame-to-frame token alignment.
@@ -339,8 +352,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon")
+    if variant not in ("flashvid", "talon", "echo_lite"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|echo_lite")
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -400,6 +413,17 @@ def flashvid(
         talon_disable_oversegmentation=talon_disable_oversegmentation,
         talon_max_segments=talon_max_segments,
         talon_deepstack_mode=talon_deepstack_mode,
+        echo_target_tokens_per_frame=echo_target_tokens_per_frame,
+        echo_neighbor_radius=echo_neighbor_radius,
+        echo_topk_neighbors=echo_topk_neighbors,
+        echo_temperature=echo_temperature,
+        echo_weight_residual=echo_weight_residual,
+        echo_weight_attention=echo_weight_attention,
+        echo_weight_question=echo_weight_question,
+        echo_frame_budget_mode=echo_frame_budget_mode,
+        echo_min_keep_per_frame=echo_min_keep_per_frame,
+        echo_use_segmentation=echo_use_segmentation,
+        echo_global_topk_ratio=echo_global_topk_ratio,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,
