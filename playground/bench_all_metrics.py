@@ -93,6 +93,11 @@ class BenchmarkArgs:
     talon_recall_keep_bonus: float = field(default=0.08)
     talon_prior_candidate_ratio: float = field(default=0.12)
     talon_prior_keep_bonus: float = field(default=0.06)
+    talon_flash_prior_channel_ratio: float = field(default=0.12)
+    talon_flash_prior_channel_method: str = field(default="attn_div_v2")
+    talon_flash_prior_channel_min_per_frame: int = field(default=1)
+    talon_flash_prior_channel_max_per_frame: int = field(default=4)
+    talon_flash_prior_channel_bonus: float = field(default=0.06)
     talon_final_anchor_min_ratio: float = field(default=0.24)
     talon_final_recall_min_ratio: float = field(default=0.10)
     talon_force_anchor_recall_quota: bool = field(default=True)
@@ -1108,6 +1113,11 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
         talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
         talon_prior_keep_bonus=args.talon_prior_keep_bonus,
+        talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
+        talon_flash_prior_channel_method=args.talon_flash_prior_channel_method,
+        talon_flash_prior_channel_min_per_frame=args.talon_flash_prior_channel_min_per_frame,
+        talon_flash_prior_channel_max_per_frame=args.talon_flash_prior_channel_max_per_frame,
+        talon_flash_prior_channel_bonus=args.talon_flash_prior_channel_bonus,
         talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
         talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
         talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
@@ -1221,6 +1231,11 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
         talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
         talon_prior_keep_bonus=args.talon_prior_keep_bonus,
+        talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
+        talon_flash_prior_channel_method=args.talon_flash_prior_channel_method,
+        talon_flash_prior_channel_min_per_frame=args.talon_flash_prior_channel_min_per_frame,
+        talon_flash_prior_channel_max_per_frame=args.talon_flash_prior_channel_max_per_frame,
+        talon_flash_prior_channel_bonus=args.talon_flash_prior_channel_bonus,
         talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
         talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
         talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,

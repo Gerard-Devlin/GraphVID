@@ -8,6 +8,7 @@ import torch
 from torch.nn import functional as F
 
 from .configuration_flashvid import FlashVidConfig
+from .token_selection import attn_based_token_selection, attn_div_v2_based_token_selection
 
 
 @dataclass
@@ -709,6 +710,57 @@ def _collect_recall_candidates(
     return torch.cat(picks, dim=0).unique().to(dtype=torch.long)
 
 
+def _collect_flashvid_prior_candidates(
+    segment_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    selected_mask: torch.Tensor,
+    fused_scores: torch.Tensor,
+    target_budget: int,
+    num_frames: int,
+    num_visual_tokens: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    num_tokens = int(fused_scores.numel())
+    if num_tokens <= 0 or target_budget <= 0:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+
+    ratio = min(max(float(getattr(config, "talon_flash_prior_channel_ratio", 0.12)), 0.0), 1.0)
+    total_budget = min(num_tokens, max(0, int(round(target_budget * ratio))))
+    if total_budget <= 0:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+
+    min_pf = max(0, int(getattr(config, "talon_flash_prior_channel_min_per_frame", 1)))
+    max_pf = max(min_pf, int(getattr(config, "talon_flash_prior_channel_max_per_frame", 4)))
+    per_frame = min(num_visual_tokens, max(min_pf, min(max_pf, max(1, int(round(total_budget / max(1, num_frames)))))))
+    if per_frame <= 0:
+        return torch.empty((0,), dtype=torch.long, device=fused_scores.device)
+
+    method = str(getattr(config, "talon_flash_prior_channel_method", "attn_div_v2") or "attn_div_v2").strip().lower()
+    if method in ("attn", "attention"):
+        _, frame_idx = attn_based_token_selection(
+            features=segment_features,
+            cls_attention=cls_attention.float(),
+            num_retained_tokens=per_frame,
+        )
+    else:
+        _, frame_idx = attn_div_v2_based_token_selection(
+            features=segment_features,
+            cls_attention=cls_attention.float(),
+            num_retained_tokens=per_frame,
+        )
+    flat_idx = frame_idx + torch.arange(num_frames, device=frame_idx.device).unsqueeze(1) * num_visual_tokens
+    flat_idx = flat_idx.reshape(-1).to(dtype=torch.long)
+    if flat_idx.numel() == 0:
+        return flat_idx
+    flat_idx = flat_idx[~selected_mask[flat_idx]]
+    if flat_idx.numel() == 0:
+        return flat_idx
+    if int(flat_idx.numel()) > total_budget:
+        ranked = torch.topk(fused_scores[flat_idx].float(), k=total_budget, dim=0).indices
+        flat_idx = flat_idx[ranked]
+    return flat_idx.unique()
+
+
 class TalonCompressor:
     def __init__(self, config: FlashVidConfig):
         self.config = config
@@ -990,8 +1042,19 @@ class TalonCompressor:
         else:
             prior_local = torch.empty((0,), dtype=torch.long, device=device)
 
+        flash_prior_local = _collect_flashvid_prior_candidates(
+            segment_features=segment_features,
+            cls_attention=cls_attention,
+            selected_mask=selected,
+            fused_scores=fused_scores,
+            target_budget=target_budget,
+            num_frames=num_frames,
+            num_visual_tokens=num_visual_tokens,
+            config=self.config,
+        )
+
         # Unified final selection: one dedup + one score + one truncate.
-        candidate_parts = [x for x in (anchor_local, rank_local, event_local, recall_local, prior_local) if x.numel() > 0]
+        candidate_parts = [x for x in (anchor_local, rank_local, event_local, recall_local, prior_local, flash_prior_local) if x.numel() > 0]
         if candidate_parts:
             candidate_local = torch.cat(candidate_parts, dim=0).unique()
             candidate_local = torch.sort(candidate_local).values
@@ -1025,6 +1088,9 @@ class TalonCompressor:
             score_all[recall_local] = score_all[recall_local] + recall_bonus
         if prior_local.numel() > 0 and abs(prior_bonus) > 1e-8:
             score_all[prior_local] = score_all[prior_local] + prior_bonus
+        flash_prior_bonus = float(getattr(self.config, "talon_flash_prior_channel_bonus", 0.06))
+        if flash_prior_local.numel() > 0 and abs(flash_prior_bonus) > 1e-8:
+            score_all[flash_prior_local] = score_all[flash_prior_local] + flash_prior_bonus
 
         k_final = min(target_budget, int(candidate_local.numel()))
         anchor_quota_ratio = min(max(float(getattr(self.config, "talon_final_anchor_min_ratio", 0.24)), 0.0), 1.0)
