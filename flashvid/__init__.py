@@ -112,6 +112,9 @@ def flashvid(
     talon_frame_balanced_memory: bool = True,
     talon_memory_mode: str = "raw",
     talon_anchor_safety_ratio: float = 0.28,
+    talon_anchor_diversity_weight: float = 0.16,
+    talon_anchor_candidate_multiplier: float = 4.0,
+    talon_frame_coverage_floor_ratio: float = 0.65,
     talon_budget_strategy: str = "marginal",
     talon_budget_mode: str = "uniform",
     talon_transport_mode: str = "hard",
@@ -130,18 +133,6 @@ def flashvid(
     talon_disable_oversegmentation: bool = True,
     talon_max_segments: int = 4,
     talon_deepstack_mode: str = "keep",
-    # TALON-Core params.
-    talon_core_target_tokens_per_frame: int = 0,
-    talon_core_neighbor_radius: int = 1,
-    talon_core_topk_neighbors: int = 4,
-    talon_core_temperature: float = 0.07,
-    talon_core_rank: int = 4,
-    talon_core_anchor_ratio: float = 0.35,
-    talon_core_relevance_weight: float = 0.42,
-    talon_core_temporal_weight: float = 0.33,
-    talon_core_lowrank_weight: float = 0.25,
-    talon_core_frame_budget_mode: str = "attention",
-    talon_core_min_keep_per_frame: int = 1,
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -230,8 +221,7 @@ def flashvid(
         temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
-            "talon" enables transport-aligned low-rank + sparse innovation compression;
-            "talon_core" adds low-rank residual scoring while keeping raw tokens.
+            "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
         talon_transport_radius (int, optional): Local transport radius for frame-to-frame token alignment.
@@ -352,8 +342,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "talon_core"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|talon_core")
+    if variant not in ("flashvid", "talon"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon")
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -395,6 +385,9 @@ def flashvid(
         talon_frame_balanced_memory=talon_frame_balanced_memory,
         talon_memory_mode=talon_memory_mode,
         talon_anchor_safety_ratio=talon_anchor_safety_ratio,
+        talon_anchor_diversity_weight=talon_anchor_diversity_weight,
+        talon_anchor_candidate_multiplier=talon_anchor_candidate_multiplier,
+        talon_frame_coverage_floor_ratio=talon_frame_coverage_floor_ratio,
         talon_budget_strategy=talon_budget_strategy,
         talon_budget_mode=talon_budget_mode,
         talon_transport_mode=talon_transport_mode,
@@ -413,17 +406,6 @@ def flashvid(
         talon_disable_oversegmentation=talon_disable_oversegmentation,
         talon_max_segments=talon_max_segments,
         talon_deepstack_mode=talon_deepstack_mode,
-        talon_core_target_tokens_per_frame=talon_core_target_tokens_per_frame,
-        talon_core_neighbor_radius=talon_core_neighbor_radius,
-        talon_core_topk_neighbors=talon_core_topk_neighbors,
-        talon_core_temperature=talon_core_temperature,
-        talon_core_rank=talon_core_rank,
-        talon_core_anchor_ratio=talon_core_anchor_ratio,
-        talon_core_relevance_weight=talon_core_relevance_weight,
-        talon_core_temporal_weight=talon_core_temporal_weight,
-        talon_core_lowrank_weight=talon_core_lowrank_weight,
-        talon_core_frame_budget_mode=talon_core_frame_budget_mode,
-        talon_core_min_keep_per_frame=talon_core_min_keep_per_frame,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,

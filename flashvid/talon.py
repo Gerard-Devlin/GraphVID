@@ -304,7 +304,48 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, co
     return budgets
 
 
+def _diverse_topk(
+    frame_features: torch.Tensor,
+    scores: torch.Tensor,
+    k: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    """Select high-scoring anchors while avoiding same-region feature collapse."""
+    k = min(max(0, int(k)), int(scores.numel()))
+    if k <= 0:
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+
+    diversity_weight = min(max(float(getattr(config, "talon_anchor_diversity_weight", 0.16)), 0.0), 0.80)
+    candidate_multiplier = max(1.0, float(getattr(config, "talon_anchor_candidate_multiplier", 4.0)))
+    candidate_count = min(int(scores.numel()), max(k, int(math.ceil(k * candidate_multiplier))))
+    candidates = torch.topk(scores.float(), k=candidate_count, dim=0).indices
+    if diversity_weight <= 1e-8 or k >= candidate_count:
+        return candidates[:k]
+
+    candidate_scores = _normalize_scores(scores[candidates])
+    candidate_features = F.normalize(frame_features[candidates].float(), p=2, dim=-1, eps=1e-6)
+    selected_positions: List[int] = []
+    selected_mask = torch.zeros((candidate_count,), dtype=torch.bool, device=scores.device)
+
+    for _ in range(k):
+        if not selected_positions:
+            pos = int(torch.argmax(candidate_scores).item())
+        else:
+            selected_feat = candidate_features[torch.tensor(selected_positions, dtype=torch.long, device=scores.device)]
+            nearest_sim = torch.matmul(candidate_features, selected_feat.transpose(0, 1)).max(dim=1).values
+            novelty = _normalize_scores((1.0 - nearest_sim).clamp(min=0.0, max=2.0))
+            greedy_score = (1.0 - diversity_weight) * candidate_scores + diversity_weight * novelty
+            greedy_score = greedy_score.masked_fill(selected_mask, -1e9)
+            pos = int(torch.argmax(greedy_score).item())
+        selected_positions.append(pos)
+        selected_mask[pos] = True
+
+    selected_pos = torch.tensor(selected_positions, dtype=torch.long, device=scores.device)
+    return candidates[selected_pos]
+
+
 def _select_tokens(
+    frame_features: torch.Tensor,
     fused_scores: torch.Tensor,
     residual_scores: torch.Tensor,
     combined_scores: torch.Tensor,
@@ -341,7 +382,7 @@ def _select_tokens(
             anchor_ratio_eff = anchor_ratio
         anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio_eff)))) if budget_t > 1 else budget_t
         if anchor_k > 0:
-            idx = torch.topk(fused_grid[t], k=anchor_k, dim=0).indices
+            idx = _diverse_topk(frame_features[t], fused_grid[t], anchor_k, config)
             local_selected[idx] = True
             anchor_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
@@ -451,6 +492,7 @@ def talon_compression(
     )
 
     chosen, budgets, anchor_mask, event_mask = _select_tokens(
+        frame_features=video_features,
         fused_scores=fused_scores,
         residual_scores=innovation_scores,
         combined_scores=combined_scores,

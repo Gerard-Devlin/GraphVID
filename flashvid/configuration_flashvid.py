@@ -46,7 +46,6 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
-    # "talon_core": temporal residual + low-rank residual raw-token selection path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
@@ -73,6 +72,9 @@ class FlashVidConfig:
     talon_frame_balanced_memory: bool = field(default=True)
     talon_memory_mode: str = field(default="raw")  # raw | merge
     talon_anchor_safety_ratio: float = field(default=0.28)
+    talon_anchor_diversity_weight: float = field(default=0.16)
+    talon_anchor_candidate_multiplier: float = field(default=4.0)
+    talon_frame_coverage_floor_ratio: float = field(default=0.65)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft
@@ -91,19 +93,6 @@ class FlashVidConfig:
     talon_disable_oversegmentation: bool = field(default=True)
     talon_max_segments: int = field(default=4)
     talon_deepstack_mode: str = field(default="keep")  # disable | keep | auto
-
-    # TALON-Core compression: raw-token selection with temporal + low-rank innovation scores.
-    talon_core_target_tokens_per_frame: int = field(default=0)
-    talon_core_neighbor_radius: int = field(default=1)
-    talon_core_topk_neighbors: int = field(default=4)
-    talon_core_temperature: float = field(default=0.07)
-    talon_core_rank: int = field(default=4)
-    talon_core_anchor_ratio: float = field(default=0.35)
-    talon_core_relevance_weight: float = field(default=0.42)
-    talon_core_temporal_weight: float = field(default=0.33)
-    talon_core_lowrank_weight: float = field(default=0.25)
-    talon_core_frame_budget_mode: str = field(default="attention")
-    talon_core_min_keep_per_frame: int = field(default=1)
 
     # Residual memory tokens.
     memory_token_ratio: float = field(default=0.10)
@@ -180,17 +169,6 @@ class FlashVidConfig:
     last_talon_chosen_rank: Optional[int] = field(default=None)
     last_talon_duplicate_index_count: Optional[int] = field(default=None)
     last_talon_question_aware_active: Optional[bool] = field(default=None)
-    last_talon_core_target_budget: Optional[int] = field(default=None)
-    last_talon_core_residual_mean: Optional[float] = field(default=None)
-    last_talon_core_semantic_tokens: Optional[int] = field(default=None)
-    last_talon_core_innovation_tokens: Optional[int] = field(default=None)
-    last_talon_core_duplicate_index_count: Optional[int] = field(default=None)
-    last_talon_core_question_aware_active: Optional[bool] = field(default=None)
-    last_talon_core_budget_min: Optional[int] = field(default=None)
-    last_talon_core_budget_max: Optional[int] = field(default=None)
-    last_talon_core_grid_h: Optional[int] = field(default=None)
-    last_talon_core_grid_w: Optional[int] = field(default=None)
-
     # Spatial grid metadata (set by model hooks when available).
     H: Optional[int] = field(default=None)
     W: Optional[int] = field(default=None)

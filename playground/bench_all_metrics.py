@@ -149,6 +149,9 @@ class BenchmarkArgs:
     talon_frame_balanced_memory: bool = field(default=True)
     talon_memory_mode: str = field(default="raw")
     talon_anchor_safety_ratio: float = field(default=0.28)
+    talon_anchor_diversity_weight: float = field(default=0.16)
+    talon_anchor_candidate_multiplier: float = field(default=4.0)
+    talon_frame_coverage_floor_ratio: float = field(default=0.65)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
     talon_transport_mode: str = field(default="hard")
@@ -1313,6 +1316,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_frame_balanced_memory=args.talon_frame_balanced_memory,
         talon_memory_mode=args.talon_memory_mode,
         talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
+        talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
+        talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
+        talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -1331,17 +1337,6 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
         talon_deepstack_mode=args.talon_deepstack_mode,
-        talon_core_target_tokens_per_frame=args.talon_core_target_tokens_per_frame,
-        talon_core_neighbor_radius=args.talon_core_neighbor_radius,
-        talon_core_topk_neighbors=args.talon_core_topk_neighbors,
-        talon_core_temperature=args.talon_core_temperature,
-        talon_core_rank=args.talon_core_rank,
-        talon_core_anchor_ratio=args.talon_core_anchor_ratio,
-        talon_core_relevance_weight=args.talon_core_relevance_weight,
-        talon_core_temporal_weight=args.talon_core_temporal_weight,
-        talon_core_lowrank_weight=args.talon_core_lowrank_weight,
-        talon_core_frame_budget_mode=args.talon_core_frame_budget_mode,
-        talon_core_min_keep_per_frame=args.talon_core_min_keep_per_frame,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -1450,6 +1445,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_frame_balanced_memory=args.talon_frame_balanced_memory,
         talon_memory_mode=args.talon_memory_mode,
         talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
+        talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
+        talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
+        talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
         talon_transport_mode=args.talon_transport_mode,
@@ -1468,17 +1466,6 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_disable_oversegmentation=args.talon_disable_oversegmentation,
         talon_max_segments=args.talon_max_segments,
         talon_deepstack_mode=args.talon_deepstack_mode,
-        talon_core_target_tokens_per_frame=args.talon_core_target_tokens_per_frame,
-        talon_core_neighbor_radius=args.talon_core_neighbor_radius,
-        talon_core_topk_neighbors=args.talon_core_topk_neighbors,
-        talon_core_temperature=args.talon_core_temperature,
-        talon_core_rank=args.talon_core_rank,
-        talon_core_anchor_ratio=args.talon_core_anchor_ratio,
-        talon_core_relevance_weight=args.talon_core_relevance_weight,
-        talon_core_temporal_weight=args.talon_core_temporal_weight,
-        talon_core_lowrank_weight=args.talon_core_lowrank_weight,
-        talon_core_frame_budget_mode=args.talon_core_frame_budget_mode,
-        talon_core_min_keep_per_frame=args.talon_core_min_keep_per_frame,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
@@ -1558,8 +1545,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
             f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
-            f"talon_core_target={args.talon_core_target_tokens_per_frame}, core_rank={args.talon_core_rank}, "
-            f"event_cap={args.talon_event_budget_ratio:.2f}"
+            f"event_cap={args.talon_event_budget_ratio:.2f}, "
+            f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
     print(SEPARATOR)
 
@@ -1763,8 +1750,8 @@ def run(args: BenchmarkArgs):
             "[talon-active][ours] "
             f"path=clean, qaware={args.question_aware_reweighting}, "
             f"target/frame={args.talon_target_tokens_per_frame}, "
-            f"talon_core_target={args.talon_core_target_tokens_per_frame}, "
-            f"rank_max={args.talon_rank_max}"
+            f"rank_max={args.talon_rank_max}, "
+            f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
