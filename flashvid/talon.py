@@ -975,8 +975,23 @@ class TalonCompressor:
         debug_stats.recall_tokens = int(recall_local.numel())
         debug_stats.memory_tokens = int(recall_local.numel())
 
+        # Extra semantic prior candidates: recover a small set of high-attention/raw
+        # anchors for QA stability without changing final token budget.
+        prior_ratio = min(max(float(getattr(self.config, "talon_prior_candidate_ratio", 0.12)), 0.0), 1.0)
+        prior_budget = min(num_tokens, max(0, int(round(target_budget * prior_ratio))))
+        if prior_budget > 0:
+            prior_scores = _normalize_scores(flat_attention.float())
+            prior_scores = (0.75 * prior_scores + 0.25 * _normalize_scores(fused_scores.float())).masked_fill(selected, -1e9)
+            valid_prior = int((prior_scores > -1e8).sum().item())
+            if valid_prior > 0:
+                prior_local = torch.topk(prior_scores, k=min(prior_budget, valid_prior), dim=0).indices.to(dtype=torch.long)
+            else:
+                prior_local = torch.empty((0,), dtype=torch.long, device=device)
+        else:
+            prior_local = torch.empty((0,), dtype=torch.long, device=device)
+
         # Unified final selection: one dedup + one score + one truncate.
-        candidate_parts = [x for x in (anchor_local, rank_local, event_local, recall_local) if x.numel() > 0]
+        candidate_parts = [x for x in (anchor_local, rank_local, event_local, recall_local, prior_local) if x.numel() > 0]
         if candidate_parts:
             candidate_local = torch.cat(candidate_parts, dim=0).unique()
             candidate_local = torch.sort(candidate_local).values
@@ -1003,10 +1018,13 @@ class TalonCompressor:
 
         anchor_bonus = float(getattr(self.config, "talon_anchor_keep_bonus", 0.10))
         recall_bonus = float(getattr(self.config, "talon_recall_keep_bonus", 0.08))
+        prior_bonus = float(getattr(self.config, "talon_prior_keep_bonus", 0.06))
         if anchor_local.numel() > 0 and abs(anchor_bonus) > 1e-8:
             score_all[anchor_local] = score_all[anchor_local] + anchor_bonus
         if recall_local.numel() > 0 and abs(recall_bonus) > 1e-8:
             score_all[recall_local] = score_all[recall_local] + recall_bonus
+        if prior_local.numel() > 0 and abs(prior_bonus) > 1e-8:
+            score_all[prior_local] = score_all[prior_local] + prior_bonus
 
         k_final = min(target_budget, int(candidate_local.numel()))
         anchor_quota_ratio = min(max(float(getattr(self.config, "talon_final_anchor_min_ratio", 0.24)), 0.0), 1.0)

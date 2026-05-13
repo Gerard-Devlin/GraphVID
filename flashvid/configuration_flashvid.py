@@ -127,6 +127,8 @@ class FlashVidConfig:
     talon_final_frame_weight: float = field(default=0.10)
     talon_anchor_keep_bonus: float = field(default=0.10)
     talon_recall_keep_bonus: float = field(default=0.08)
+    talon_prior_candidate_ratio: float = field(default=0.12)
+    talon_prior_keep_bonus: float = field(default=0.06)
     talon_final_anchor_min_ratio: float = field(default=0.24)
     talon_final_recall_min_ratio: float = field(default=0.10)
     talon_force_anchor_recall_quota: bool = field(default=True)

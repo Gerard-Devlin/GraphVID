@@ -91,6 +91,8 @@ class BenchmarkArgs:
     talon_final_frame_weight: float = field(default=0.10)
     talon_anchor_keep_bonus: float = field(default=0.10)
     talon_recall_keep_bonus: float = field(default=0.08)
+    talon_prior_candidate_ratio: float = field(default=0.12)
+    talon_prior_keep_bonus: float = field(default=0.06)
     talon_final_anchor_min_ratio: float = field(default=0.24)
     talon_final_recall_min_ratio: float = field(default=0.10)
     talon_force_anchor_recall_quota: bool = field(default=True)
@@ -1080,6 +1082,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_final_frame_weight=args.talon_final_frame_weight,
         talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
+        talon_prior_keep_bonus=args.talon_prior_keep_bonus,
         talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
         talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
         talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
@@ -1191,6 +1195,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_final_frame_weight=args.talon_final_frame_weight,
         talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
         talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
+        talon_prior_keep_bonus=args.talon_prior_keep_bonus,
         talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
         talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
         talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
