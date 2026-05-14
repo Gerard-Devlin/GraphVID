@@ -156,6 +156,14 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_track_tokens_per_slot),
             "--talon_track_score",
             args.talon_track_score,
+            "--talon_absorb_dropped_tokens",
+            _str_bool(args.talon_absorb_dropped_tokens),
+            "--talon_absorb_ratio",
+            str(args.talon_absorb_ratio),
+            "--talon_absorb_alpha",
+            str(args.talon_absorb_alpha),
+            "--talon_absorb_score",
+            args.talon_absorb_score,
             "--talon_rank_min",
             "1",
             "--talon_rank_max",
@@ -410,6 +418,10 @@ def main() -> None:
     parser.add_argument("--talon_track_budget_ratio", type=float, default=0.12)
     parser.add_argument("--talon_track_tokens_per_slot", type=int, default=1)
     parser.add_argument("--talon_track_score", default="combined", choices=["combined", "fused", "question", "event"])
+    parser.add_argument("--talon_absorb_dropped_tokens", type=_parse_bool, default=False)
+    parser.add_argument("--talon_absorb_ratio", type=float, default=0.35)
+    parser.add_argument("--talon_absorb_alpha", type=float, default=0.25)
+    parser.add_argument("--talon_absorb_score", default="combined", choices=["combined", "fused", "question", "event"])
     args = parser.parse_args()
 
     if args.gpu_ids.strip():

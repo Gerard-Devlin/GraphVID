@@ -693,6 +693,66 @@ def _apply_track_coverage(
     return torch.sort(chosen.to(dtype=torch.long).unique()).values
 
 
+def _absorb_dropped_tokens(
+    flat_features: torch.Tensor,
+    chosen: torch.Tensor,
+    combined_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    innovation_scores: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    out = flat_features[chosen].clone()
+    if not _safe_bool(getattr(config, "talon_absorb_dropped_tokens", False)):
+        return out
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration not in ("medium", "long"):
+        return out
+    absorb_alpha = min(max(float(getattr(config, "talon_absorb_alpha", 0.25)), 0.0), 1.0)
+    absorb_ratio = min(max(float(getattr(config, "talon_absorb_ratio", 0.35)), 0.0), 1.0)
+    if absorb_alpha <= 0.0 or absorb_ratio <= 0.0:
+        return out
+
+    score = _score_by_mode(
+        getattr(config, "talon_absorb_score", "combined"),
+        combined_scores,
+        fused_scores,
+        question_scores,
+        innovation_scores,
+    )
+    chosen_pos = torch.full((num_frames * num_visual_tokens,), -1, dtype=torch.long, device=chosen.device)
+    chosen_pos[chosen] = torch.arange(chosen.numel(), dtype=torch.long, device=chosen.device)
+    selected_mask = chosen_pos >= 0
+
+    for t in range(num_frames):
+        start = t * num_visual_tokens
+        end = start + num_visual_tokens
+        frame_idx = torch.arange(start, end, dtype=torch.long, device=chosen.device)
+        selected = frame_idx[selected_mask[frame_idx]]
+        dropped = frame_idx[~selected_mask[frame_idx]]
+        if selected.numel() == 0 or dropped.numel() == 0:
+            continue
+        keep_dropped = max(1, int(round(float(dropped.numel()) * absorb_ratio)))
+        dropped = dropped[torch.topk(score[dropped], k=min(keep_dropped, int(dropped.numel())), dim=0).indices]
+
+        sel_feat = F.normalize(flat_features[selected].float(), p=2, dim=-1, eps=1e-6)
+        drop_feat = F.normalize(flat_features[dropped].float(), p=2, dim=-1, eps=1e-6)
+        assign = torch.argmax(torch.matmul(drop_feat, sel_feat.transpose(0, 1)), dim=1)
+
+        for local_sel in torch.unique(assign):
+            assigned = dropped[assign == local_sel]
+            if assigned.numel() == 0:
+                continue
+            target_global = selected[int(local_sel.item())]
+            target_out = chosen_pos[target_global]
+            weights = _normalize_scores(score[assigned]).to(dtype=flat_features.dtype).clamp_min(1e-4)
+            merged = torch.sum(flat_features[assigned] * weights.unsqueeze(-1), dim=0) / weights.sum()
+            out[target_out] = (1.0 - absorb_alpha) * out[target_out] + absorb_alpha * merged.to(dtype=out.dtype)
+    return out
+
+
 def talon_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -888,4 +948,15 @@ def talon_compression(
     flashvid_config.last_talon_duplicate_index_count = int(chosen.numel()) - int(chosen.unique().numel())
     flashvid_config.last_talon_question_aware_active = question_scores is not None
 
-    return flat_features[chosen], flat_indices[chosen]
+    output_features = _absorb_dropped_tokens(
+        flat_features=flat_features,
+        chosen=chosen,
+        combined_scores=combined_scores,
+        fused_scores=fused_scores,
+        question_scores=question_scores,
+        innovation_scores=innovation_scores,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        config=flashvid_config,
+    )
+    return output_features, flat_indices[chosen]
