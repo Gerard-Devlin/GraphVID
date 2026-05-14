@@ -148,6 +148,14 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_temporal_chunk_min_ratio),
             "--talon_temporal_chunk_score",
             args.talon_temporal_chunk_score,
+            "--talon_track_aware",
+            _str_bool(args.talon_track_aware),
+            "--talon_track_budget_ratio",
+            str(args.talon_track_budget_ratio),
+            "--talon_track_tokens_per_slot",
+            str(args.talon_track_tokens_per_slot),
+            "--talon_track_score",
+            args.talon_track_score,
             "--talon_rank_min",
             "1",
             "--talon_rank_max",
@@ -398,6 +406,10 @@ def main() -> None:
     parser.add_argument("--talon_temporal_num_chunks", type=int, default=4)
     parser.add_argument("--talon_temporal_chunk_min_ratio", type=float, default=0.18)
     parser.add_argument("--talon_temporal_chunk_score", default="combined", choices=["combined", "fused", "question", "event"])
+    parser.add_argument("--talon_track_aware", type=_parse_bool, default=False)
+    parser.add_argument("--talon_track_budget_ratio", type=float, default=0.12)
+    parser.add_argument("--talon_track_tokens_per_slot", type=int, default=1)
+    parser.add_argument("--talon_track_score", default="combined", choices=["combined", "fused", "question", "event"])
     args = parser.parse_args()
 
     if args.gpu_ids.strip():

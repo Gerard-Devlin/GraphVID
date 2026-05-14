@@ -599,6 +599,100 @@ def _apply_temporal_chunk_coverage(
     return torch.sort(chosen.to(dtype=torch.long).unique()).values
 
 
+def _score_by_mode(
+    mode: str,
+    combined_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    innovation_scores: torch.Tensor,
+) -> torch.Tensor:
+    mode = str(mode or "combined").strip().lower()
+    if mode == "fused":
+        return fused_scores
+    if mode == "question" and question_scores is not None:
+        return question_scores
+    if mode == "event":
+        return innovation_scores
+    return combined_scores
+
+
+def _apply_track_coverage(
+    chosen: torch.Tensor,
+    source_to_slot: torch.Tensor,
+    combined_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    innovation_scores: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    total_budget: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    if not _safe_bool(getattr(config, "talon_track_aware", False)):
+        return chosen
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration not in ("medium", "long"):
+        return chosen
+    if chosen.numel() == 0 or total_budget <= 0 or source_to_slot.numel() == 0:
+        return chosen
+
+    score = _score_by_mode(
+        getattr(config, "talon_track_score", "combined"),
+        combined_scores,
+        fused_scores,
+        question_scores,
+        innovation_scores,
+    )
+    track_ratio = min(max(float(getattr(config, "talon_track_budget_ratio", 0.12)), 0.0), 0.60)
+    tokens_per_slot = max(1, int(getattr(config, "talon_track_tokens_per_slot", 1) or 1))
+    track_budget = max(1, int(round(float(total_budget) * track_ratio)))
+    num_slots = min(num_visual_tokens, max(1, int(math.ceil(track_budget / float(tokens_per_slot)))))
+
+    flat_slots = source_to_slot.reshape(num_frames * num_visual_tokens).to(dtype=torch.long).clamp(0, num_visual_tokens - 1)
+    slot_scores = torch.full((num_visual_tokens,), -1e9, dtype=torch.float32, device=chosen.device)
+    try:
+        slot_scores.scatter_reduce_(0, flat_slots, score.float(), reduce="amax", include_self=True)
+    except Exception:
+        for slot in range(num_visual_tokens):
+            vals = score[flat_slots == slot]
+            if vals.numel() > 0:
+                slot_scores[slot] = vals.max()
+
+    top_slots = torch.topk(slot_scores, k=min(num_slots, num_visual_tokens), dim=0).indices
+    chosen = torch.sort(chosen.to(dtype=torch.long).unique()).values
+    chosen_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=chosen.device)
+    chosen_mask[chosen] = True
+    track_picks: List[torch.Tensor] = []
+    for slot in top_slots:
+        members = torch.where(flat_slots == int(slot.item()))[0]
+        if members.numel() == 0:
+            continue
+        members = members[~chosen_mask[members]]
+        if members.numel() == 0:
+            continue
+        take = members[torch.topk(score[members], k=min(tokens_per_slot, int(members.numel())), dim=0).indices]
+        track_picks.append(take)
+        chosen_mask[take] = True
+
+    if not track_picks:
+        return chosen
+    track_tokens = torch.cat(track_picks, dim=0).unique()
+    chosen = torch.cat([chosen, track_tokens], dim=0).unique()
+    if chosen.numel() > total_budget:
+        protected = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=chosen.device)
+        protected[track_tokens] = True
+        removable = chosen[~protected[chosen]]
+        overflow = int(chosen.numel()) - int(total_budget)
+        if removable.numel() > 0 and overflow > 0:
+            remove = removable[torch.topk(-combined_scores[removable], k=min(overflow, int(removable.numel())), dim=0).indices]
+            remove_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=chosen.device)
+            remove_mask[remove] = True
+            chosen = chosen[~remove_mask[chosen]]
+    if chosen.numel() > total_budget:
+        chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
+    return torch.sort(chosen.to(dtype=torch.long).unique()).values
+
+
 def talon_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -743,6 +837,18 @@ def talon_compression(
         chosen = torch.topk(combined_scores, k=1, dim=0).indices.sort().values
     chosen = _apply_temporal_chunk_coverage(
         chosen=chosen,
+        combined_scores=combined_scores,
+        fused_scores=fused_scores,
+        question_scores=question_scores,
+        innovation_scores=innovation_scores,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        total_budget=total_budget,
+        config=flashvid_config,
+    )
+    chosen = _apply_track_coverage(
+        chosen=chosen,
+        source_to_slot=source_to_slot,
         combined_scores=combined_scores,
         fused_scores=fused_scores,
         question_scores=question_scores,

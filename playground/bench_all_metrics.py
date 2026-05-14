@@ -146,6 +146,10 @@ class BenchmarkArgs:
     talon_temporal_num_chunks: int = field(default=4)
     talon_temporal_chunk_min_ratio: float = field(default=0.18)
     talon_temporal_chunk_score: str = field(default="combined")
+    talon_track_aware: bool = field(default=False)
+    talon_track_budget_ratio: float = field(default=0.12)
+    talon_track_tokens_per_slot: int = field(default=1)
+    talon_track_score: str = field(default="combined")
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -1458,6 +1462,10 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
         talon_temporal_chunk_score=args.talon_temporal_chunk_score,
+        talon_track_aware=args.talon_track_aware,
+        talon_track_budget_ratio=args.talon_track_budget_ratio,
+        talon_track_tokens_per_slot=args.talon_track_tokens_per_slot,
+        talon_track_score=args.talon_track_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1604,6 +1612,10 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
         talon_temporal_chunk_score=args.talon_temporal_chunk_score,
+        talon_track_aware=args.talon_track_aware,
+        talon_track_budget_ratio=args.talon_track_budget_ratio,
+        talon_track_tokens_per_slot=args.talon_track_tokens_per_slot,
+        talon_track_score=args.talon_track_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
