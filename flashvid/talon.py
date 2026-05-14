@@ -519,6 +519,86 @@ def _select_tokens(
     return chosen, budgets, anchor_mask, event_mask, recall_mask
 
 
+def _apply_temporal_chunk_coverage(
+    chosen: torch.Tensor,
+    combined_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    innovation_scores: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    total_budget: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    if not _safe_bool(getattr(config, "talon_temporal_chunk_aware", False)):
+        return chosen
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration not in ("medium", "long"):
+        return chosen
+    if chosen.numel() == 0 or total_budget <= 0 or num_frames <= 1:
+        return chosen
+
+    num_chunks = max(1, min(num_frames, int(getattr(config, "talon_temporal_num_chunks", 4) or 4)))
+    chunk_ratio = min(max(float(getattr(config, "talon_temporal_chunk_min_ratio", 0.18)), 0.0), 0.80)
+    min_per_chunk = max(1, int(round((float(total_budget) / float(num_chunks)) * chunk_ratio)))
+    score_mode = str(getattr(config, "talon_temporal_chunk_score", "combined") or "combined").strip().lower()
+    if score_mode == "fused":
+        score = fused_scores
+    elif score_mode == "question" and question_scores is not None:
+        score = question_scores
+    elif score_mode == "event":
+        score = innovation_scores
+    else:
+        score = combined_scores
+
+    chosen = torch.sort(chosen.to(dtype=torch.long).unique()).values
+    chosen_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=chosen.device)
+    chosen_mask[chosen] = True
+    protected_mask = torch.zeros_like(chosen_mask)
+
+    chunk_edges = torch.linspace(0, num_frames, steps=num_chunks + 1, device=chosen.device)
+    for chunk_idx in range(num_chunks):
+        start_f = int(torch.floor(chunk_edges[chunk_idx]).item())
+        end_f = int(torch.floor(chunk_edges[chunk_idx + 1]).item())
+        end_f = max(end_f, start_f + 1)
+        start_f = min(start_f, num_frames)
+        end_f = min(end_f, num_frames)
+        if start_f >= end_f:
+            continue
+        start = start_f * num_visual_tokens
+        end = end_f * num_visual_tokens
+        chunk_slice = torch.arange(start, end, dtype=torch.long, device=chosen.device)
+        existing = chunk_slice[chosen_mask[chunk_slice]]
+        if existing.numel() >= min_per_chunk:
+            protected_mask[existing] = True
+            continue
+        need = min_per_chunk - int(existing.numel())
+        candidates = chunk_slice[~chosen_mask[chunk_slice]]
+        if candidates.numel() == 0:
+            protected_mask[existing] = True
+            continue
+        add = candidates[torch.topk(score[candidates], k=min(need, int(candidates.numel())), dim=0).indices]
+        protected_mask[existing] = True
+        protected_mask[add] = True
+        chosen = torch.cat([chosen, add], dim=0).unique()
+        chosen_mask[add] = True
+
+    if chosen.numel() > total_budget:
+        removable = chosen[~protected_mask[chosen]]
+        overflow = int(chosen.numel()) - int(total_budget)
+        if removable.numel() > 0 and overflow > 0:
+            remove_k = min(overflow, int(removable.numel()))
+            remove = removable[torch.topk(-combined_scores[removable], k=remove_k, dim=0).indices]
+            keep_mask = torch.ones((chosen.numel(),), dtype=torch.bool, device=chosen.device)
+            remove_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=chosen.device)
+            remove_mask[remove] = True
+            keep_mask &= ~remove_mask[chosen]
+            chosen = chosen[keep_mask]
+    if chosen.numel() > total_budget:
+        chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
+    return torch.sort(chosen.to(dtype=torch.long).unique()).values
+
+
 def talon_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -661,6 +741,17 @@ def talon_compression(
         )
     if chosen.numel() == 0:
         chosen = torch.topk(combined_scores, k=1, dim=0).indices.sort().values
+    chosen = _apply_temporal_chunk_coverage(
+        chosen=chosen,
+        combined_scores=combined_scores,
+        fused_scores=fused_scores,
+        question_scores=question_scores,
+        innovation_scores=innovation_scores,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        total_budget=total_budget,
+        config=flashvid_config,
+    )
 
     chosen_mask = torch.zeros((num_tokens,), dtype=torch.bool, device=device)
     chosen_mask[chosen] = True
