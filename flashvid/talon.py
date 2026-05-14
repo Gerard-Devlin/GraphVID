@@ -474,6 +474,29 @@ def _select_tokens(
     global_ratio = min(max(float(getattr(config, "talon_global_topk_ratio", 0.70)), 0.0), 1.0)
     event_ratio_cfg = min(max(float(getattr(config, "talon_event_budget_ratio", 0.30)), 0.0), 1.0)
     duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    task_category = str(getattr(config, "current_task_category", "") or "").strip().lower()
+    category = str(getattr(config, "current_category", "") or "").strip().lower()
+    visual_task = (
+        _safe_bool(getattr(config, "talon_visual_task_balance", False))
+        and duration in ("medium", "long")
+        and (
+            "object" in task_category
+            or "action" in task_category
+            or "attribute" in task_category
+            or category in ("sports competition", "film & television")
+        )
+    )
+    recall_ratio_override: Optional[float] = None
+    if visual_task:
+        anchor_ratio = min(
+            0.90,
+            max(anchor_ratio, float(getattr(config, "talon_visual_task_anchor_ratio", 0.84))),
+        )
+        event_ratio_cfg = min(
+            event_ratio_cfg,
+            max(0.0, float(getattr(config, "talon_visual_task_event_ratio", 0.12))),
+        )
+        recall_ratio_override = max(0.0, float(getattr(config, "talon_visual_task_recall_ratio", 0.02)))
     if _safe_bool(getattr(config, "talon_duration_aware", False)):
         if duration == "medium":
             anchor_ratio = min(
@@ -552,6 +575,8 @@ def _select_tokens(
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0 and question_grid is not None:
             recall_ratio = min(max(float(getattr(config, "talon_question_recall_ratio", 0.06)), 0.0), 0.60)
+            if recall_ratio_override is not None:
+                recall_ratio = min(recall_ratio, recall_ratio_override)
             recall_k = min(remain, max(0, int(round(budget_t * recall_ratio))))
             recall_q_weight = min(max(float(getattr(config, "talon_question_recall_qweight", 0.65)), 0.0), 1.0)
             recall_score = _normalize_scores(
