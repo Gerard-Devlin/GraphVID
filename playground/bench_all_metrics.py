@@ -154,6 +154,12 @@ class BenchmarkArgs:
     talon_absorb_ratio: float = field(default=0.35)
     talon_absorb_alpha: float = field(default=0.25)
     talon_absorb_score: str = field(default="combined")
+    talon_summary_replacement: bool = field(default=False)
+    talon_summary_ratio: float = field(default=0.08)
+    talon_summary_num_chunks: int = field(default=8)
+    talon_summary_pool_topk: int = field(default=12)
+    talon_summary_alpha: float = field(default=0.55)
+    talon_summary_score: str = field(default="combined")
     talon_transport_radius: int = field(default=1)
     talon_rank_ratio: float = field(default=0.40)
     talon_rank_min: int = field(default=2)
@@ -1482,6 +1488,12 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_absorb_ratio=args.talon_absorb_ratio,
         talon_absorb_alpha=args.talon_absorb_alpha,
         talon_absorb_score=args.talon_absorb_score,
+        talon_summary_replacement=args.talon_summary_replacement,
+        talon_summary_ratio=args.talon_summary_ratio,
+        talon_summary_num_chunks=args.talon_summary_num_chunks,
+        talon_summary_pool_topk=args.talon_summary_pool_topk,
+        talon_summary_alpha=args.talon_summary_alpha,
+        talon_summary_score=args.talon_summary_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1640,6 +1652,12 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_absorb_ratio=args.talon_absorb_ratio,
         talon_absorb_alpha=args.talon_absorb_alpha,
         talon_absorb_score=args.talon_absorb_score,
+        talon_summary_replacement=args.talon_summary_replacement,
+        talon_summary_ratio=args.talon_summary_ratio,
+        talon_summary_num_chunks=args.talon_summary_num_chunks,
+        talon_summary_pool_topk=args.talon_summary_pool_topk,
+        talon_summary_alpha=args.talon_summary_alpha,
+        talon_summary_score=args.talon_summary_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,

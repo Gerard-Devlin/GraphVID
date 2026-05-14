@@ -174,6 +174,18 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_absorb_alpha),
             "--talon_absorb_score",
             args.talon_absorb_score,
+            "--talon_summary_replacement",
+            _str_bool(args.talon_summary_replacement),
+            "--talon_summary_ratio",
+            str(args.talon_summary_ratio),
+            "--talon_summary_num_chunks",
+            str(args.talon_summary_num_chunks),
+            "--talon_summary_pool_topk",
+            str(args.talon_summary_pool_topk),
+            "--talon_summary_alpha",
+            str(args.talon_summary_alpha),
+            "--talon_summary_score",
+            args.talon_summary_score,
             "--talon_rank_min",
             "1",
             "--talon_rank_max",
@@ -437,6 +449,12 @@ def main() -> None:
     parser.add_argument("--talon_absorb_ratio", type=float, default=0.35)
     parser.add_argument("--talon_absorb_alpha", type=float, default=0.25)
     parser.add_argument("--talon_absorb_score", default="combined", choices=["combined", "fused", "question", "event"])
+    parser.add_argument("--talon_summary_replacement", type=_parse_bool, default=False)
+    parser.add_argument("--talon_summary_ratio", type=float, default=0.08)
+    parser.add_argument("--talon_summary_num_chunks", type=int, default=8)
+    parser.add_argument("--talon_summary_pool_topk", type=int, default=12)
+    parser.add_argument("--talon_summary_alpha", type=float, default=0.55)
+    parser.add_argument("--talon_summary_score", default="combined", choices=["combined", "fused", "question", "event"])
     args = parser.parse_args()
 
     if args.gpu_ids.strip():

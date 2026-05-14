@@ -778,6 +778,84 @@ def _absorb_dropped_tokens(
     return out
 
 
+def _apply_summary_replacement(
+    output_features: torch.Tensor,
+    flat_features: torch.Tensor,
+    chosen: torch.Tensor,
+    combined_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    innovation_scores: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    if not _safe_bool(getattr(config, "talon_summary_replacement", False)):
+        return output_features
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration not in ("medium", "long"):
+        return output_features
+    ratio = min(max(float(getattr(config, "talon_summary_ratio", 0.08)), 0.0), 0.50)
+    alpha = min(max(float(getattr(config, "talon_summary_alpha", 0.55)), 0.0), 1.0)
+    if ratio <= 0.0 or alpha <= 0.0 or chosen.numel() == 0:
+        return output_features
+
+    score = _score_by_mode(
+        getattr(config, "talon_summary_score", "combined"),
+        combined_scores,
+        fused_scores,
+        question_scores,
+        innovation_scores,
+    )
+    num_chunks = max(1, int(getattr(config, "talon_summary_num_chunks", 8) or 8))
+    num_chunks = min(num_chunks, num_frames)
+    total_summary = max(1, int(round(float(chosen.numel()) * ratio)))
+    pool_topk = max(1, int(getattr(config, "talon_summary_pool_topk", 12) or 12))
+
+    chosen_pos = torch.full((num_frames * num_visual_tokens,), -1, dtype=torch.long, device=chosen.device)
+    chosen_pos[chosen] = torch.arange(chosen.numel(), dtype=torch.long, device=chosen.device)
+    chunk_edges = torch.linspace(0, num_frames, steps=num_chunks + 1, device=chosen.device)
+    per_chunk = max(1, int(math.ceil(total_summary / float(num_chunks))))
+    used = 0
+    out = output_features
+
+    for chunk_idx in range(num_chunks):
+        if used >= total_summary:
+            break
+        start_f = int(torch.floor(chunk_edges[chunk_idx]).item())
+        end_f = int(torch.floor(chunk_edges[chunk_idx + 1]).item())
+        end_f = max(end_f, start_f + 1)
+        start_f = min(start_f, num_frames)
+        end_f = min(end_f, num_frames)
+        if start_f >= end_f:
+            continue
+        start = start_f * num_visual_tokens
+        end = end_f * num_visual_tokens
+        chunk_idx_flat = torch.arange(start, end, dtype=torch.long, device=chosen.device)
+        selected = chunk_idx_flat[chosen_pos[chunk_idx_flat] >= 0]
+        if selected.numel() == 0:
+            continue
+
+        take = min(per_chunk, total_summary - used, int(selected.numel()))
+        # Use strong selected tokens as representative positions; the summary
+        # still stays at valid visual-token locations and keeps RoPE alignment.
+        reps = selected[torch.topk(score[selected], k=take, dim=0).indices]
+
+        pool_k = min(pool_topk * take, int(chunk_idx_flat.numel()))
+        pool = chunk_idx_flat[torch.topk(score[chunk_idx_flat], k=pool_k, dim=0).indices]
+        pool_scores = score[pool].float()
+        weights = torch.softmax(pool_scores / 0.07, dim=0).to(dtype=flat_features.dtype)
+        summary = torch.sum(flat_features[pool] * weights.unsqueeze(-1), dim=0)
+
+        for rep in reps:
+            out_pos = int(chosen_pos[rep].item())
+            out[out_pos] = (1.0 - alpha) * out[out_pos] + alpha * summary.to(dtype=out.dtype)
+            used += 1
+            if used >= total_summary:
+                break
+    return out
+
+
 def talon_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -974,6 +1052,18 @@ def talon_compression(
     flashvid_config.last_talon_question_aware_active = question_scores is not None
 
     output_features = _absorb_dropped_tokens(
+        flat_features=flat_features,
+        chosen=chosen,
+        combined_scores=combined_scores,
+        fused_scores=fused_scores,
+        question_scores=question_scores,
+        innovation_scores=innovation_scores,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        config=flashvid_config,
+    )
+    output_features = _apply_summary_replacement(
+        output_features=output_features,
         flat_features=flat_features,
         chosen=chosen,
         combined_scores=combined_scores,
