@@ -479,23 +479,18 @@ def _select_tokens(
     strong_visual_task = (
         _safe_bool(getattr(config, "talon_visual_task_balance", False))
         and duration in ("medium", "long")
+        and category != "knowledge"
         and (
             "object" in task_category
             or "action" in task_category
-            or "attribute" in task_category
             or "counting" in task_category
         )
     )
     recall_ratio_override: Optional[float] = None
     if strong_visual_task:
-        if category == "knowledge":
-            anchor_target = float(getattr(config, "talon_knowledge_visual_anchor_ratio", 0.78))
-            event_target = float(getattr(config, "talon_knowledge_visual_event_ratio", 0.18))
-            recall_target = float(getattr(config, "talon_knowledge_visual_recall_ratio", 0.06))
-        else:
-            anchor_target = float(getattr(config, "talon_visual_task_anchor_ratio", 0.84))
-            event_target = float(getattr(config, "talon_visual_task_event_ratio", 0.12))
-            recall_target = float(getattr(config, "talon_visual_task_recall_ratio", 0.02))
+        anchor_target = float(getattr(config, "talon_visual_task_anchor_ratio", 0.84))
+        event_target = float(getattr(config, "talon_visual_task_event_ratio", 0.12))
+        recall_target = float(getattr(config, "talon_visual_task_recall_ratio", 0.02))
         anchor_ratio = min(0.90, max(anchor_ratio, anchor_target))
         event_ratio_cfg = min(event_ratio_cfg, max(0.0, event_target))
         recall_ratio_override = max(0.0, recall_target)
