@@ -181,6 +181,12 @@ class BenchmarkArgs:
     talon_anchor_safety_ratio: float = field(default=0.28)
     talon_anchor_diversity_weight: float = field(default=0.0)
     talon_anchor_candidate_multiplier: float = field(default=4.0)
+    talon_spatial_anchor_coverage: bool = field(default=False)
+    talon_spatial_anchor_ratio: float = field(default=0.35)
+    talon_spatial_anchor_rows: int = field(default=3)
+    talon_spatial_anchor_cols: int = field(default=3)
+    talon_spatial_anchor_score: str = field(default="fused")
+    talon_spatial_anchor_apply_to_short: bool = field(default=False)
     talon_frame_coverage_floor_ratio: float = field(default=0.65)
     talon_frame_importance_pooling: str = field(default="mean")
     talon_frame_importance_topk: int = field(default=6)
@@ -1382,6 +1388,12 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
         talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
         talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
+        talon_spatial_anchor_coverage=args.talon_spatial_anchor_coverage,
+        talon_spatial_anchor_ratio=args.talon_spatial_anchor_ratio,
+        talon_spatial_anchor_rows=args.talon_spatial_anchor_rows,
+        talon_spatial_anchor_cols=args.talon_spatial_anchor_cols,
+        talon_spatial_anchor_score=args.talon_spatial_anchor_score,
+        talon_spatial_anchor_apply_to_short=args.talon_spatial_anchor_apply_to_short,
         talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
         talon_frame_importance_pooling=args.talon_frame_importance_pooling,
         talon_frame_importance_topk=args.talon_frame_importance_topk,
@@ -1552,6 +1564,12 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
         talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
         talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
+        talon_spatial_anchor_coverage=args.talon_spatial_anchor_coverage,
+        talon_spatial_anchor_ratio=args.talon_spatial_anchor_ratio,
+        talon_spatial_anchor_rows=args.talon_spatial_anchor_rows,
+        talon_spatial_anchor_cols=args.talon_spatial_anchor_cols,
+        talon_spatial_anchor_score=args.talon_spatial_anchor_score,
+        talon_spatial_anchor_apply_to_short=args.talon_spatial_anchor_apply_to_short,
         talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
         talon_frame_importance_pooling=args.talon_frame_importance_pooling,
         talon_frame_importance_topk=args.talon_frame_importance_topk,

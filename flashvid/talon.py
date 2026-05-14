@@ -407,6 +407,53 @@ def _diverse_topk(
     return candidates[selected_pos]
 
 
+def _spatial_anchor_topk(
+    scores: torch.Tensor,
+    k: int,
+    local_selected: torch.Tensor,
+    num_visual_tokens: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    k = min(max(0, int(k)), int(scores.numel()))
+    if k <= 0:
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration == "short" and not _safe_bool(getattr(config, "talon_spatial_anchor_apply_to_short", False)):
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+    if not _safe_bool(getattr(config, "talon_spatial_anchor_coverage", False)):
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+
+    rows = max(1, int(getattr(config, "talon_spatial_anchor_rows", 3) or 3))
+    cols = max(1, int(getattr(config, "talon_spatial_anchor_cols", 3) or 3))
+    grid_h, grid_w = _resolve_grid_hw(num_visual_tokens, config)
+    token_ids = torch.arange(num_visual_tokens, device=scores.device, dtype=torch.long)
+    y = token_ids // max(1, grid_w)
+    x = token_ids % max(1, grid_w)
+    bin_y = torch.clamp((y * rows) // max(1, grid_h), 0, rows - 1)
+    bin_x = torch.clamp((x * cols) // max(1, grid_w), 0, cols - 1)
+    bin_ids = bin_y * cols + bin_x
+
+    picks: List[torch.Tensor] = []
+    bin_scores: List[Tuple[float, int, int]] = []
+    masked_scores = scores.float().masked_fill(local_selected, -1e9)
+    for bin_id in range(rows * cols):
+        members = torch.where(bin_ids == bin_id)[0]
+        if members.numel() == 0:
+            continue
+        vals = masked_scores[members]
+        if int((vals > -1e8).sum().item()) <= 0:
+            continue
+        pos = int(torch.argmax(vals).item())
+        token = int(members[pos].item())
+        bin_scores.append((float(vals[pos].item()), bin_id, token))
+    if not bin_scores:
+        return torch.empty((0,), dtype=torch.long, device=scores.device)
+    bin_scores.sort(key=lambda x: x[0], reverse=True)
+    for _, _, token in bin_scores[:k]:
+        picks.append(torch.tensor([token], dtype=torch.long, device=scores.device))
+    return torch.cat(picks, dim=0) if picks else torch.empty((0,), dtype=torch.long, device=scores.device)
+
+
 def _select_tokens(
     frame_features: torch.Tensor,
     fused_scores: torch.Tensor,
@@ -459,6 +506,7 @@ def _select_tokens(
     question_grid = question_scores.view(num_frames, num_visual_tokens) if question_scores is not None else None
     residual_grid = residual_scores.view(num_frames, num_visual_tokens)
     combined_grid = combined_scores.view(num_frames, num_visual_tokens)
+    spatial_score_mode = str(getattr(config, "talon_spatial_anchor_score", "fused") or "fused").strip().lower()
     selected_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
     anchor_mask = torch.zeros_like(selected_mask)
     event_mask = torch.zeros_like(selected_mask)
@@ -479,9 +527,28 @@ def _select_tokens(
             anchor_ratio_eff = anchor_ratio
         anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio_eff)))) if budget_t > 1 else budget_t
         if anchor_k > 0:
-            idx = _diverse_topk(frame_features[t], fused_grid[t], anchor_k, config)
-            local_selected[idx] = True
-            anchor_mask[t * num_visual_tokens + idx] = True
+            if spatial_score_mode == "combined":
+                spatial_scores = combined_grid[t]
+            elif spatial_score_mode == "question" and question_grid is not None:
+                spatial_scores = question_grid[t]
+            elif spatial_score_mode == "event":
+                spatial_scores = residual_grid[t]
+            else:
+                spatial_scores = fused_grid[t]
+            spatial_ratio = min(max(float(getattr(config, "talon_spatial_anchor_ratio", 0.35)), 0.0), 1.0)
+            spatial_k = min(anchor_k, int(round(anchor_k * spatial_ratio)))
+            spatial_idx = _spatial_anchor_topk(spatial_scores, spatial_k, local_selected, num_visual_tokens, config)
+            if spatial_idx.numel() > 0:
+                local_selected[spatial_idx] = True
+                anchor_mask[t * num_visual_tokens + spatial_idx] = True
+            remain_anchor = anchor_k - int(local_selected.sum().item())
+            if remain_anchor > 0:
+                anchor_scores = fused_grid[t].masked_fill(local_selected, -1e9)
+                valid = int((anchor_scores > -1e8).sum().item())
+                if valid > 0:
+                    idx = _diverse_topk(frame_features[t], anchor_scores, min(remain_anchor, valid), config)
+                    local_selected[idx] = True
+                    anchor_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0 and question_grid is not None:
             recall_ratio = min(max(float(getattr(config, "talon_question_recall_ratio", 0.06)), 0.0), 0.60)

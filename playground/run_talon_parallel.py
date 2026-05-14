@@ -110,6 +110,18 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_monotonic_base_tokens_per_frame),
             "--talon_anchor_diversity_weight",
             str(args.talon_anchor_diversity_weight),
+            "--talon_spatial_anchor_coverage",
+            _str_bool(args.talon_spatial_anchor_coverage),
+            "--talon_spatial_anchor_ratio",
+            str(args.talon_spatial_anchor_ratio),
+            "--talon_spatial_anchor_rows",
+            str(args.talon_spatial_anchor_rows),
+            "--talon_spatial_anchor_cols",
+            str(args.talon_spatial_anchor_cols),
+            "--talon_spatial_anchor_score",
+            args.talon_spatial_anchor_score,
+            "--talon_spatial_anchor_apply_to_short",
+            _str_bool(args.talon_spatial_anchor_apply_to_short),
             "--talon_frame_coverage_floor_ratio",
             str(args.talon_frame_coverage_floor_ratio),
             "--talon_frame_importance_pooling",
@@ -418,6 +430,12 @@ def main() -> None:
     parser.add_argument("--talon_monotonic_base_tokens_per_frame", type=int, default=20)
     parser.add_argument("--talon_frame_local_budget_ratio", type=float, default=1.0)
     parser.add_argument("--talon_anchor_diversity_weight", type=float, default=0.0)
+    parser.add_argument("--talon_spatial_anchor_coverage", type=_parse_bool, default=False)
+    parser.add_argument("--talon_spatial_anchor_ratio", type=float, default=0.35)
+    parser.add_argument("--talon_spatial_anchor_rows", type=int, default=3)
+    parser.add_argument("--talon_spatial_anchor_cols", type=int, default=3)
+    parser.add_argument("--talon_spatial_anchor_score", default="fused", choices=["combined", "fused", "question", "event"])
+    parser.add_argument("--talon_spatial_anchor_apply_to_short", type=_parse_bool, default=False)
     parser.add_argument("--talon_frame_coverage_floor_ratio", type=float, default=0.65)
     parser.add_argument("--talon_frame_importance_pooling", default="mean", choices=["mean", "topk", "max", "evidence"])
     parser.add_argument("--talon_frame_importance_topk", type=int, default=6)
