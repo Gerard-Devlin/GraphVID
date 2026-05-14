@@ -476,27 +476,29 @@ def _select_tokens(
     duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
     task_category = str(getattr(config, "current_task_category", "") or "").strip().lower()
     category = str(getattr(config, "current_category", "") or "").strip().lower()
-    visual_task = (
+    strong_visual_task = (
         _safe_bool(getattr(config, "talon_visual_task_balance", False))
         and duration in ("medium", "long")
         and (
             "object" in task_category
             or "action" in task_category
             or "attribute" in task_category
-            or category in ("sports competition", "film & television")
+            or "counting" in task_category
         )
     )
     recall_ratio_override: Optional[float] = None
-    if visual_task:
-        anchor_ratio = min(
-            0.90,
-            max(anchor_ratio, float(getattr(config, "talon_visual_task_anchor_ratio", 0.84))),
-        )
-        event_ratio_cfg = min(
-            event_ratio_cfg,
-            max(0.0, float(getattr(config, "talon_visual_task_event_ratio", 0.12))),
-        )
-        recall_ratio_override = max(0.0, float(getattr(config, "talon_visual_task_recall_ratio", 0.02)))
+    if strong_visual_task:
+        if category == "knowledge":
+            anchor_target = float(getattr(config, "talon_knowledge_visual_anchor_ratio", 0.78))
+            event_target = float(getattr(config, "talon_knowledge_visual_event_ratio", 0.18))
+            recall_target = float(getattr(config, "talon_knowledge_visual_recall_ratio", 0.06))
+        else:
+            anchor_target = float(getattr(config, "talon_visual_task_anchor_ratio", 0.84))
+            event_target = float(getattr(config, "talon_visual_task_event_ratio", 0.12))
+            recall_target = float(getattr(config, "talon_visual_task_recall_ratio", 0.02))
+        anchor_ratio = min(0.90, max(anchor_ratio, anchor_target))
+        event_ratio_cfg = min(event_ratio_cfg, max(0.0, event_target))
+        recall_ratio_override = max(0.0, recall_target)
     if _safe_bool(getattr(config, "talon_duration_aware", False)):
         if duration == "medium":
             anchor_ratio = min(

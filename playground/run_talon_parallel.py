@@ -170,6 +170,12 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_visual_task_event_ratio),
             "--talon_visual_task_recall_ratio",
             str(args.talon_visual_task_recall_ratio),
+            "--talon_knowledge_visual_anchor_ratio",
+            str(args.talon_knowledge_visual_anchor_ratio),
+            "--talon_knowledge_visual_event_ratio",
+            str(args.talon_knowledge_visual_event_ratio),
+            "--talon_knowledge_visual_recall_ratio",
+            str(args.talon_knowledge_visual_recall_ratio),
             "--talon_temporal_chunk_aware",
             _str_bool(args.talon_temporal_chunk_aware),
             "--talon_temporal_num_chunks",
@@ -467,6 +473,9 @@ def main() -> None:
     parser.add_argument("--talon_visual_task_anchor_ratio", type=float, default=0.84)
     parser.add_argument("--talon_visual_task_event_ratio", type=float, default=0.12)
     parser.add_argument("--talon_visual_task_recall_ratio", type=float, default=0.02)
+    parser.add_argument("--talon_knowledge_visual_anchor_ratio", type=float, default=0.78)
+    parser.add_argument("--talon_knowledge_visual_event_ratio", type=float, default=0.18)
+    parser.add_argument("--talon_knowledge_visual_recall_ratio", type=float, default=0.06)
     parser.add_argument("--talon_temporal_chunk_aware", type=_parse_bool, default=False)
     parser.add_argument("--talon_temporal_num_chunks", type=int, default=4)
     parser.add_argument("--talon_temporal_chunk_min_ratio", type=float, default=0.18)

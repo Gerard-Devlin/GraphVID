@@ -146,6 +146,9 @@ class BenchmarkArgs:
     talon_visual_task_anchor_ratio: float = field(default=0.84)
     talon_visual_task_event_ratio: float = field(default=0.12)
     talon_visual_task_recall_ratio: float = field(default=0.02)
+    talon_knowledge_visual_anchor_ratio: float = field(default=0.78)
+    talon_knowledge_visual_event_ratio: float = field(default=0.18)
+    talon_knowledge_visual_recall_ratio: float = field(default=0.06)
     talon_temporal_chunk_aware: bool = field(default=False)
     talon_temporal_num_chunks: int = field(default=4)
     talon_temporal_chunk_min_ratio: float = field(default=0.18)
@@ -1496,6 +1499,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_visual_task_anchor_ratio=args.talon_visual_task_anchor_ratio,
         talon_visual_task_event_ratio=args.talon_visual_task_event_ratio,
         talon_visual_task_recall_ratio=args.talon_visual_task_recall_ratio,
+        talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
+        talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
+        talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
         talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
@@ -1670,6 +1676,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_visual_task_anchor_ratio=args.talon_visual_task_anchor_ratio,
         talon_visual_task_event_ratio=args.talon_visual_task_event_ratio,
         talon_visual_task_recall_ratio=args.talon_visual_task_recall_ratio,
+        talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
+        talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
+        talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
         talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
