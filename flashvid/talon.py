@@ -285,9 +285,24 @@ def _frame_importance(
     config: FlashVidConfig,
 ) -> torch.Tensor:
     num_frames, num_visual_tokens = cls_attention.shape
-    attn = _normalize_scores(cls_attention.float().mean(dim=1))
-    resid = _normalize_scores(residual_scores.view(num_frames, num_visual_tokens).mean(dim=1))
-    fused = _normalize_scores(fused_scores.view(num_frames, num_visual_tokens).mean(dim=1))
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+
+    def pool_frame_score(scores: torch.Tensor) -> torch.Tensor:
+        grid = scores.view(num_frames, num_visual_tokens).float()
+        pooling = str(getattr(config, "talon_frame_importance_pooling", "mean") or "mean").strip().lower()
+        if duration == "short" and not _safe_bool(getattr(config, "talon_frame_importance_apply_to_short", False)):
+            pooling = "mean"
+        if pooling in ("topk", "max", "evidence"):
+            if pooling == "max":
+                return grid.max(dim=1).values
+            topk = max(1, int(getattr(config, "talon_frame_importance_topk", 6) or 6))
+            topk = min(topk, num_visual_tokens)
+            return torch.topk(grid, k=topk, dim=1).values.mean(dim=1)
+        return grid.mean(dim=1)
+
+    attn = _normalize_scores(pool_frame_score(cls_attention))
+    resid = _normalize_scores(pool_frame_score(residual_scores))
+    fused = _normalize_scores(pool_frame_score(fused_scores))
     boundary = torch.zeros_like(attn)
     if num_frames > 0:
         boundary[0] = 1.0
@@ -309,7 +324,17 @@ def _allocate_frame_budget(total_budget: int, frame_importance: torch.Tensor, co
     # Video QA is very sensitive to temporal coverage. In the low-budget regime,
     # do not let attention-weighted allocation starve "boring" frames that may
     # contain the evidence for a later question.
-    coverage_floor_ratio = min(max(float(getattr(config, "talon_frame_coverage_floor_ratio", 0.65)), 0.0), 1.0)
+    coverage_floor_ratio = float(getattr(config, "talon_frame_coverage_floor_ratio", 0.65))
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration == "medium":
+        medium_floor = float(getattr(config, "talon_medium_frame_coverage_floor_ratio", -1.0))
+        if medium_floor >= 0.0:
+            coverage_floor_ratio = medium_floor
+    elif duration == "long":
+        long_floor = float(getattr(config, "talon_long_frame_coverage_floor_ratio", -1.0))
+        if long_floor >= 0.0:
+            coverage_floor_ratio = long_floor
+    coverage_floor_ratio = min(max(coverage_floor_ratio, 0.0), 1.0)
     coverage_floor = int(math.floor(avg_budget * coverage_floor_ratio))
     min_each = min(max(min_anchor, coverage_floor), max(0, total_budget // max(1, num_frames)))
     budgets = [min_each for _ in range(num_frames)]
