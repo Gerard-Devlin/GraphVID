@@ -264,12 +264,16 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_background_max_ratio),
             "--talon_innovation_attention_weight",
             "0.65",
+            "--talon_lite_enabled",
+            _str_bool(args.talon_lite_enabled),
             "--talon_echo_residual_weight",
             str(args.talon_echo_residual_weight),
             "--talon_echo_topk_neighbors",
             str(args.talon_echo_topk_neighbors),
             "--talon_echo_temperature",
             str(args.talon_echo_temperature),
+            "--talon_echo_score_mode",
+            args.talon_echo_score_mode,
             "--talon_final_fused_weight",
             "0.70",
             "--talon_final_residual_weight",
@@ -502,9 +506,11 @@ def main() -> None:
     parser.add_argument("--talon_medium_frame_coverage_floor_ratio", type=float, default=-1.0)
     parser.add_argument("--talon_long_frame_coverage_floor_ratio", type=float, default=-1.0)
     parser.add_argument("--talon_budget_mode", default="attention", choices=["attention", "uniform"])
+    parser.add_argument("--talon_lite_enabled", type=_parse_bool, default=False)
     parser.add_argument("--talon_echo_residual_weight", type=float, default=0.0)
     parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
     parser.add_argument("--talon_echo_temperature", type=float, default=0.07)
+    parser.add_argument("--talon_echo_score_mode", default="mse", choices=["mse", "cosine"])
     parser.add_argument("--talon_output_mode", default="manifold", choices=["manifold", "full", "lowrank", "coefficient"])
     parser.add_argument("--talon_reconstruction_blend", type=float, default=0.0)
     parser.add_argument("--talon_anchor_score_weight", type=float, default=0.35)

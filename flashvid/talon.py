@@ -240,7 +240,7 @@ def _transport_align(segment_features: torch.Tensor, config: FlashVidConfig) -> 
 
 
 def _echo_residual(segment_features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
-    """Temporal echo residual: high when a token is poorly explained by previous-frame neighbors."""
+    """Temporal echo novelty: high when previous-frame neighbors cannot explain a token."""
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     residual = torch.zeros((num_frames, num_visual_tokens), dtype=torch.float32, device=segment_features.device)
     if num_frames <= 1:
@@ -250,6 +250,7 @@ def _echo_residual(segment_features: torch.Tensor, config: FlashVidConfig) -> to
     temperature = max(1e-4, float(getattr(config, "talon_echo_temperature", 0.07)))
     topk = max(1, int(getattr(config, "talon_echo_topk_neighbors", 4) or 4))
     topk = min(topk, int(neighbor_idx.shape[1]))
+    score_mode = str(getattr(config, "talon_echo_score_mode", "mse") or "mse").strip().lower()
 
     for t in range(1, num_frames):
         prev = segment_features[t - 1]
@@ -261,7 +262,13 @@ def _echo_residual(segment_features: torch.Tensor, config: FlashVidConfig) -> to
         top_idx = torch.gather(neighbor_idx, dim=1, index=top_pos)
         weights = torch.softmax(top_vals / temperature, dim=1).to(dtype=cur.dtype)
         pred = torch.sum(prev[top_idx] * weights.unsqueeze(-1), dim=1)
-        residual[t] = torch.mean((cur.float() - pred.float()) ** 2, dim=-1)
+        if score_mode in ("cos", "cosine", "similarity"):
+            cur_n = F.normalize(cur.float(), p=2, dim=-1, eps=1e-6)
+            pred_n = F.normalize(pred.float(), p=2, dim=-1, eps=1e-6)
+            echo_sim = torch.sum(cur_n * pred_n, dim=-1).clamp(-1.0, 1.0)
+            residual[t] = 0.5 * (1.0 - echo_sim)
+        else:
+            residual[t] = torch.mean((cur.float() - pred.float()) ** 2, dim=-1)
     residual[0] = residual[1] if num_frames > 1 else residual[0]
     return residual
 
@@ -1230,28 +1237,36 @@ def talon_compression(
 
     target_per_frame = _resolve_target_per_frame(video_features, question_features, flashvid_config)
     total_budget = _resolve_total_budget(num_frames, num_visual_tokens, flashvid_config, target_per_frame)
+    lite_enabled = _safe_bool(getattr(flashvid_config, "talon_lite_enabled", False))
 
     fused_scores, question_scores = _question_aware_scores(flat_features, flat_attention, question_features, flashvid_config)
-    aligned, source_to_slot = _transport_align(video_features, flashvid_config)
-
-    max_rank = min(
-        max(0, int(getattr(flashvid_config, "talon_rank_max", 32))),
-        num_visual_tokens,
-        max(0, int(round((total_budget / max(1, num_frames)) * float(getattr(flashvid_config, "talon_background_max_ratio", 0.45))))),
-    )
-    min_rank = max(0, int(getattr(flashvid_config, "talon_rank_min", 2)))
-    if max_rank > 0 and max_rank < min_rank:
-        max_rank = min(max_rank, num_visual_tokens)
-    rank = max_rank
-    basis, eigvals = _lowrank_basis(aligned, rank=rank, config=flashvid_config)
-    reconstruction = _reconstruct_source(aligned, source_to_slot, basis)
-    lowrank_residual = torch.mean((video_features.float() - reconstruction.float()) ** 2, dim=-1)
     echo_residual = _echo_residual(video_features, flashvid_config)
-    echo_weight = min(max(float(getattr(flashvid_config, "talon_echo_residual_weight", 0.0)), 0.0), 1.0)
-    residual_scores = _normalize_scores(
-        (1.0 - echo_weight) * _normalize_scores(lowrank_residual.reshape(num_tokens))
-        + echo_weight * _normalize_scores(echo_residual.reshape(num_tokens))
-    )
+    if lite_enabled:
+        source_to_slot = torch.arange(num_visual_tokens, dtype=torch.long, device=device).unsqueeze(0).repeat(num_frames, 1)
+        reconstruction = torch.zeros_like(video_features)
+        max_rank = 0
+        rank = 0
+        residual_scores = _normalize_scores(echo_residual.reshape(num_tokens))
+    else:
+        aligned, source_to_slot = _transport_align(video_features, flashvid_config)
+
+        max_rank = min(
+            max(0, int(getattr(flashvid_config, "talon_rank_max", 32))),
+            num_visual_tokens,
+            max(0, int(round((total_budget / max(1, num_frames)) * float(getattr(flashvid_config, "talon_background_max_ratio", 0.45))))),
+        )
+        min_rank = max(0, int(getattr(flashvid_config, "talon_rank_min", 2)))
+        if max_rank > 0 and max_rank < min_rank:
+            max_rank = min(max_rank, num_visual_tokens)
+        rank = max_rank
+        basis, eigvals = _lowrank_basis(aligned, rank=rank, config=flashvid_config)
+        reconstruction = _reconstruct_source(aligned, source_to_slot, basis)
+        lowrank_residual = torch.mean((video_features.float() - reconstruction.float()) ** 2, dim=-1)
+        echo_weight = min(max(float(getattr(flashvid_config, "talon_echo_residual_weight", 0.0)), 0.0), 1.0)
+        residual_scores = _normalize_scores(
+            (1.0 - echo_weight) * _normalize_scores(lowrank_residual.reshape(num_tokens))
+            + echo_weight * _normalize_scores(echo_residual.reshape(num_tokens))
+        )
     residual_norm = residual_scores
 
     innovation_attention_weight = min(max(float(getattr(flashvid_config, "talon_innovation_attention_weight", 0.45)), 0.0), 1.0)

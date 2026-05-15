@@ -98,9 +98,11 @@ class FlashVidConfig:
     talon_budget_mode: str = field(default="uniform")  # uniform | attention
     talon_transport_mode: str = field(default="hard")  # hard | soft
     talon_transport_temperature: float = field(default=0.07)
+    talon_lite_enabled: bool = field(default=False)
     talon_echo_temperature: float = field(default=0.07)
     talon_echo_topk_neighbors: int = field(default=4)
     talon_echo_residual_weight: float = field(default=0.0)
+    talon_echo_score_mode: str = field(default="mse")  # mse | cosine
     talon_rd_spectral_weight: float = field(default=1.0)
     talon_rd_innovation_weight: float = field(default=1.0)
     talon_use_question_innovation: bool = field(default=True)
