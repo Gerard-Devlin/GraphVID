@@ -68,17 +68,31 @@ def _question_aware_scores(
     token_features = F.normalize(flat_features.float(), p=2, dim=-1, eps=1e-6)
     question_tokens = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
     pooling = str(getattr(config, "talon_question_pooling", "mean") or "mean").strip().lower()
+    contrast_weight = min(max(float(getattr(config, "talon_question_contrast_weight", 0.0)), 0.0), 1.0)
     if pooling in ("max", "topk", "token_max", "token_topk"):
         token_question_sim = torch.matmul(token_features, question_tokens.transpose(0, 1))
         if pooling in ("topk", "token_topk"):
             topk = max(1, int(getattr(config, "talon_question_pooling_topk", 4) or 4))
             topk = min(topk, int(token_question_sim.shape[-1]))
-            question_scores = _normalize_scores(torch.topk(token_question_sim, k=topk, dim=-1).values.mean(dim=-1))
+            question_raw = torch.topk(token_question_sim, k=topk, dim=-1).values.mean(dim=-1)
         else:
-            question_scores = _normalize_scores(token_question_sim.max(dim=-1).values)
+            question_raw = token_question_sim.max(dim=-1).values
+        if contrast_weight > 0.0 and int(token_question_sim.shape[-1]) > 1:
+            # Option-heavy prompts need discriminative evidence, not just tokens
+            # that are broadly similar to the whole prompt. A high peak over the
+            # text-token average favors visual tokens tied to a specific object,
+            # action, or option phrase.
+            contrast = token_question_sim.max(dim=-1).values - token_question_sim.mean(dim=-1)
+            question_raw = (1.0 - contrast_weight) * _normalize_scores(question_raw) + contrast_weight * _normalize_scores(contrast)
+        question_scores = _normalize_scores(question_raw)
     else:
         question_proto = F.normalize(question_tokens.mean(dim=0), p=2, dim=-1, eps=1e-6)
-        question_scores = _normalize_scores(torch.matmul(token_features, question_proto))
+        question_raw = torch.matmul(token_features, question_proto)
+        if contrast_weight > 0.0 and int(question_tokens.shape[0]) > 1:
+            token_question_sim = torch.matmul(token_features, question_tokens.transpose(0, 1))
+            contrast = token_question_sim.max(dim=-1).values - token_question_sim.mean(dim=-1)
+            question_raw = (1.0 - contrast_weight) * _normalize_scores(question_raw) + contrast_weight * _normalize_scores(contrast)
+        question_scores = _normalize_scores(question_raw)
     beta = min(max(float(getattr(config, "question_reweight_beta", 0.35)), 0.0), 1.0)
     fused = _normalize_scores((1.0 - beta) * attention_scores + beta * question_scores)
     return fused, question_scores
