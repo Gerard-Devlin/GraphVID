@@ -479,7 +479,7 @@ def _select_tokens(
     strong_visual_task = (
         _safe_bool(getattr(config, "talon_visual_task_balance", False))
         and duration in ("medium", "long")
-        and category != "knowledge"
+        and category not in ("knowledge", "life record")
         and (
             "object" in task_category
             or "action" in task_category
