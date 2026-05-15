@@ -1151,6 +1151,64 @@ def _apply_summary_replacement(
     return out
 
 
+def _apply_lowrank_background_output(
+    output_features: torch.Tensor,
+    chosen: torch.Tensor,
+    reconstruction: torch.Tensor,
+    fused_scores: torch.Tensor,
+    residual_scores: torch.Tensor,
+    recall_mask: torch.Tensor,
+    event_mask: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    config: FlashVidConfig,
+) -> Tuple[torch.Tensor, int]:
+    mode = str(getattr(config, "talon_output_mode", "manifold") or "manifold").strip().lower()
+    if mode not in ("full", "lowrank", "coefficient"):
+        return output_features, 0
+    if chosen.numel() == 0 or reconstruction.numel() == 0:
+        return output_features, 0
+
+    recon_flat = reconstruction.reshape(num_frames * num_visual_tokens, -1)
+    chosen = chosen.to(dtype=torch.long)
+    chosen_recall = recall_mask[chosen] if recall_mask.numel() else torch.zeros_like(chosen, dtype=torch.bool)
+    chosen_event = event_mask[chosen] if event_mask.numel() else torch.zeros_like(chosen, dtype=torch.bool)
+
+    # Full TALON emits two kinds of visual tokens:
+    # - sparse raw innovations/recalled evidence stay untouched;
+    # - low-rank background tokens are projected back to the model manifold via
+    #   the transport-aligned reconstruction.  We select background slots from
+    #   stable semantic anchors rather than high-residual event tokens.
+    background_candidate = ~(chosen_recall | chosen_event)
+    if int(background_candidate.sum().item()) <= 0:
+        background_candidate = ~chosen_recall
+    if int(background_candidate.sum().item()) <= 0:
+        return output_features, 0
+
+    rank_ratio = min(max(float(getattr(config, "talon_rank_ratio", 0.40)), 0.0), 0.95)
+    target_background = int(round(float(chosen.numel()) * rank_ratio))
+    target_background = min(max(1, target_background), int(background_candidate.sum().item()))
+
+    anchor_weight = min(max(float(getattr(config, "talon_anchor_score_weight", 0.35)), 0.0), 1.0)
+    background_score = _normalize_scores(
+        anchor_weight * fused_scores[chosen]
+        + (1.0 - anchor_weight) * (1.0 - _normalize_scores(residual_scores[chosen]))
+    )
+    background_score = background_score.masked_fill(~background_candidate, -1e9)
+
+    bg_pos = torch.topk(background_score, k=target_background, dim=0).indices
+    blend = min(max(float(getattr(config, "talon_reconstruction_blend", 0.0)), 0.0), 1.0)
+    if mode in ("full", "lowrank") and blend <= 0.0:
+        blend = 0.65
+    if mode == "coefficient":
+        blend = 1.0
+
+    recon = recon_flat[chosen[bg_pos]].to(dtype=output_features.dtype)
+    output_features = output_features.clone()
+    output_features[bg_pos] = (1.0 - blend) * output_features[bg_pos] + blend * recon
+    return output_features, int(bg_pos.numel())
+
+
 def talon_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -1368,6 +1426,19 @@ def talon_compression(
         num_visual_tokens=num_visual_tokens,
         config=flashvid_config,
     )
+    output_features, lowrank_output_tokens = _apply_lowrank_background_output(
+        output_features=output_features,
+        chosen=chosen,
+        reconstruction=reconstruction,
+        fused_scores=fused_scores,
+        residual_scores=residual_scores,
+        recall_mask=recall_mask,
+        event_mask=event_mask,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        config=flashvid_config,
+    )
+    flashvid_config.last_talon_rank_tokens = int(lowrank_output_tokens)
     output_features = _apply_summary_replacement(
         output_features=output_features,
         flat_features=flat_features,

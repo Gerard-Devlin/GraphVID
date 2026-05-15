@@ -248,12 +248,20 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_summary_alpha),
             "--talon_summary_score",
             args.talon_summary_score,
+            "--talon_output_mode",
+            args.talon_output_mode,
+            "--talon_reconstruction_blend",
+            str(args.talon_reconstruction_blend),
+            "--talon_anchor_score_weight",
+            str(args.talon_anchor_score_weight),
+            "--talon_rank_ratio",
+            str(args.talon_rank_ratio),
             "--talon_rank_min",
-            "1",
+            str(args.talon_rank_min),
             "--talon_rank_max",
-            "8",
+            str(args.talon_rank_max),
             "--talon_background_max_ratio",
-            "0.35",
+            str(args.talon_background_max_ratio),
             "--talon_innovation_attention_weight",
             "0.65",
             "--talon_echo_residual_weight",
@@ -497,6 +505,13 @@ def main() -> None:
     parser.add_argument("--talon_echo_residual_weight", type=float, default=0.0)
     parser.add_argument("--talon_echo_topk_neighbors", type=int, default=4)
     parser.add_argument("--talon_echo_temperature", type=float, default=0.07)
+    parser.add_argument("--talon_output_mode", default="manifold", choices=["manifold", "full", "lowrank", "coefficient"])
+    parser.add_argument("--talon_reconstruction_blend", type=float, default=0.0)
+    parser.add_argument("--talon_anchor_score_weight", type=float, default=0.35)
+    parser.add_argument("--talon_rank_ratio", type=float, default=0.40)
+    parser.add_argument("--talon_rank_min", type=int, default=1)
+    parser.add_argument("--talon_rank_max", type=int, default=8)
+    parser.add_argument("--talon_background_max_ratio", type=float, default=0.35)
     parser.add_argument("--talon_duration_aware", type=_parse_bool, default=False)
     parser.add_argument("--talon_medium_anchor_safety_ratio", type=float, default=0.72)
     parser.add_argument("--talon_medium_event_budget_ratio", type=float, default=0.30)
