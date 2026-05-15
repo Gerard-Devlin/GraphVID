@@ -1029,12 +1029,16 @@ def _apply_summary_replacement(
             continue
 
         take = min(per_chunk, total_summary - used, int(selected.numel()))
-        # Use strong selected tokens as representative positions; the summary
-        # still stays at valid visual-token locations and keeps RoPE alignment.
-        reps = selected[torch.topk(score[selected], k=take, dim=0).indices]
+        # Keep the strongest raw evidence untouched. Summary tokens should
+        # occupy the weakest selected slots, otherwise this branch corrupts the
+        # very anchors that made the frozen VLM stable.
+        reps = selected[torch.topk(-score[selected], k=take, dim=0).indices]
 
-        pool_k = min(pool_topk * take, int(chunk_idx_flat.numel()))
-        pool = chunk_idx_flat[torch.topk(score[chunk_idx_flat], k=pool_k, dim=0).indices]
+        selected_mask = chosen_pos[chunk_idx_flat] >= 0
+        dropped = chunk_idx_flat[~selected_mask]
+        pool_source = dropped if dropped.numel() > 0 else chunk_idx_flat
+        pool_k = min(pool_topk * take, int(pool_source.numel()))
+        pool = pool_source[torch.topk(score[pool_source], k=pool_k, dim=0).indices]
         pool_scores = score[pool].float()
         weights = torch.softmax(pool_scores / 0.07, dim=0).to(dtype=flat_features.dtype)
         summary = torch.sum(flat_features[pool] * weights.unsqueeze(-1), dim=0)
