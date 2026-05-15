@@ -221,6 +221,7 @@ class BenchmarkArgs:
     talon_question_pooling: str = field(default="mean")
     talon_question_pooling_topk: int = field(default=4)
     talon_question_contrast_weight: float = field(default=0.0)
+    talon_question_contrast_apply_to_short: bool = field(default=False)
     talon_monotonic_base_tokens_per_frame: int = field(default=20)
     talon_budget_strategy: str = field(default="marginal")
     talon_budget_mode: str = field(default="attention")
@@ -1509,6 +1510,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_question_pooling=args.talon_question_pooling,
         talon_question_pooling_topk=args.talon_question_pooling_topk,
         talon_question_contrast_weight=args.talon_question_contrast_weight,
+        talon_question_contrast_apply_to_short=args.talon_question_contrast_apply_to_short,
         talon_monotonic_base_tokens_per_frame=args.talon_monotonic_base_tokens_per_frame,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,
@@ -1709,6 +1711,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_question_pooling=args.talon_question_pooling,
         talon_question_pooling_topk=args.talon_question_pooling_topk,
         talon_question_contrast_weight=args.talon_question_contrast_weight,
+        talon_question_contrast_apply_to_short=args.talon_question_contrast_apply_to_short,
         talon_monotonic_base_tokens_per_frame=args.talon_monotonic_base_tokens_per_frame,
         talon_budget_strategy=args.talon_budget_strategy,
         talon_budget_mode=args.talon_budget_mode,

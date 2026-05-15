@@ -92,6 +92,7 @@ class FlashVidConfig:
     talon_question_pooling: str = field(default="mean")
     talon_question_pooling_topk: int = field(default=4)
     talon_question_contrast_weight: float = field(default=0.0)
+    talon_question_contrast_apply_to_short: bool = field(default=False)
     talon_monotonic_base_tokens_per_frame: int = field(default=20)
     talon_budget_strategy: str = field(default="marginal")  # ratio | marginal
     talon_budget_mode: str = field(default="uniform")  # uniform | attention

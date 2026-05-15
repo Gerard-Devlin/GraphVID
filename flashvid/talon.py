@@ -69,6 +69,9 @@ def _question_aware_scores(
     question_tokens = F.normalize(question_features.float(), p=2, dim=-1, eps=1e-6)
     pooling = str(getattr(config, "talon_question_pooling", "mean") or "mean").strip().lower()
     contrast_weight = min(max(float(getattr(config, "talon_question_contrast_weight", 0.0)), 0.0), 1.0)
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration == "short" and not _safe_bool(getattr(config, "talon_question_contrast_apply_to_short", False)):
+        contrast_weight = 0.0
     if pooling in ("max", "topk", "token_max", "token_topk"):
         token_question_sim = torch.matmul(token_features, question_tokens.transpose(0, 1))
         if pooling in ("topk", "token_topk"):
