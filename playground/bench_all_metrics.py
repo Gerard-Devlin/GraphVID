@@ -177,6 +177,7 @@ class BenchmarkArgs:
     talon_absorb_alpha: float = field(default=0.25)
     talon_absorb_score: str = field(default="combined")
     talon_summary_replacement: bool = field(default=False)
+    talon_summary_raw_swap: bool = field(default=False)
     talon_summary_ratio: float = field(default=0.08)
     talon_summary_num_chunks: int = field(default=8)
     talon_summary_pool_topk: int = field(default=12)
@@ -1625,6 +1626,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_absorb_alpha=args.talon_absorb_alpha,
         talon_absorb_score=args.talon_absorb_score,
         talon_summary_replacement=args.talon_summary_replacement,
+        talon_summary_raw_swap=args.talon_summary_raw_swap,
         talon_summary_ratio=args.talon_summary_ratio,
         talon_summary_num_chunks=args.talon_summary_num_chunks,
         talon_summary_pool_topk=args.talon_summary_pool_topk,
@@ -1817,6 +1819,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_absorb_alpha=args.talon_absorb_alpha,
         talon_absorb_score=args.talon_absorb_score,
         talon_summary_replacement=args.talon_summary_replacement,
+        talon_summary_raw_swap=args.talon_summary_raw_swap,
         talon_summary_ratio=args.talon_summary_ratio,
         talon_summary_num_chunks=args.talon_summary_num_chunks,
         talon_summary_pool_topk=args.talon_summary_pool_topk,

@@ -910,6 +910,88 @@ def _apply_track_coverage(
     return torch.sort(chosen.to(dtype=torch.long).unique()).values
 
 
+def _apply_summary_raw_swap(
+    chosen: torch.Tensor,
+    combined_scores: torch.Tensor,
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    innovation_scores: torch.Tensor,
+    num_frames: int,
+    num_visual_tokens: int,
+    total_budget: int,
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    if not _safe_bool(getattr(config, "talon_summary_raw_swap", False)):
+        return chosen
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    if duration not in ("medium", "long"):
+        return chosen
+    if chosen.numel() == 0 or total_budget <= 0:
+        return chosen
+
+    ratio = min(max(float(getattr(config, "talon_summary_ratio", 0.08)), 0.0), 0.50)
+    if ratio <= 0.0:
+        return chosen
+    score = _score_by_mode(
+        getattr(config, "talon_summary_score", "combined"),
+        combined_scores,
+        fused_scores,
+        question_scores,
+        innovation_scores,
+    )
+    num_chunks = max(1, min(num_frames, int(getattr(config, "talon_summary_num_chunks", 8) or 8)))
+    total_swaps = max(1, int(round(float(chosen.numel()) * ratio)))
+    per_chunk = max(1, int(math.ceil(total_swaps / float(num_chunks))))
+
+    chosen = torch.sort(chosen.to(dtype=torch.long).unique()).values
+    selected_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=chosen.device)
+    selected_mask[chosen] = True
+    chunk_edges = torch.linspace(0, num_frames, steps=num_chunks + 1, device=chosen.device)
+    used = 0
+
+    for chunk_idx in range(num_chunks):
+        if used >= total_swaps:
+            break
+        start_f = int(torch.floor(chunk_edges[chunk_idx]).item())
+        end_f = int(torch.floor(chunk_edges[chunk_idx + 1]).item())
+        end_f = max(end_f, start_f + 1)
+        start_f = min(start_f, num_frames)
+        end_f = min(end_f, num_frames)
+        if start_f >= end_f:
+            continue
+        start = start_f * num_visual_tokens
+        end = end_f * num_visual_tokens
+        chunk_flat = torch.arange(start, end, dtype=torch.long, device=chosen.device)
+        selected = chunk_flat[selected_mask[chunk_flat]]
+        dropped = chunk_flat[~selected_mask[chunk_flat]]
+        if selected.numel() == 0 or dropped.numel() == 0:
+            continue
+
+        take = min(per_chunk, total_swaps - used, int(selected.numel()), int(dropped.numel()))
+        add = dropped[torch.topk(score[dropped], k=take, dim=0).indices]
+        remove = selected[torch.topk(-score[selected], k=take, dim=0).indices]
+        # Only perform beneficial swaps under the same scoring view. This keeps
+        # the operation as a safe raw-token coverage repair rather than random churn.
+        keep_pair = score[add] > score[remove]
+        if int(keep_pair.sum().item()) <= 0:
+            continue
+        add = add[keep_pair]
+        remove = remove[keep_pair]
+        selected_mask[remove] = False
+        selected_mask[add] = True
+        used += int(add.numel())
+
+    out = torch.where(selected_mask)[0]
+    if out.numel() > total_budget:
+        out = out[torch.topk(combined_scores[out], k=total_budget, dim=0).indices]
+    elif out.numel() < min(total_budget, num_frames * num_visual_tokens):
+        fill_scores = combined_scores.masked_fill(selected_mask, -1e9)
+        fill_k = min(total_budget - int(out.numel()), int((fill_scores > -1e8).sum().item()))
+        if fill_k > 0:
+            out = torch.cat([out, torch.topk(fill_scores, k=fill_k, dim=0).indices], dim=0).unique()
+    return torch.sort(out.to(dtype=torch.long).unique()).values
+
+
 def _absorb_dropped_tokens(
     flat_features: torch.Tensor,
     chosen: torch.Tensor,
@@ -1208,6 +1290,17 @@ def talon_compression(
     chosen = _apply_track_coverage(
         chosen=chosen,
         source_to_slot=source_to_slot,
+        combined_scores=combined_scores,
+        fused_scores=fused_scores,
+        question_scores=question_scores,
+        innovation_scores=innovation_scores,
+        num_frames=num_frames,
+        num_visual_tokens=num_visual_tokens,
+        total_budget=total_budget,
+        config=flashvid_config,
+    )
+    chosen = _apply_summary_raw_swap(
+        chosen=chosen,
         combined_scores=combined_scores,
         fused_scores=fused_scores,
         question_scores=question_scores,

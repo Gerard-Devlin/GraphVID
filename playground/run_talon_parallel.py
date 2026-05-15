@@ -232,6 +232,8 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             args.talon_absorb_score,
             "--talon_summary_replacement",
             _str_bool(args.talon_summary_replacement),
+            "--talon_summary_raw_swap",
+            _str_bool(args.talon_summary_raw_swap),
             "--talon_summary_ratio",
             str(args.talon_summary_ratio),
             "--talon_summary_num_chunks",
@@ -534,6 +536,7 @@ def main() -> None:
     parser.add_argument("--talon_absorb_alpha", type=float, default=0.25)
     parser.add_argument("--talon_absorb_score", default="combined", choices=["combined", "fused", "question", "event"])
     parser.add_argument("--talon_summary_replacement", type=_parse_bool, default=False)
+    parser.add_argument("--talon_summary_raw_swap", type=_parse_bool, default=False)
     parser.add_argument("--talon_summary_ratio", type=float, default=0.08)
     parser.add_argument("--talon_summary_num_chunks", type=int, default=8)
     parser.add_argument("--talon_summary_pool_topk", type=int, default=12)

@@ -221,6 +221,7 @@ class FlashVidConfig:
     talon_absorb_alpha: float = field(default=0.25)
     talon_absorb_score: str = field(default="combined")
     talon_summary_replacement: bool = field(default=False)
+    talon_summary_raw_swap: bool = field(default=False)
     talon_summary_ratio: float = field(default=0.08)
     talon_summary_num_chunks: int = field(default=8)
     talon_summary_pool_topk: int = field(default=12)
