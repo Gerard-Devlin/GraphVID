@@ -476,8 +476,24 @@ def _select_tokens(
     duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
     task_category = str(getattr(config, "current_task_category", "") or "").strip().lower()
     category = str(getattr(config, "current_category", "") or "").strip().lower()
+    recall_ratio_override: Optional[float] = None
+    router_ratios = _adaptive_router_ratios(
+        fused_scores=fused_scores,
+        question_scores=question_scores,
+        residual_scores=residual_scores,
+        frame_importance=frame_importance,
+        config=config,
+        duration=duration,
+    )
+    if router_ratios is not None:
+        router_anchor, router_event, router_recall = router_ratios
+        anchor_ratio = min(0.90, max(0.0, router_anchor))
+        event_ratio_cfg = min(1.0, max(0.0, router_event))
+        recall_ratio_override = max(0.0, router_recall)
+
     strong_visual_task = (
         _safe_bool(getattr(config, "talon_visual_task_balance", False))
+        and router_ratios is None
         and duration in ("medium", "long")
         and category not in ("knowledge", "life record")
         and (
@@ -486,7 +502,6 @@ def _select_tokens(
             or "counting" in task_category
         )
     )
-    recall_ratio_override: Optional[float] = None
     if strong_visual_task:
         anchor_target = float(getattr(config, "talon_visual_task_anchor_ratio", 0.84))
         event_target = float(getattr(config, "talon_visual_task_event_ratio", 0.12))
@@ -728,6 +743,85 @@ def _score_by_mode(
     if mode == "event":
         return innovation_scores
     return combined_scores
+
+
+def _score_concentration(scores: torch.Tensor, top_ratio: float = 0.10) -> float:
+    if scores.numel() == 0:
+        return 0.0
+    vals = _normalize_scores(scores.float()).clamp_min(0.0)
+    total = float(vals.sum().item())
+    if total <= 1e-8:
+        return 0.0
+    k = max(1, int(math.ceil(float(vals.numel()) * min(max(top_ratio, 0.01), 1.0))))
+    return float(torch.topk(vals, k=k, dim=0).values.sum().item() / total)
+
+
+def _normalized_entropy(weights: torch.Tensor) -> float:
+    if weights.numel() <= 1:
+        return 0.0
+    vals = weights.float().clamp_min(0.0)
+    total = float(vals.sum().item())
+    if total <= 1e-8:
+        return 1.0
+    prob = vals / total
+    entropy = -torch.sum(prob * torch.log(prob.clamp_min(1e-8)))
+    return float((entropy / math.log(float(vals.numel()))).item())
+
+
+def _adaptive_router_ratios(
+    fused_scores: torch.Tensor,
+    question_scores: Optional[torch.Tensor],
+    residual_scores: torch.Tensor,
+    frame_importance: torch.Tensor,
+    config: FlashVidConfig,
+    duration: str,
+) -> Optional[Tuple[float, float, float]]:
+    # Numeric mode codes are easier to aggregate in jsonl/summary:
+    # 0=disabled, 1=visual-anchor, 2=temporal-context, 3=balanced.
+    config.last_talon_router_mode_code = 0
+    config.last_talon_router_fused_concentration = None
+    config.last_talon_router_residual_concentration = None
+    config.last_talon_router_question_concentration = None
+    config.last_talon_router_frame_entropy = None
+    if not _safe_bool(getattr(config, "talon_adaptive_router", False)):
+        return None
+    if duration == "short" and not _safe_bool(getattr(config, "talon_router_apply_to_short", False)):
+        return None
+
+    fused_conc = _score_concentration(fused_scores, top_ratio=0.10)
+    residual_conc = _score_concentration(residual_scores, top_ratio=0.10)
+    question_conc = _score_concentration(question_scores, top_ratio=0.10) if question_scores is not None else 0.0
+    frame_entropy = _normalized_entropy(frame_importance)
+    config.last_talon_router_fused_concentration = fused_conc
+    config.last_talon_router_residual_concentration = residual_conc
+    config.last_talon_router_question_concentration = question_conc
+    config.last_talon_router_frame_entropy = frame_entropy
+
+    # Intrinsic routing:
+    # - visual-anchor: evidence is concentrated in a few high-confidence tokens/frames.
+    # - temporal-context: evidence is distributed over frames or residual novelty is broad.
+    # - balanced: default safe mode.
+    visual_evidence = max(fused_conc, question_conc)
+    if visual_evidence >= 0.34 and frame_entropy <= 0.86:
+        config.last_talon_router_mode_code = 1
+        return (
+            float(getattr(config, "talon_router_visual_anchor_ratio", 0.84)),
+            float(getattr(config, "talon_router_visual_event_ratio", 0.12)),
+            float(getattr(config, "talon_router_visual_recall_ratio", 0.02)),
+        )
+    if frame_entropy >= 0.93 or residual_conc >= 0.42:
+        config.last_talon_router_mode_code = 2
+        return (
+            float(getattr(config, "talon_router_temporal_anchor_ratio", 0.66)),
+            float(getattr(config, "talon_router_temporal_event_ratio", 0.34)),
+            float(getattr(config, "talon_router_temporal_recall_ratio", 0.08)),
+        )
+    config.last_talon_router_mode_code = 3
+    return (
+        float(getattr(config, "talon_router_balanced_anchor_ratio", 0.72)),
+        float(getattr(config, "talon_router_balanced_event_ratio", 0.30)),
+        float(getattr(config, "talon_router_balanced_recall_ratio", 0.08)),
+    )
 
 
 def _apply_track_coverage(

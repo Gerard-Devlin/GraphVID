@@ -149,6 +149,17 @@ class BenchmarkArgs:
     talon_knowledge_visual_anchor_ratio: float = field(default=0.78)
     talon_knowledge_visual_event_ratio: float = field(default=0.18)
     talon_knowledge_visual_recall_ratio: float = field(default=0.06)
+    talon_adaptive_router: bool = field(default=False)
+    talon_router_apply_to_short: bool = field(default=False)
+    talon_router_visual_anchor_ratio: float = field(default=0.84)
+    talon_router_visual_event_ratio: float = field(default=0.12)
+    talon_router_visual_recall_ratio: float = field(default=0.02)
+    talon_router_temporal_anchor_ratio: float = field(default=0.66)
+    talon_router_temporal_event_ratio: float = field(default=0.34)
+    talon_router_temporal_recall_ratio: float = field(default=0.08)
+    talon_router_balanced_anchor_ratio: float = field(default=0.72)
+    talon_router_balanced_event_ratio: float = field(default=0.30)
+    talon_router_balanced_recall_ratio: float = field(default=0.08)
     talon_temporal_chunk_aware: bool = field(default=False)
     talon_temporal_num_chunks: int = field(default=4)
     talon_temporal_chunk_min_ratio: float = field(default=0.18)
@@ -699,6 +710,11 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
             "talon_chosen_rank": None,
             "talon_duplicate_index_count": None,
             "talon_question_aware_active": None,
+            "talon_router_mode_code": None,
+            "talon_router_fused_concentration": None,
+            "talon_router_residual_concentration": None,
+            "talon_router_question_concentration": None,
+            "talon_router_frame_entropy": None,
         }
     cfg = getattr(model, "flashvid_config")
     target = getattr(cfg, "last_talon_target_tokens_per_frame", None)
@@ -714,6 +730,11 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     chosen_rank = getattr(cfg, "last_talon_chosen_rank", None)
     duplicate_count = getattr(cfg, "last_talon_duplicate_index_count", None)
     question_active = getattr(cfg, "last_talon_question_aware_active", None)
+    router_mode = getattr(cfg, "last_talon_router_mode_code", None)
+    router_fused_conc = getattr(cfg, "last_talon_router_fused_concentration", None)
+    router_residual_conc = getattr(cfg, "last_talon_router_residual_concentration", None)
+    router_question_conc = getattr(cfg, "last_talon_router_question_concentration", None)
+    router_frame_entropy = getattr(cfg, "last_talon_router_frame_entropy", None)
     return {
         "talon_target_tokens_per_frame": float(target) if target is not None else None,
         "talon_adaptive_retention_ratio": float(adaptive_ratio) if adaptive_ratio is not None else None,
@@ -728,6 +749,11 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
         "talon_chosen_rank": float(chosen_rank) if chosen_rank is not None else None,
         "talon_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
         "talon_question_aware_active": float(bool(question_active)) if question_active is not None else None,
+        "talon_router_mode_code": float(router_mode) if router_mode is not None else None,
+        "talon_router_fused_concentration": float(router_fused_conc) if router_fused_conc is not None else None,
+        "talon_router_residual_concentration": float(router_residual_conc) if router_residual_conc is not None else None,
+        "talon_router_question_concentration": float(router_question_conc) if router_question_conc is not None else None,
+        "talon_router_frame_entropy": float(router_frame_entropy) if router_frame_entropy is not None else None,
     }
 
 
@@ -817,6 +843,11 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_chosen_rank_per_run = []
     talon_duplicate_per_run = []
     talon_question_active_per_run = []
+    talon_router_mode_per_run = []
+    talon_router_fused_conc_per_run = []
+    talon_router_residual_conc_per_run = []
+    talon_router_question_conc_per_run = []
+    talon_router_frame_entropy_per_run = []
     talon_core_target_budget_per_run = []
     talon_core_residual_mean_per_run = []
     talon_core_semantic_per_run = []
@@ -888,6 +919,16 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             talon_duplicate_per_run.append(float(debug_metrics["talon_duplicate_index_count"]))
         if debug_metrics["talon_question_aware_active"] is not None:
             talon_question_active_per_run.append(float(debug_metrics["talon_question_aware_active"]))
+        if debug_metrics["talon_router_mode_code"] is not None:
+            talon_router_mode_per_run.append(float(debug_metrics["talon_router_mode_code"]))
+        if debug_metrics["talon_router_fused_concentration"] is not None:
+            talon_router_fused_conc_per_run.append(float(debug_metrics["talon_router_fused_concentration"]))
+        if debug_metrics["talon_router_residual_concentration"] is not None:
+            talon_router_residual_conc_per_run.append(float(debug_metrics["talon_router_residual_concentration"]))
+        if debug_metrics["talon_router_question_concentration"] is not None:
+            talon_router_question_conc_per_run.append(float(debug_metrics["talon_router_question_concentration"]))
+        if debug_metrics["talon_router_frame_entropy"] is not None:
+            talon_router_frame_entropy_per_run.append(float(debug_metrics["talon_router_frame_entropy"]))
         if talon_core_metrics["talon_core_target_budget"] is not None:
             talon_core_target_budget_per_run.append(float(talon_core_metrics["talon_core_target_budget"]))
         if talon_core_metrics["talon_core_residual_mean"] is not None:
@@ -925,6 +966,11 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_chosen_rank = float(np.mean(talon_chosen_rank_per_run)) if talon_chosen_rank_per_run else None
     talon_duplicate_index_count = float(np.mean(talon_duplicate_per_run)) if talon_duplicate_per_run else None
     talon_question_aware_active = float(np.mean(talon_question_active_per_run)) if talon_question_active_per_run else None
+    talon_router_mode_code = float(np.mean(talon_router_mode_per_run)) if talon_router_mode_per_run else None
+    talon_router_fused_concentration = float(np.mean(talon_router_fused_conc_per_run)) if talon_router_fused_conc_per_run else None
+    talon_router_residual_concentration = float(np.mean(talon_router_residual_conc_per_run)) if talon_router_residual_conc_per_run else None
+    talon_router_question_concentration = float(np.mean(talon_router_question_conc_per_run)) if talon_router_question_conc_per_run else None
+    talon_router_frame_entropy = float(np.mean(talon_router_frame_entropy_per_run)) if talon_router_frame_entropy_per_run else None
     talon_core_target_budget = float(np.mean(talon_core_target_budget_per_run)) if talon_core_target_budget_per_run else None
     talon_core_residual_mean = float(np.mean(talon_core_residual_mean_per_run)) if talon_core_residual_mean_per_run else None
     talon_core_semantic_tokens = float(np.mean(talon_core_semantic_per_run)) if talon_core_semantic_per_run else None
@@ -959,6 +1005,11 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_chosen_rank": talon_chosen_rank,
         "talon_duplicate_index_count": talon_duplicate_index_count,
         "talon_question_aware_active": talon_question_aware_active,
+        "talon_router_mode_code": talon_router_mode_code,
+        "talon_router_fused_concentration": talon_router_fused_concentration,
+        "talon_router_residual_concentration": talon_router_residual_concentration,
+        "talon_router_question_concentration": talon_router_question_concentration,
+        "talon_router_frame_entropy": talon_router_frame_entropy,
         "talon_core_target_budget": talon_core_target_budget,
         "talon_core_residual_mean": talon_core_residual_mean,
         "talon_core_semantic_tokens": talon_core_semantic_tokens,
@@ -1001,6 +1052,11 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "talon_chosen_rank": None,
         "talon_duplicate_index_count": None,
         "talon_question_aware_active": None,
+        "talon_router_mode_code": None,
+        "talon_router_fused_concentration": None,
+        "talon_router_residual_concentration": None,
+        "talon_router_question_concentration": None,
+        "talon_router_frame_entropy": None,
         "talon_core_target_budget": None,
         "talon_core_residual_mean": None,
         "talon_core_semantic_tokens": None,
@@ -1052,6 +1108,11 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_chosen_rank": result.get("talon_chosen_rank"),
                 "talon_duplicate_index_count": result.get("talon_duplicate_index_count"),
                 "talon_question_aware_active": result.get("talon_question_aware_active"),
+                "talon_router_mode_code": result.get("talon_router_mode_code"),
+                "talon_router_fused_concentration": result.get("talon_router_fused_concentration"),
+                "talon_router_residual_concentration": result.get("talon_router_residual_concentration"),
+                "talon_router_question_concentration": result.get("talon_router_question_concentration"),
+                "talon_router_frame_entropy": result.get("talon_router_frame_entropy"),
                 "talon_core_target_budget": result.get("talon_core_target_budget"),
                 "talon_core_residual_mean": result.get("talon_core_residual_mean"),
                 "talon_core_semantic_tokens": result.get("talon_core_semantic_tokens"),
@@ -1199,6 +1260,31 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("talon_question_aware_active") is not None
     ]
+    talon_router_mode = [
+        float(r["talon_router_mode_code"])
+        for r in valid
+        if r.get("talon_router_mode_code") is not None
+    ]
+    talon_router_fused_conc = [
+        float(r["talon_router_fused_concentration"])
+        for r in valid
+        if r.get("talon_router_fused_concentration") is not None
+    ]
+    talon_router_residual_conc = [
+        float(r["talon_router_residual_concentration"])
+        for r in valid
+        if r.get("talon_router_residual_concentration") is not None
+    ]
+    talon_router_question_conc = [
+        float(r["talon_router_question_concentration"])
+        for r in valid
+        if r.get("talon_router_question_concentration") is not None
+    ]
+    talon_router_frame_entropy = [
+        float(r["talon_router_frame_entropy"])
+        for r in valid
+        if r.get("talon_router_frame_entropy") is not None
+    ]
     talon_core_target_budget = [
         float(r["talon_core_target_budget"])
         for r in valid
@@ -1279,6 +1365,11 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_chosen_rank": _stats(talon_chosen_rank),
         "talon_duplicate_index_count": _stats(talon_duplicate_count),
         "talon_question_aware_active": _stats(talon_question_active),
+        "talon_router_mode_code": _stats(talon_router_mode),
+        "talon_router_fused_concentration": _stats(talon_router_fused_conc),
+        "talon_router_residual_concentration": _stats(talon_router_residual_conc),
+        "talon_router_question_concentration": _stats(talon_router_question_conc),
+        "talon_router_frame_entropy": _stats(talon_router_frame_entropy),
         "talon_core_target_budget": _stats(talon_core_target_budget),
         "talon_core_residual_mean": _stats(talon_core_residual_mean),
         "talon_core_semantic_tokens": _stats(talon_core_semantic_tokens),
@@ -1502,6 +1593,17 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
         talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
         talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
+        talon_adaptive_router=args.talon_adaptive_router,
+        talon_router_apply_to_short=args.talon_router_apply_to_short,
+        talon_router_visual_anchor_ratio=args.talon_router_visual_anchor_ratio,
+        talon_router_visual_event_ratio=args.talon_router_visual_event_ratio,
+        talon_router_visual_recall_ratio=args.talon_router_visual_recall_ratio,
+        talon_router_temporal_anchor_ratio=args.talon_router_temporal_anchor_ratio,
+        talon_router_temporal_event_ratio=args.talon_router_temporal_event_ratio,
+        talon_router_temporal_recall_ratio=args.talon_router_temporal_recall_ratio,
+        talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
+        talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
+        talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
         talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
@@ -1679,6 +1781,17 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
         talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
         talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
+        talon_adaptive_router=args.talon_adaptive_router,
+        talon_router_apply_to_short=args.talon_router_apply_to_short,
+        talon_router_visual_anchor_ratio=args.talon_router_visual_anchor_ratio,
+        talon_router_visual_event_ratio=args.talon_router_visual_event_ratio,
+        talon_router_visual_recall_ratio=args.talon_router_visual_recall_ratio,
+        talon_router_temporal_anchor_ratio=args.talon_router_temporal_anchor_ratio,
+        talon_router_temporal_event_ratio=args.talon_router_temporal_event_ratio,
+        talon_router_temporal_recall_ratio=args.talon_router_temporal_recall_ratio,
+        talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
+        talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
+        talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
         talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
@@ -1763,6 +1876,11 @@ def _print_summary(summary: dict[str, Any]):
         talon_chosen_rank_mean = phase.get("talon_chosen_rank", {}).get("mean")
         talon_dup_mean = phase.get("talon_duplicate_index_count", {}).get("mean")
         talon_question_active_mean = phase.get("talon_question_aware_active", {}).get("mean")
+        talon_router_mode_mean = phase.get("talon_router_mode_code", {}).get("mean")
+        talon_router_fused_mean = phase.get("talon_router_fused_concentration", {}).get("mean")
+        talon_router_resid_mean = phase.get("talon_router_residual_concentration", {}).get("mean")
+        talon_router_q_mean = phase.get("talon_router_question_concentration", {}).get("mean")
+        talon_router_entropy_mean = phase.get("talon_router_frame_entropy", {}).get("mean")
         talon_core_budget_mean = phase.get("talon_core_target_budget", {}).get("mean")
         talon_core_residual_mean = phase.get("talon_core_residual_mean", {}).get("mean")
         talon_core_semantic_mean = phase.get("talon_core_semantic_tokens", {}).get("mean")
@@ -1797,6 +1915,14 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  talon duplicate index mean: {talon_dup_mean:.2f}")
         if talon_question_active_mean is not None:
             print(f"  talon question-aware active mean: {talon_question_active_mean:.2f}")
+        if talon_router_mode_mean is not None and talon_router_mode_mean > 0:
+            print(f"  talon router mode code mean: {talon_router_mode_mean:.2f} (1=visual,2=temporal,3=balanced)")
+        if talon_router_fused_mean is not None:
+            print(
+                "  talon router fused/residual/question/entropy mean: "
+                f"{talon_router_fused_mean:.3f}/{(talon_router_resid_mean or 0.0):.3f}/"
+                f"{(talon_router_q_mean or 0.0):.3f}/{(talon_router_entropy_mean or 0.0):.3f}"
+            )
         if talon_core_budget_mean is not None:
             print(f"  talon-core target budget mean: {talon_core_budget_mean:.2f}")
         if talon_core_residual_mean is not None:
