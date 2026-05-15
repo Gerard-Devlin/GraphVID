@@ -798,18 +798,27 @@ def _adaptive_router_ratios(
     config.last_talon_router_frame_entropy = frame_entropy
 
     # Intrinsic routing:
-    # - visual-anchor: evidence is concentrated in a few high-confidence tokens/frames.
-    # - temporal-context: evidence is distributed over frames or residual novelty is broad.
+    # - visual-anchor: event residual is flat/noisy, so preserve stable semantic evidence.
+    # - temporal-context: only when residual has real peaks and evidence is frame-distributed.
     # - balanced: default safe mode.
+    #
+    # The previous rule used high frame entropy alone as a temporal signal. On
+    # VideoMME medium videos that over-routed to event tokens even though the
+    # residual distribution was flat, which is exactly the train-free failure
+    # mode we want to avoid.
     visual_evidence = max(fused_conc, question_conc)
-    if visual_evidence >= 0.34 and frame_entropy <= 0.86:
+    visual_threshold = float(getattr(config, "talon_router_visual_concentration_threshold", 0.28))
+    low_residual_threshold = float(getattr(config, "talon_router_low_residual_threshold", 0.30))
+    temporal_entropy_threshold = float(getattr(config, "talon_router_temporal_entropy_threshold", 0.95))
+    temporal_residual_threshold = float(getattr(config, "talon_router_temporal_residual_threshold", 0.36))
+    if residual_conc <= low_residual_threshold or visual_evidence >= visual_threshold:
         config.last_talon_router_mode_code = 1
         return (
             float(getattr(config, "talon_router_visual_anchor_ratio", 0.84)),
             float(getattr(config, "talon_router_visual_event_ratio", 0.12)),
             float(getattr(config, "talon_router_visual_recall_ratio", 0.02)),
         )
-    if frame_entropy >= 0.93 or residual_conc >= 0.42:
+    if frame_entropy >= temporal_entropy_threshold and residual_conc >= temporal_residual_threshold:
         config.last_talon_router_mode_code = 2
         return (
             float(getattr(config, "talon_router_temporal_anchor_ratio", 0.66)),

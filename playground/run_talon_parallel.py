@@ -198,6 +198,14 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_router_balanced_event_ratio),
             "--talon_router_balanced_recall_ratio",
             str(args.talon_router_balanced_recall_ratio),
+            "--talon_router_visual_concentration_threshold",
+            str(args.talon_router_visual_concentration_threshold),
+            "--talon_router_low_residual_threshold",
+            str(args.talon_router_low_residual_threshold),
+            "--talon_router_temporal_entropy_threshold",
+            str(args.talon_router_temporal_entropy_threshold),
+            "--talon_router_temporal_residual_threshold",
+            str(args.talon_router_temporal_residual_threshold),
             "--talon_temporal_chunk_aware",
             _str_bool(args.talon_temporal_chunk_aware),
             "--talon_temporal_num_chunks",
@@ -509,6 +517,10 @@ def main() -> None:
     parser.add_argument("--talon_router_balanced_anchor_ratio", type=float, default=0.72)
     parser.add_argument("--talon_router_balanced_event_ratio", type=float, default=0.30)
     parser.add_argument("--talon_router_balanced_recall_ratio", type=float, default=0.08)
+    parser.add_argument("--talon_router_visual_concentration_threshold", type=float, default=0.28)
+    parser.add_argument("--talon_router_low_residual_threshold", type=float, default=0.30)
+    parser.add_argument("--talon_router_temporal_entropy_threshold", type=float, default=0.95)
+    parser.add_argument("--talon_router_temporal_residual_threshold", type=float, default=0.36)
     parser.add_argument("--talon_temporal_chunk_aware", type=_parse_bool, default=False)
     parser.add_argument("--talon_temporal_num_chunks", type=int, default=4)
     parser.add_argument("--talon_temporal_chunk_min_ratio", type=float, default=0.18)

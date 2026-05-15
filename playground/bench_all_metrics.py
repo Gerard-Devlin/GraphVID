@@ -160,6 +160,10 @@ class BenchmarkArgs:
     talon_router_balanced_anchor_ratio: float = field(default=0.72)
     talon_router_balanced_event_ratio: float = field(default=0.30)
     talon_router_balanced_recall_ratio: float = field(default=0.08)
+    talon_router_visual_concentration_threshold: float = field(default=0.28)
+    talon_router_low_residual_threshold: float = field(default=0.30)
+    talon_router_temporal_entropy_threshold: float = field(default=0.95)
+    talon_router_temporal_residual_threshold: float = field(default=0.36)
     talon_temporal_chunk_aware: bool = field(default=False)
     talon_temporal_num_chunks: int = field(default=4)
     talon_temporal_chunk_min_ratio: float = field(default=0.18)
@@ -1604,6 +1608,10 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
         talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
         talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
+        talon_router_visual_concentration_threshold=args.talon_router_visual_concentration_threshold,
+        talon_router_low_residual_threshold=args.talon_router_low_residual_threshold,
+        talon_router_temporal_entropy_threshold=args.talon_router_temporal_entropy_threshold,
+        talon_router_temporal_residual_threshold=args.talon_router_temporal_residual_threshold,
         talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
@@ -1792,6 +1800,10 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
         talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
         talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
+        talon_router_visual_concentration_threshold=args.talon_router_visual_concentration_threshold,
+        talon_router_low_residual_threshold=args.talon_router_low_residual_threshold,
+        talon_router_temporal_entropy_threshold=args.talon_router_temporal_entropy_threshold,
+        talon_router_temporal_residual_threshold=args.talon_router_temporal_residual_threshold,
         talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
         talon_temporal_num_chunks=args.talon_temporal_num_chunks,
         talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
