@@ -484,12 +484,13 @@ def _select_tokens(
     question_scores: Optional[torch.Tensor],
     residual_scores: torch.Tensor,
     combined_scores: torch.Tensor,
+    persistence_scores: Optional[torch.Tensor],
     total_budget: int,
     num_frames: int,
     num_visual_tokens: int,
     frame_importance: torch.Tensor,
     config: FlashVidConfig,
-) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     total_budget = min(max(1, int(total_budget)), int(combined_scores.numel()))
     local_budget_ratio = min(max(float(getattr(config, "talon_frame_local_budget_ratio", 1.0)), 0.10), 1.0)
     local_budget = min(total_budget, max(1, int(round(float(total_budget) * local_budget_ratio))))
@@ -565,12 +566,22 @@ def _select_tokens(
     question_grid = question_scores.view(num_frames, num_visual_tokens) if question_scores is not None else None
     residual_grid = residual_scores.view(num_frames, num_visual_tokens)
     combined_grid = combined_scores.view(num_frames, num_visual_tokens)
+    persistence_grid = persistence_scores.view(num_frames, num_visual_tokens) if persistence_scores is not None else None
     spatial_score_mode = str(getattr(config, "talon_spatial_anchor_score", "fused") or "fused").strip().lower()
     selected_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
     anchor_mask = torch.zeros_like(selected_mask)
     event_mask = torch.zeros_like(selected_mask)
     recall_mask = torch.zeros_like(selected_mask)
+    persistence_mask = torch.zeros_like(selected_mask)
     chosen_parts: List[torch.Tensor] = []
+
+    persistence_enabled = persistence_grid is not None
+    if duration == "short" and not _safe_bool(getattr(config, "talon_persistence_apply_to_short", False)):
+        persistence_enabled = False
+    if duration == "medium" and not _safe_bool(getattr(config, "talon_persistence_apply_to_medium", True)):
+        persistence_enabled = False
+    if duration == "long" and not _safe_bool(getattr(config, "talon_persistence_apply_to_long", False)):
+        persistence_enabled = False
 
     for t in range(num_frames):
         budget_t = min(max(0, int(budgets[t])), num_visual_tokens)
@@ -625,6 +636,30 @@ def _select_tokens(
                 local_selected[idx] = True
                 recall_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
+        if remain > 0 and persistence_enabled:
+            persistence_ratio = min(max(float(getattr(config, "talon_persistence_recall_ratio", 0.0)), 0.0), 0.30)
+            persistence_k = min(remain, max(0, int(round(budget_t * persistence_ratio))))
+            if persistence_k > 0:
+                q_weight = min(max(float(getattr(config, "talon_persistence_recall_qweight", 0.50)), 0.0), 1.0)
+                p_weight = min(max(float(getattr(config, "talon_persistence_recall_pweight", 0.35)), 0.0), 1.0)
+                if question_grid is None:
+                    q_weight = 0.0
+                sem_weight = max(0.0, 1.0 - q_weight - p_weight)
+                denom = max(1e-6, q_weight + p_weight + sem_weight)
+                q_part = question_grid[t] if question_grid is not None else fused_grid[t]
+                persistence_score = _normalize_scores(
+                    (q_weight / denom) * q_part
+                    + (p_weight / denom) * persistence_grid[t]
+                    + (sem_weight / denom) * fused_grid[t]
+                )
+                pscore = persistence_score.masked_fill(local_selected, -1e9)
+                valid = int((pscore > -1e8).sum().item())
+                if valid > 0:
+                    idx = torch.topk(pscore, k=min(persistence_k, valid), dim=0).indices
+                    local_selected[idx] = True
+                    recall_mask[t * num_visual_tokens + idx] = True
+                    persistence_mask[t * num_visual_tokens + idx] = True
+        remain = budget_t - int(local_selected.sum().item())
         if remain > 0:
             event_k = min(remain, max(0, int(round(budget_t * event_ratio_cfg))))
             resid = residual_grid[t].masked_fill(local_selected, -1e9)
@@ -669,7 +704,7 @@ def _select_tokens(
     if int(chosen.numel()) > total_budget:
         chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
     chosen = torch.sort(chosen.to(dtype=torch.long)).values
-    return chosen, budgets, anchor_mask, event_mask, recall_mask
+    return chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask
 
 
 def _apply_temporal_chunk_coverage(
@@ -1241,12 +1276,16 @@ def talon_compression(
 
     fused_scores, question_scores = _question_aware_scores(flat_features, flat_attention, question_features, flashvid_config)
     echo_residual = _echo_residual(video_features, flashvid_config)
+    echo_norm = _normalize_scores(echo_residual.reshape(num_tokens))
+    # Low echo novelty means the token is a stable temporal witness. Those
+    # "boring" tokens are often exactly the objects/actions Life Record asks for.
+    persistence_scores = _normalize_scores(1.0 - echo_norm)
     if lite_enabled:
         source_to_slot = torch.arange(num_visual_tokens, dtype=torch.long, device=device).unsqueeze(0).repeat(num_frames, 1)
         reconstruction = torch.zeros_like(video_features)
         max_rank = 0
         rank = 0
-        residual_scores = _normalize_scores(echo_residual.reshape(num_tokens))
+        residual_scores = echo_norm
     else:
         aligned, source_to_slot = _transport_align(video_features, flashvid_config)
 
@@ -1322,12 +1361,13 @@ def talon_compression(
         # This avoids the t=21 path reshuffling anchors/events and accidentally
         # dropping tokens that made the t=20 path work.
         base_budget = _resolve_total_budget(num_frames, num_visual_tokens, flashvid_config, monotonic_base_tpf)
-        chosen, budgets, anchor_mask, event_mask, recall_mask = _select_tokens(
+        chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask = _select_tokens(
             frame_features=video_features,
             fused_scores=fused_scores,
             question_scores=question_scores,
             residual_scores=innovation_scores,
             combined_scores=combined_scores,
+            persistence_scores=persistence_scores,
             total_budget=base_budget,
             num_frames=num_frames,
             num_visual_tokens=num_visual_tokens,
@@ -1352,12 +1392,13 @@ def talon_compression(
         chosen = torch.sort(chosen.to(dtype=torch.long)).values
         budgets = _allocate_frame_budget(total_budget, frame_importance, flashvid_config)
     else:
-        chosen, budgets, anchor_mask, event_mask, recall_mask = _select_tokens(
+        chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask = _select_tokens(
             frame_features=video_features,
             fused_scores=fused_scores,
             question_scores=question_scores,
             residual_scores=innovation_scores,
             combined_scores=combined_scores,
+            persistence_scores=persistence_scores,
             total_budget=total_budget,
             num_frames=num_frames,
             num_visual_tokens=num_visual_tokens,
@@ -1405,6 +1446,7 @@ def talon_compression(
     chosen_mask[chosen] = True
     anchor_tokens = int((chosen_mask & anchor_mask).sum().item())
     recall_tokens = int((chosen_mask & recall_mask).sum().item())
+    persistence_tokens = int((chosen_mask & persistence_mask).sum().item())
     event_tokens = int((chosen_mask & event_mask).sum().item())
     # Residual top-k that entered via the final combined/global fill is still an event.
     if event_tokens < int(chosen.numel()) - anchor_tokens - recall_tokens:
@@ -1423,6 +1465,7 @@ def talon_compression(
     flashvid_config.last_talon_rank_tokens = 0
     flashvid_config.last_talon_event_tokens = int(max(0, min(int(chosen.numel()) - anchor_tokens, event_tokens)))
     flashvid_config.last_talon_recall_tokens = int(recall_tokens)
+    flashvid_config.last_talon_persistence_tokens = int(persistence_tokens)
     flashvid_config.last_talon_memory_tokens = 0
     flashvid_config.last_talon_segment_count = 1
     flashvid_config.last_talon_rank_cap = int(max_rank)

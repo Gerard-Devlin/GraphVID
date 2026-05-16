@@ -102,6 +102,18 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_question_recall_ratio),
             "--talon_question_recall_qweight",
             str(args.talon_question_recall_qweight),
+            "--talon_persistence_recall_ratio",
+            str(args.talon_persistence_recall_ratio),
+            "--talon_persistence_recall_qweight",
+            str(args.talon_persistence_recall_qweight),
+            "--talon_persistence_recall_pweight",
+            str(args.talon_persistence_recall_pweight),
+            "--talon_persistence_apply_to_short",
+            _str_bool(args.talon_persistence_apply_to_short),
+            "--talon_persistence_apply_to_medium",
+            _str_bool(args.talon_persistence_apply_to_medium),
+            "--talon_persistence_apply_to_long",
+            _str_bool(args.talon_persistence_apply_to_long),
             "--talon_question_pooling",
             args.talon_question_pooling,
             "--talon_question_pooling_topk",
@@ -263,7 +275,7 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--talon_background_max_ratio",
             str(args.talon_background_max_ratio),
             "--talon_innovation_attention_weight",
-            "0.65",
+            str(args.talon_innovation_attention_weight),
             "--talon_lite_enabled",
             _str_bool(args.talon_lite_enabled),
             "--talon_echo_residual_weight",
@@ -487,6 +499,12 @@ def main() -> None:
     parser.add_argument("--talon_target_mean_cap", type=float, default=0.0)
     parser.add_argument("--talon_question_recall_ratio", type=float, default=0.08)
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
+    parser.add_argument("--talon_persistence_recall_ratio", type=float, default=0.0)
+    parser.add_argument("--talon_persistence_recall_qweight", type=float, default=0.50)
+    parser.add_argument("--talon_persistence_recall_pweight", type=float, default=0.35)
+    parser.add_argument("--talon_persistence_apply_to_short", type=_parse_bool, default=False)
+    parser.add_argument("--talon_persistence_apply_to_medium", type=_parse_bool, default=True)
+    parser.add_argument("--talon_persistence_apply_to_long", type=_parse_bool, default=False)
     parser.add_argument("--talon_question_pooling", default="mean")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     parser.add_argument("--talon_question_contrast_weight", type=float, default=0.0)
@@ -518,6 +536,7 @@ def main() -> None:
     parser.add_argument("--talon_rank_min", type=int, default=1)
     parser.add_argument("--talon_rank_max", type=int, default=8)
     parser.add_argument("--talon_background_max_ratio", type=float, default=0.35)
+    parser.add_argument("--talon_innovation_attention_weight", type=float, default=0.65)
     parser.add_argument("--talon_duration_aware", type=_parse_bool, default=False)
     parser.add_argument("--talon_medium_anchor_safety_ratio", type=float, default=0.72)
     parser.add_argument("--talon_medium_event_budget_ratio", type=float, default=0.30)
