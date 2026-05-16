@@ -596,6 +596,13 @@ def _select_tokens(
         else:
             anchor_ratio_eff = anchor_ratio
         anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio_eff)))) if budget_t > 1 else budget_t
+        persistence_ratio = min(max(float(getattr(config, "talon_persistence_recall_ratio", 0.0)), 0.0), 0.30)
+        persistence_reserved = 0
+        if persistence_enabled and persistence_ratio > 0.0 and budget_t > 2:
+            persistence_reserved = min(max(0, int(round(budget_t * persistence_ratio))), max(0, budget_t - 1))
+            # Persistence is stable semantic evidence, so it should replace a
+            # small slice of ordinary anchors instead of squeezing event tokens.
+            anchor_k = max(1, anchor_k - persistence_reserved)
         if anchor_k > 0:
             if spatial_score_mode == "combined":
                 spatial_scores = combined_grid[t]
@@ -637,8 +644,7 @@ def _select_tokens(
                 recall_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
         if remain > 0 and persistence_enabled:
-            persistence_ratio = min(max(float(getattr(config, "talon_persistence_recall_ratio", 0.0)), 0.0), 0.30)
-            persistence_k = min(remain, max(0, int(round(budget_t * persistence_ratio))))
+            persistence_k = min(remain, persistence_reserved)
             if persistence_k > 0:
                 q_weight = min(max(float(getattr(config, "talon_persistence_recall_qweight", 0.50)), 0.0), 1.0)
                 p_weight = min(max(float(getattr(config, "talon_persistence_recall_pweight", 0.35)), 0.0), 1.0)
