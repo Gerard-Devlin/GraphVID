@@ -224,6 +224,13 @@ class BenchmarkArgs:
     talon_persistence_apply_to_short: bool = field(default=False)
     talon_persistence_apply_to_medium: bool = field(default=True)
     talon_persistence_apply_to_long: bool = field(default=False)
+    talon_object_evidence_ratio: float = field(default=0.0)
+    talon_object_evidence_qweight: float = field(default=0.35)
+    talon_object_evidence_sweight: float = field(default=0.45)
+    talon_object_evidence_pweight: float = field(default=0.10)
+    talon_object_evidence_apply_to_short: bool = field(default=False)
+    talon_object_evidence_apply_to_medium: bool = field(default=True)
+    talon_object_evidence_apply_to_long: bool = field(default=False)
     talon_question_pooling: str = field(default="mean")
     talon_question_pooling_topk: int = field(default=4)
     talon_question_contrast_weight: float = field(default=0.0)
@@ -721,6 +728,7 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
             "talon_event_tokens": None,
             "talon_recall_tokens": None,
             "talon_persistence_tokens": None,
+            "talon_object_tokens": None,
             "talon_memory_tokens": None,
             "talon_rank_cap": None,
             "talon_chosen_rank": None,
@@ -742,6 +750,7 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     event_tokens = getattr(cfg, "last_talon_event_tokens", None)
     recall_tokens = getattr(cfg, "last_talon_recall_tokens", None)
     persistence_tokens = getattr(cfg, "last_talon_persistence_tokens", None)
+    object_tokens = getattr(cfg, "last_talon_object_tokens", None)
     memory_tokens = getattr(cfg, "last_talon_memory_tokens", None)
     rank_cap = getattr(cfg, "last_talon_rank_cap", None)
     chosen_rank = getattr(cfg, "last_talon_chosen_rank", None)
@@ -762,6 +771,7 @@ def _get_talon_debug_metrics(model) -> dict[str, float | None]:
         "talon_event_tokens": float(event_tokens) if event_tokens is not None else None,
         "talon_recall_tokens": float(recall_tokens) if recall_tokens is not None else None,
         "talon_persistence_tokens": float(persistence_tokens) if persistence_tokens is not None else None,
+        "talon_object_tokens": float(object_tokens) if object_tokens is not None else None,
         "talon_memory_tokens": float(memory_tokens) if memory_tokens is not None else None,
         "talon_rank_cap": float(rank_cap) if rank_cap is not None else None,
         "talon_chosen_rank": float(chosen_rank) if chosen_rank is not None else None,
@@ -857,6 +867,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_event_per_run = []
     talon_recall_per_run = []
     talon_persistence_per_run = []
+    talon_object_per_run = []
     talon_memory_per_run = []
     talon_rank_cap_per_run = []
     talon_chosen_rank_per_run = []
@@ -930,6 +941,8 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             talon_recall_per_run.append(float(debug_metrics["talon_recall_tokens"]))
         if debug_metrics["talon_persistence_tokens"] is not None:
             talon_persistence_per_run.append(float(debug_metrics["talon_persistence_tokens"]))
+        if debug_metrics["talon_object_tokens"] is not None:
+            talon_object_per_run.append(float(debug_metrics["talon_object_tokens"]))
         if debug_metrics["talon_memory_tokens"] is not None:
             talon_memory_per_run.append(float(debug_metrics["talon_memory_tokens"]))
         if debug_metrics["talon_rank_cap"] is not None:
@@ -983,6 +996,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_event_tokens = float(np.mean(talon_event_per_run)) if talon_event_per_run else None
     talon_recall_tokens = float(np.mean(talon_recall_per_run)) if talon_recall_per_run else None
     talon_persistence_tokens = float(np.mean(talon_persistence_per_run)) if talon_persistence_per_run else None
+    talon_object_tokens = float(np.mean(talon_object_per_run)) if talon_object_per_run else None
     talon_memory_tokens = float(np.mean(talon_memory_per_run)) if talon_memory_per_run else None
     talon_rank_cap = float(np.mean(talon_rank_cap_per_run)) if talon_rank_cap_per_run else None
     talon_chosen_rank = float(np.mean(talon_chosen_rank_per_run)) if talon_chosen_rank_per_run else None
@@ -1023,6 +1037,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_event_tokens": talon_event_tokens,
         "talon_recall_tokens": talon_recall_tokens,
         "talon_persistence_tokens": talon_persistence_tokens,
+        "talon_object_tokens": talon_object_tokens,
         "talon_memory_tokens": talon_memory_tokens,
         "talon_rank_cap": talon_rank_cap,
         "talon_chosen_rank": talon_chosen_rank,
@@ -1071,6 +1086,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "talon_event_tokens": None,
         "talon_recall_tokens": None,
         "talon_persistence_tokens": None,
+        "talon_object_tokens": None,
         "talon_memory_tokens": None,
         "talon_rank_cap": None,
         "talon_chosen_rank": None,
@@ -1128,6 +1144,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_event_tokens": result.get("talon_event_tokens"),
                 "talon_recall_tokens": result.get("talon_recall_tokens"),
                 "talon_persistence_tokens": result.get("talon_persistence_tokens"),
+                "talon_object_tokens": result.get("talon_object_tokens"),
                 "talon_memory_tokens": result.get("talon_memory_tokens"),
                 "talon_rank_cap": result.get("talon_rank_cap"),
                 "talon_chosen_rank": result.get("talon_chosen_rank"),
@@ -1265,6 +1282,11 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("talon_persistence_tokens") is not None
     ]
+    talon_object_tokens = [
+        float(r["talon_object_tokens"])
+        for r in valid
+        if r.get("talon_object_tokens") is not None
+    ]
     talon_memory_tokens = [
         float(r["talon_memory_tokens"])
         for r in valid
@@ -1391,6 +1413,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_event_tokens": _stats(talon_event_tokens),
         "talon_recall_tokens": _stats(talon_recall_tokens),
         "talon_persistence_tokens": _stats(talon_persistence_tokens),
+        "talon_object_tokens": _stats(talon_object_tokens),
         "talon_memory_tokens": _stats(talon_memory_tokens),
         "talon_rank_cap": _stats(talon_rank_cap),
         "talon_chosen_rank": _stats(talon_chosen_rank),
@@ -1537,6 +1560,13 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_persistence_apply_to_short=args.talon_persistence_apply_to_short,
         talon_persistence_apply_to_medium=args.talon_persistence_apply_to_medium,
         talon_persistence_apply_to_long=args.talon_persistence_apply_to_long,
+        talon_object_evidence_ratio=args.talon_object_evidence_ratio,
+        talon_object_evidence_qweight=args.talon_object_evidence_qweight,
+        talon_object_evidence_sweight=args.talon_object_evidence_sweight,
+        talon_object_evidence_pweight=args.talon_object_evidence_pweight,
+        talon_object_evidence_apply_to_short=args.talon_object_evidence_apply_to_short,
+        talon_object_evidence_apply_to_medium=args.talon_object_evidence_apply_to_medium,
+        talon_object_evidence_apply_to_long=args.talon_object_evidence_apply_to_long,
         talon_question_pooling=args.talon_question_pooling,
         talon_question_pooling_topk=args.talon_question_pooling_topk,
         talon_question_contrast_weight=args.talon_question_contrast_weight,
@@ -1746,6 +1776,13 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_persistence_apply_to_short=args.talon_persistence_apply_to_short,
         talon_persistence_apply_to_medium=args.talon_persistence_apply_to_medium,
         talon_persistence_apply_to_long=args.talon_persistence_apply_to_long,
+        talon_object_evidence_ratio=args.talon_object_evidence_ratio,
+        talon_object_evidence_qweight=args.talon_object_evidence_qweight,
+        talon_object_evidence_sweight=args.talon_object_evidence_sweight,
+        talon_object_evidence_pweight=args.talon_object_evidence_pweight,
+        talon_object_evidence_apply_to_short=args.talon_object_evidence_apply_to_short,
+        talon_object_evidence_apply_to_medium=args.talon_object_evidence_apply_to_medium,
+        talon_object_evidence_apply_to_long=args.talon_object_evidence_apply_to_long,
         talon_question_pooling=args.talon_question_pooling,
         talon_question_pooling_topk=args.talon_question_pooling_topk,
         talon_question_contrast_weight=args.talon_question_contrast_weight,
@@ -1933,6 +1970,7 @@ def _print_summary(summary: dict[str, Any]):
         talon_event_mean = phase.get("talon_event_tokens", {}).get("mean")
         talon_recall_mean = phase.get("talon_recall_tokens", {}).get("mean")
         talon_persistence_mean = phase.get("talon_persistence_tokens", {}).get("mean")
+        talon_object_mean = phase.get("talon_object_tokens", {}).get("mean")
         talon_memory_mean = phase.get("talon_memory_tokens", {}).get("mean")
         talon_rank_cap_mean = phase.get("talon_rank_cap", {}).get("mean")
         talon_chosen_rank_mean = phase.get("talon_chosen_rank", {}).get("mean")
@@ -1971,6 +2009,8 @@ def _print_summary(summary: dict[str, Any]):
             print(f"  talon anchor/event/recall mean: {talon_anchor_mean:.2f}/{(talon_event_mean or 0.0):.2f}/{(talon_recall_mean or 0.0):.2f}")
         if talon_persistence_mean is not None and talon_persistence_mean > 0:
             print(f"  talon persistence recall mean: {talon_persistence_mean:.2f}")
+        if talon_object_mean is not None and talon_object_mean > 0:
+            print(f"  talon object evidence mean: {talon_object_mean:.2f}")
         if talon_rank_mean is not None:
             print(f"  talon rank/memory mean: {talon_rank_mean:.2f}/{(talon_memory_mean or 0.0):.2f}")
         if talon_rank_cap_mean is not None:

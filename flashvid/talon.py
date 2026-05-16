@@ -273,6 +273,25 @@ def _echo_residual(segment_features: torch.Tensor, config: FlashVidConfig) -> to
     return residual
 
 
+def _spatial_distinctiveness(segment_features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
+    """Local objectness proxy: high when a token differs from its spatial neighborhood."""
+    num_frames, num_visual_tokens, _ = segment_features.shape
+    scores = torch.zeros((num_frames, num_visual_tokens), dtype=torch.float32, device=segment_features.device)
+    if num_visual_tokens <= 1:
+        return scores
+
+    neighbor_idx, neighbor_valid = _build_local_neighbors(num_visual_tokens, config, segment_features.device)
+    valid = neighbor_valid.float().unsqueeze(-1)
+    denom = valid.sum(dim=1).clamp_min(1.0)
+    for t in range(num_frames):
+        frame = F.normalize(segment_features[t].float(), p=2, dim=-1, eps=1e-6)
+        local = frame[neighbor_idx] * valid
+        proto = F.normalize(local.sum(dim=1) / denom, p=2, dim=-1, eps=1e-6)
+        sim = torch.sum(frame * proto, dim=-1).clamp(-1.0, 1.0)
+        scores[t] = 0.5 * (1.0 - sim)
+    return scores
+
+
 def _lowrank_basis(aligned: torch.Tensor, rank: int, config: FlashVidConfig) -> Tuple[torch.Tensor, torch.Tensor]:
     _, num_visual_tokens, _ = aligned.shape
     rank = max(0, min(int(rank), num_visual_tokens))
@@ -485,12 +504,13 @@ def _select_tokens(
     residual_scores: torch.Tensor,
     combined_scores: torch.Tensor,
     persistence_scores: Optional[torch.Tensor],
+    object_scores: Optional[torch.Tensor],
     total_budget: int,
     num_frames: int,
     num_visual_tokens: int,
     frame_importance: torch.Tensor,
     config: FlashVidConfig,
-) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     total_budget = min(max(1, int(total_budget)), int(combined_scores.numel()))
     local_budget_ratio = min(max(float(getattr(config, "talon_frame_local_budget_ratio", 1.0)), 0.10), 1.0)
     local_budget = min(total_budget, max(1, int(round(float(total_budget) * local_budget_ratio))))
@@ -567,12 +587,14 @@ def _select_tokens(
     residual_grid = residual_scores.view(num_frames, num_visual_tokens)
     combined_grid = combined_scores.view(num_frames, num_visual_tokens)
     persistence_grid = persistence_scores.view(num_frames, num_visual_tokens) if persistence_scores is not None else None
+    object_grid = object_scores.view(num_frames, num_visual_tokens) if object_scores is not None else None
     spatial_score_mode = str(getattr(config, "talon_spatial_anchor_score", "fused") or "fused").strip().lower()
     selected_mask = torch.zeros((num_frames * num_visual_tokens,), dtype=torch.bool, device=combined_scores.device)
     anchor_mask = torch.zeros_like(selected_mask)
     event_mask = torch.zeros_like(selected_mask)
     recall_mask = torch.zeros_like(selected_mask)
     persistence_mask = torch.zeros_like(selected_mask)
+    object_mask = torch.zeros_like(selected_mask)
     chosen_parts: List[torch.Tensor] = []
 
     persistence_enabled = persistence_grid is not None
@@ -582,6 +604,13 @@ def _select_tokens(
         persistence_enabled = False
     if duration == "long" and not _safe_bool(getattr(config, "talon_persistence_apply_to_long", False)):
         persistence_enabled = False
+    object_enabled = object_grid is not None
+    if duration == "short" and not _safe_bool(getattr(config, "talon_object_evidence_apply_to_short", False)):
+        object_enabled = False
+    if duration == "medium" and not _safe_bool(getattr(config, "talon_object_evidence_apply_to_medium", True)):
+        object_enabled = False
+    if duration == "long" and not _safe_bool(getattr(config, "talon_object_evidence_apply_to_long", False)):
+        object_enabled = False
 
     for t in range(num_frames):
         budget_t = min(max(0, int(budgets[t])), num_visual_tokens)
@@ -598,11 +627,18 @@ def _select_tokens(
         anchor_k = min(budget_t, max(1, int(round(budget_t * anchor_ratio_eff)))) if budget_t > 1 else budget_t
         persistence_ratio = min(max(float(getattr(config, "talon_persistence_recall_ratio", 0.0)), 0.0), 0.30)
         persistence_reserved = 0
+        object_ratio = min(max(float(getattr(config, "talon_object_evidence_ratio", 0.0)), 0.0), 0.30)
+        object_reserved = 0
         if persistence_enabled and persistence_ratio > 0.0 and budget_t > 2:
             persistence_reserved = min(max(0, int(round(budget_t * persistence_ratio))), max(0, budget_t - 1))
             # Persistence is stable semantic evidence, so it should replace a
             # small slice of ordinary anchors instead of squeezing event tokens.
             anchor_k = max(1, anchor_k - persistence_reserved)
+        if object_enabled and object_ratio > 0.0 and budget_t > 2:
+            object_reserved = min(max(0, int(round(budget_t * object_ratio))), max(0, budget_t - 1))
+            # Object/action evidence is also a semantic raw-token channel; take
+            # it from generic anchors so event capacity stays intact.
+            anchor_k = max(1, anchor_k - object_reserved)
         if anchor_k > 0:
             if spatial_score_mode == "combined":
                 spatial_scores = combined_grid[t]
@@ -666,6 +702,33 @@ def _select_tokens(
                     recall_mask[t * num_visual_tokens + idx] = True
                     persistence_mask[t * num_visual_tokens + idx] = True
         remain = budget_t - int(local_selected.sum().item())
+        if remain > 0 and object_enabled:
+            object_k = min(remain, object_reserved)
+            if object_k > 0:
+                q_weight = min(max(float(getattr(config, "talon_object_evidence_qweight", 0.35)), 0.0), 1.0)
+                s_weight = min(max(float(getattr(config, "talon_object_evidence_sweight", 0.45)), 0.0), 1.0)
+                p_weight = min(max(float(getattr(config, "talon_object_evidence_pweight", 0.10)), 0.0), 1.0)
+                if question_grid is None:
+                    q_weight = 0.0
+                if persistence_grid is None:
+                    p_weight = 0.0
+                sem_weight = max(0.0, 1.0 - q_weight - s_weight - p_weight)
+                denom = max(1e-6, q_weight + s_weight + p_weight + sem_weight)
+                q_part = question_grid[t] if question_grid is not None else fused_grid[t]
+                p_part = persistence_grid[t] if persistence_grid is not None else fused_grid[t]
+                object_score = _normalize_scores(
+                    (q_weight / denom) * q_part
+                    + (s_weight / denom) * object_grid[t]
+                    + (p_weight / denom) * p_part
+                    + (sem_weight / denom) * fused_grid[t]
+                )
+                oscore = object_score.masked_fill(local_selected, -1e9)
+                valid = int((oscore > -1e8).sum().item())
+                if valid > 0:
+                    idx = torch.topk(oscore, k=min(object_k, valid), dim=0).indices
+                    local_selected[idx] = True
+                    object_mask[t * num_visual_tokens + idx] = True
+        remain = budget_t - int(local_selected.sum().item())
         if remain > 0:
             event_k = min(remain, max(0, int(round(budget_t * event_ratio_cfg))))
             resid = residual_grid[t].masked_fill(local_selected, -1e9)
@@ -710,7 +773,7 @@ def _select_tokens(
     if int(chosen.numel()) > total_budget:
         chosen = chosen[torch.topk(combined_scores[chosen], k=total_budget, dim=0).indices]
     chosen = torch.sort(chosen.to(dtype=torch.long)).values
-    return chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask
+    return chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask, object_mask
 
 
 def _apply_temporal_chunk_coverage(
@@ -1286,6 +1349,10 @@ def talon_compression(
     # Low echo novelty means the token is a stable temporal witness. Those
     # "boring" tokens are often exactly the objects/actions Life Record asks for.
     persistence_scores = _normalize_scores(1.0 - echo_norm)
+    object_ratio_cfg = float(getattr(flashvid_config, "talon_object_evidence_ratio", 0.0) or 0.0)
+    object_scores = None
+    if object_ratio_cfg > 0.0:
+        object_scores = _normalize_scores(_spatial_distinctiveness(video_features, flashvid_config).reshape(num_tokens))
     if lite_enabled:
         source_to_slot = torch.arange(num_visual_tokens, dtype=torch.long, device=device).unsqueeze(0).repeat(num_frames, 1)
         reconstruction = torch.zeros_like(video_features)
@@ -1367,13 +1434,14 @@ def talon_compression(
         # This avoids the t=21 path reshuffling anchors/events and accidentally
         # dropping tokens that made the t=20 path work.
         base_budget = _resolve_total_budget(num_frames, num_visual_tokens, flashvid_config, monotonic_base_tpf)
-        chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask = _select_tokens(
+        chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask, object_mask = _select_tokens(
             frame_features=video_features,
             fused_scores=fused_scores,
             question_scores=question_scores,
             residual_scores=innovation_scores,
             combined_scores=combined_scores,
             persistence_scores=persistence_scores,
+            object_scores=object_scores,
             total_budget=base_budget,
             num_frames=num_frames,
             num_visual_tokens=num_visual_tokens,
@@ -1398,13 +1466,14 @@ def talon_compression(
         chosen = torch.sort(chosen.to(dtype=torch.long)).values
         budgets = _allocate_frame_budget(total_budget, frame_importance, flashvid_config)
     else:
-        chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask = _select_tokens(
+        chosen, budgets, anchor_mask, event_mask, recall_mask, persistence_mask, object_mask = _select_tokens(
             frame_features=video_features,
             fused_scores=fused_scores,
             question_scores=question_scores,
             residual_scores=innovation_scores,
             combined_scores=combined_scores,
             persistence_scores=persistence_scores,
+            object_scores=object_scores,
             total_budget=total_budget,
             num_frames=num_frames,
             num_visual_tokens=num_visual_tokens,
@@ -1453,10 +1522,12 @@ def talon_compression(
     anchor_tokens = int((chosen_mask & anchor_mask).sum().item())
     recall_tokens = int((chosen_mask & recall_mask).sum().item())
     persistence_tokens = int((chosen_mask & persistence_mask).sum().item())
+    object_tokens = int((chosen_mask & object_mask).sum().item())
     event_tokens = int((chosen_mask & event_mask).sum().item())
     # Residual top-k that entered via the final combined/global fill is still an event.
-    if event_tokens < int(chosen.numel()) - anchor_tokens - recall_tokens:
-        event_threshold_k = max(0, int(chosen.numel()) - anchor_tokens - recall_tokens)
+    unclaimed_tokens = int(chosen.numel()) - anchor_tokens - recall_tokens - object_tokens
+    if event_tokens < unclaimed_tokens:
+        event_threshold_k = max(0, unclaimed_tokens)
         residual_pick = chosen[torch.topk(innovation_scores[chosen], k=event_threshold_k, dim=0).indices]
         event_tokens = int(residual_pick.numel())
 
@@ -1472,6 +1543,7 @@ def talon_compression(
     flashvid_config.last_talon_event_tokens = int(max(0, min(int(chosen.numel()) - anchor_tokens, event_tokens)))
     flashvid_config.last_talon_recall_tokens = int(recall_tokens)
     flashvid_config.last_talon_persistence_tokens = int(persistence_tokens)
+    flashvid_config.last_talon_object_tokens = int(object_tokens)
     flashvid_config.last_talon_memory_tokens = 0
     flashvid_config.last_talon_segment_count = 1
     flashvid_config.last_talon_rank_cap = int(max_rank)

@@ -114,6 +114,20 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             _str_bool(args.talon_persistence_apply_to_medium),
             "--talon_persistence_apply_to_long",
             _str_bool(args.talon_persistence_apply_to_long),
+            "--talon_object_evidence_ratio",
+            str(args.talon_object_evidence_ratio),
+            "--talon_object_evidence_qweight",
+            str(args.talon_object_evidence_qweight),
+            "--talon_object_evidence_sweight",
+            str(args.talon_object_evidence_sweight),
+            "--talon_object_evidence_pweight",
+            str(args.talon_object_evidence_pweight),
+            "--talon_object_evidence_apply_to_short",
+            _str_bool(args.talon_object_evidence_apply_to_short),
+            "--talon_object_evidence_apply_to_medium",
+            _str_bool(args.talon_object_evidence_apply_to_medium),
+            "--talon_object_evidence_apply_to_long",
+            _str_bool(args.talon_object_evidence_apply_to_long),
             "--talon_question_pooling",
             args.talon_question_pooling,
             "--talon_question_pooling_topk",
@@ -505,6 +519,13 @@ def main() -> None:
     parser.add_argument("--talon_persistence_apply_to_short", type=_parse_bool, default=False)
     parser.add_argument("--talon_persistence_apply_to_medium", type=_parse_bool, default=True)
     parser.add_argument("--talon_persistence_apply_to_long", type=_parse_bool, default=False)
+    parser.add_argument("--talon_object_evidence_ratio", type=float, default=0.0)
+    parser.add_argument("--talon_object_evidence_qweight", type=float, default=0.35)
+    parser.add_argument("--talon_object_evidence_sweight", type=float, default=0.45)
+    parser.add_argument("--talon_object_evidence_pweight", type=float, default=0.10)
+    parser.add_argument("--talon_object_evidence_apply_to_short", type=_parse_bool, default=False)
+    parser.add_argument("--talon_object_evidence_apply_to_medium", type=_parse_bool, default=True)
+    parser.add_argument("--talon_object_evidence_apply_to_long", type=_parse_bool, default=False)
     parser.add_argument("--talon_question_pooling", default="mean")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     parser.add_argument("--talon_question_contrast_weight", type=float, default=0.0)
