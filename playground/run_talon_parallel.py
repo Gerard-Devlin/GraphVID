@@ -396,6 +396,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             str(args.max_new_tokens),
             "--attn_implementation",
             args.attn_implementation,
+            "--token_selection_method",
+            args.token_selection_method,
             "--run_baseline",
             "False",
             "--run_flashvid",
@@ -571,6 +573,7 @@ def main() -> None:
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--attn_implementation", default="flash_attention_2")
+    parser.add_argument("--token_selection_method", default="attn_div_v2")
     parser.add_argument("--local_files_only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_flashvid", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
