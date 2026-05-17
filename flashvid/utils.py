@@ -8,6 +8,7 @@ from .token_selection import (
     attn_based_token_selection,
     attn_div_based_token_selection,
     attn_div_v2_based_token_selection,
+    attn_div_stable_based_token_selection,
     div_based_token_selection,
     TokenSelectionMethod,
 )
@@ -17,6 +18,7 @@ ALL_TOKEN_SELECTION_METHOD = {
     TokenSelectionMethod.ADTS_v2: attn_div_v2_based_token_selection,
     TokenSelectionMethod.ADTS: attn_div_based_token_selection,
     TokenSelectionMethod.DIV: div_based_token_selection,
+    TokenSelectionMethod.ADTS_STABLE: attn_div_stable_based_token_selection,
 }
 
 
