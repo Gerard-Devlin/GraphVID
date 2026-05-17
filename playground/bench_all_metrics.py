@@ -59,6 +59,8 @@ class BenchmarkArgs:
     min_segment_num: int = field(default=8)
     complementary_segment: bool = field(default=True)
     token_selection_method: str = field(default="attn_div_v2")
+    flashvid_token_selection_method: str = field(default="attn_div_v2")
+    graphvid_token_selection_method: str = field(default="")
     alpha: float = field(default=0.70)
     temporal_threshold: float = field(default=0.8)
     temporal_merge_mode: str = field(default="tree")
@@ -1805,7 +1807,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         segment_threshold=args.segment_threshold,
         min_segment_num=args.min_segment_num,
         complementary_segment=args.complementary_segment,
-        token_selection_method=args.token_selection_method,
+        token_selection_method=args.flashvid_token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
         temporal_merge_mode="graph",
@@ -1843,7 +1845,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         segment_threshold=args.segment_threshold,
         min_segment_num=args.min_segment_num,
         complementary_segment=args.complementary_segment,
-        token_selection_method=args.token_selection_method,
+        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
         temporal_merge_mode=args.temporal_merge_mode,

@@ -349,6 +349,8 @@ def _append_graphvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.graph_final_frame_floor_ratio),
             "--graph_skip_spatial_merge_when_capped",
             _str_bool(args.graph_skip_spatial_merge_when_capped),
+            "--graphvid_token_selection_method",
+            args.graphvid_token_selection_method,
         ]
     )
 
@@ -398,6 +400,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             args.attn_implementation,
             "--token_selection_method",
             args.token_selection_method,
+            "--flashvid_token_selection_method",
+            args.flashvid_token_selection_method,
             "--run_baseline",
             "False",
             "--run_flashvid",
@@ -574,6 +578,8 @@ def main() -> None:
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--token_selection_method", default="attn_div_v2")
+    parser.add_argument("--flashvid_token_selection_method", default="attn_div_v2")
+    parser.add_argument("--graphvid_token_selection_method", default="attn_div_v2")
     parser.add_argument("--local_files_only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_flashvid", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
