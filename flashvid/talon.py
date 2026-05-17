@@ -129,7 +129,16 @@ def _resolve_target_per_frame(
     config: FlashVidConfig,
 ) -> int:
     num_visual_tokens = int(video_features.shape[1])
-    target = int(getattr(config, "talon_target_tokens_per_frame", 0) or 0)
+    base_target = int(getattr(config, "talon_target_tokens_per_frame", 0) or 0)
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    duration_target = 0
+    if duration == "short":
+        duration_target = int(getattr(config, "talon_short_target_tokens_per_frame", 0) or 0)
+    elif duration == "medium":
+        duration_target = int(getattr(config, "talon_medium_target_tokens_per_frame", 0) or 0)
+    elif duration == "long":
+        duration_target = int(getattr(config, "talon_long_target_tokens_per_frame", 0) or 0)
+    target = duration_target if duration_target > 0 else base_target
     if target <= 0:
         config.last_talon_target_tokens_per_frame = None
         config.last_talon_complexity_score = None

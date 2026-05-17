@@ -99,6 +99,9 @@ def flashvid(
     talon_rank_max: int = 32,
     talon_budget_scale: float = 0.60,
     talon_target_tokens_per_frame: int = 0,
+    talon_short_target_tokens_per_frame: int = 0,
+    talon_medium_target_tokens_per_frame: int = 0,
+    talon_long_target_tokens_per_frame: int = 0,
     talon_min_total_tokens: int = 1,
     talon_fast_rank_plan: bool = True,
     talon_background_max_ratio: float = 0.45,
@@ -317,6 +320,8 @@ def flashvid(
         talon_rank_max (int, optional): Maximum TALON low-rank token count per frame.
         talon_budget_scale (float, optional): TALON-only multiplier over the shared visual budget.
         talon_target_tokens_per_frame (int, optional): Fixed TALON target width per frame; 0 disables it.
+        talon_short/medium/long_target_tokens_per_frame (int, optional): Duration-specific
+            TALON targets; 0 falls back to talon_target_tokens_per_frame.
         talon_min_total_tokens (int, optional): Lower bound on TALON output tokens per segment.
         talon_fast_rank_plan (bool, optional): Use one-pass rate-distortion rank planning.
         talon_background_max_ratio (float, optional): Max low-rank background share of per-frame TALON budget.
@@ -459,6 +464,9 @@ def flashvid(
         talon_rank_max=talon_rank_max,
         talon_budget_scale=talon_budget_scale,
         talon_target_tokens_per_frame=talon_target_tokens_per_frame,
+        talon_short_target_tokens_per_frame=talon_short_target_tokens_per_frame,
+        talon_medium_target_tokens_per_frame=talon_medium_target_tokens_per_frame,
+        talon_long_target_tokens_per_frame=talon_long_target_tokens_per_frame,
         talon_min_total_tokens=talon_min_total_tokens,
         talon_fast_rank_plan=talon_fast_rank_plan,
         talon_background_max_ratio=talon_background_max_ratio,

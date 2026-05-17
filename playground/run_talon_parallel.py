@@ -86,6 +86,12 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.talon_target_mean_cap),
             "--talon_target_tokens_per_frame",
             str(args.talon_target_tokens_per_frame),
+            "--talon_short_target_tokens_per_frame",
+            str(args.talon_short_target_tokens_per_frame),
+            "--talon_medium_target_tokens_per_frame",
+            str(args.talon_medium_target_tokens_per_frame),
+            "--talon_long_target_tokens_per_frame",
+            str(args.talon_long_target_tokens_per_frame),
             "--talon_adaptive_target_low",
             str(args.talon_adaptive_target_low),
             "--talon_adaptive_target_mid",
@@ -513,6 +519,9 @@ def main() -> None:
     parser.add_argument("--gpu_ids", default="", help="Comma-separated GPU ids. Overrides auto selection.")
     parser.add_argument("--tag", default="talon_recall08_t20_parallel")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=20)
+    parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
+    parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
+    parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_adaptive_target_enabled", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--talon_adaptive_target_low", type=int, default=0)
     parser.add_argument("--talon_adaptive_target_mid", type=int, default=0)

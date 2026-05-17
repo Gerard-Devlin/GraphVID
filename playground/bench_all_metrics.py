@@ -189,6 +189,9 @@ class BenchmarkArgs:
     talon_rank_max: int = field(default=32)
     talon_budget_scale: float = field(default=0.60)
     talon_target_tokens_per_frame: int = field(default=0)
+    talon_short_target_tokens_per_frame: int = field(default=0)
+    talon_medium_target_tokens_per_frame: int = field(default=0)
+    talon_long_target_tokens_per_frame: int = field(default=0)
     talon_min_total_tokens: int = field(default=1)
     talon_fast_rank_plan: bool = field(default=True)
     talon_background_max_ratio: float = field(default=0.45)
@@ -1577,6 +1580,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         talon_rank_max=args.talon_rank_max,
         talon_budget_scale=args.talon_budget_scale,
         talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
+        talon_short_target_tokens_per_frame=args.talon_short_target_tokens_per_frame,
+        talon_medium_target_tokens_per_frame=args.talon_medium_target_tokens_per_frame,
+        talon_long_target_tokens_per_frame=args.talon_long_target_tokens_per_frame,
         talon_min_total_tokens=args.talon_min_total_tokens,
         talon_fast_rank_plan=args.talon_fast_rank_plan,
         talon_background_max_ratio=args.talon_background_max_ratio,
@@ -1793,6 +1799,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         talon_rank_max=args.talon_rank_max,
         talon_budget_scale=args.talon_budget_scale,
         talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
+        talon_short_target_tokens_per_frame=args.talon_short_target_tokens_per_frame,
+        talon_medium_target_tokens_per_frame=args.talon_medium_target_tokens_per_frame,
+        talon_long_target_tokens_per_frame=args.talon_long_target_tokens_per_frame,
         talon_min_total_tokens=args.talon_min_total_tokens,
         talon_fast_rank_plan=args.talon_fast_rank_plan,
         talon_background_max_ratio=args.talon_background_max_ratio,
@@ -1989,11 +1998,17 @@ def _print_header(args: BenchmarkArgs, backend: str):
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
+        duration_targets = (
+            f"{args.talon_short_target_tokens_per_frame}/"
+            f"{args.talon_medium_target_tokens_per_frame}/"
+            f"{args.talon_long_target_tokens_per_frame}"
+        )
         print(
             "Ours config   : "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
             f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
+            f"duration_targets={duration_targets}, "
             f"event_cap={args.talon_event_budget_ratio:.2f}, "
             f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
@@ -2273,6 +2288,9 @@ def run(args: BenchmarkArgs):
             "[talon-active][ours] "
             f"path=clean, qaware={args.question_aware_reweighting}, "
             f"target/frame={args.talon_target_tokens_per_frame}, "
+            f"duration_targets={args.talon_short_target_tokens_per_frame}/"
+            f"{args.talon_medium_target_tokens_per_frame}/"
+            f"{args.talon_long_target_tokens_per_frame}, "
             f"rank_max={args.talon_rank_max}, "
             f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
