@@ -100,7 +100,9 @@ def graph_spatiotemporal_compression(
     neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius, device)
 
     novelty = torch.ones((num_frames, num_visual_tokens), dtype=torch.float32, device=device)
-    edges: list[tuple[float, int, int]] = []
+    edge_score_parts: list[torch.Tensor] = []
+    edge_src_parts: list[torch.Tensor] = []
+    edge_dst_parts: list[torch.Tensor] = []
     for lag in range(1, temporal_skip + 1):
         for frame_idx in range(lag, num_frames):
             prev_frame = frame_idx - lag
@@ -122,9 +124,10 @@ def graph_spatiotemporal_compression(
             cur_nodes = node_id[frame_idx, cur_valid]
             prev_nodes = node_id[prev_frame, neigh.gather(1, ids)]
             edge_valid = (vals > -0.5) & (cur_nodes.unsqueeze(1) >= 0) & (prev_nodes >= 0)
-            edge_rows, edge_cols = torch.where(edge_valid)
-            for row, col in zip(edge_rows.tolist(), edge_cols.tolist()):
-                edges.append((float(vals[row, col].item()), int(cur_nodes[row].item()), int(prev_nodes[row, col].item())))
+            if edge_valid.any():
+                edge_score_parts.append(vals[edge_valid].detach())
+                edge_src_parts.append(cur_nodes.unsqueeze(1).expand_as(vals)[edge_valid].detach())
+                edge_dst_parts.append(prev_nodes[edge_valid].detach())
 
     novelty_vals = novelty[token_mask]
     novelty_min = novelty_vals.min()
@@ -138,6 +141,8 @@ def graph_spatiotemporal_compression(
     protect_count = min(num_nodes, int(math.ceil(target_components * protect_ratio)))
     if protect_count > 0:
         protected[torch.topk(protection, k=protect_count, largest=True).indices] = True
+    protected_cpu = protected.detach().cpu().tolist()
+    protection_cpu = protection.detach().float().cpu().tolist()
 
     parent = list(range(num_nodes))
     size = [1] * num_nodes
@@ -154,7 +159,7 @@ def graph_spatiotemporal_compression(
         ra, rb = find(a), find(b)
         if ra == rb:
             return False
-        if bool(protected[ra].item() or protected[rb].item() or protected[a].item() or protected[b].item()):
+        if protected_cpu[ra] or protected_cpu[rb] or protected_cpu[a] or protected_cpu[b]:
             return False
         if size[ra] < size[rb]:
             ra, rb = rb, ra
@@ -163,13 +168,18 @@ def graph_spatiotemporal_compression(
         component_count -= 1
         return True
 
-    edges.sort(key=lambda item: item[0], reverse=True)
-    for sim, a, b in edges:
-        if component_count <= target_components:
-            break
-        if sim < temporal_threshold and component_count <= target_components:
-            break
-        union(a, b)
+    if edge_score_parts:
+        edge_scores = torch.cat(edge_score_parts).float().cpu()
+        edge_src = torch.cat(edge_src_parts).long().cpu()
+        edge_dst = torch.cat(edge_dst_parts).long().cpu()
+        edge_order = torch.argsort(edge_scores, descending=True)
+        for edge_idx in edge_order.tolist():
+            if component_count <= target_components:
+                break
+            sim = float(edge_scores[edge_idx].item())
+            if sim < temporal_threshold and component_count <= target_components:
+                break
+            union(int(edge_src[edge_idx].item()), int(edge_dst[edge_idx].item()))
 
     groups: dict[int, list[int]] = {}
     for node in range(num_nodes):
@@ -181,9 +191,7 @@ def graph_spatiotemporal_compression(
     frame_tokens: list[list[torch.Tensor]] = [[] for _ in range(num_frames)]
     frame_indices: list[list[int]] = [[] for _ in range(num_frames)]
     for members in groups.values():
-        member_tensor = torch.tensor(members, dtype=torch.long, device=device)
-        member_scores = protection[member_tensor]
-        rep_node = int(member_tensor[torch.argmax(member_scores)].item())
+        rep_node = max(members, key=lambda node: protection_cpu[node])
         rep_frame = int(node_frames[rep_node])
         rep_token = int(node_tokens[rep_node])
         if representative_mode == "mean":
