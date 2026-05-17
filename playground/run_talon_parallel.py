@@ -347,6 +347,8 @@ def _append_graphvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.graph_final_tokens_per_frame),
             "--graph_final_frame_floor_ratio",
             str(args.graph_final_frame_floor_ratio),
+            "--graph_skip_spatial_merge_when_capped",
+            _str_bool(args.graph_skip_spatial_merge_when_capped),
         ]
     )
 
@@ -586,6 +588,7 @@ def main() -> None:
     parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean"])
     parser.add_argument("--graph_final_tokens_per_frame", type=int, default=0)
     parser.add_argument("--graph_final_frame_floor_ratio", type=float, default=0.55)
+    parser.add_argument("--graph_skip_spatial_merge_when_capped", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

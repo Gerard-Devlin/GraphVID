@@ -266,14 +266,25 @@ def segment_compression(
         temp_merged_token_list = []
         temp_merged_global_indices_list = []
 
+    is_graphvid = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid"
     all_tokens = [selected_features.view(-1, feat_dim)]
     all_global_indices = [selected_global_indices]
     # 2. Apply Spatial Merging to the tokens after temporal merging.
     if num_other_tokens > 0: ## Only apply spatial merging when there are STTM tokens.
+        graph_final_cap = int(getattr(flashvid_config, "graph_final_tokens_per_frame", 0) or 0)
+        skip_spatial_merge = (
+            is_graphvid
+            and graph_final_cap > 0
+            and bool(getattr(flashvid_config, "graph_skip_spatial_merge_when_capped", True))
+        )
         # Calculate adaptive contextual ratio.
         num_current_retained_tokens = sum(len(tokens) for tokens in temp_merged_token_list)
-        adapative_contextual_ratio = num_other_tokens / num_current_retained_tokens
-        if adapative_contextual_ratio < 1.0:
+        adapative_contextual_ratio = num_other_tokens / max(1, num_current_retained_tokens)
+        if skip_spatial_merge:
+            for temp_merged_tokens, temp_merged_global_indices in zip(temp_merged_token_list, temp_merged_global_indices_list):
+                all_tokens.append(temp_merged_tokens)
+                all_global_indices.append(temp_merged_global_indices)
+        elif adapative_contextual_ratio < 1.0:
             num_frames_in_segment = len(temp_merged_token_list)
             max_num_tokens = max(len(tokens) for tokens in temp_merged_token_list)
             batched_tokens = torch.zeros((num_frames_in_segment, max_num_tokens, feat_dim), dtype=segment_features.dtype, device=segment_features.device)
@@ -335,7 +346,7 @@ def segment_compression(
 
     segment_final_tokens = torch.cat(all_tokens, dim=0)  # (num_final_tokens, feat_dim)
     segment_final_global_indices = torch.cat(all_global_indices, dim=0)  # (num_final_tokens,)
-    if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid":
+    if is_graphvid:
         segment_final_tokens, segment_final_global_indices = _graphvid_apply_final_cap(
             segment_final_tokens=segment_final_tokens,
             segment_final_global_indices=segment_final_global_indices,

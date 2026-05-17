@@ -32,6 +32,7 @@ class FlashVidConfig:
     graph_merge_representative: str = field(default="medoid")  # medoid | mean
     graph_final_tokens_per_frame: int = field(default=0)
     graph_final_frame_floor_ratio: float = field(default=0.55)
+    graph_skip_spatial_merge_when_capped: bool = field(default=True)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
