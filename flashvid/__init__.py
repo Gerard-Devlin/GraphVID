@@ -95,6 +95,8 @@ def flashvid(
     graph_merge_protect_ratio: float = 0.15,
     graph_merge_target_ratio: float = 0.65,
     graph_merge_representative: str = "medoid",
+    graph_final_tokens_per_frame: int = 0,
+    graph_final_frame_floor_ratio: float = 0.55,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -472,6 +474,8 @@ def flashvid(
         graph_merge_protect_ratio=graph_merge_protect_ratio,
         graph_merge_target_ratio=graph_merge_target_ratio,
         graph_merge_representative=graph_merge_representative,
+        graph_final_tokens_per_frame=graph_final_tokens_per_frame,
+        graph_final_frame_floor_ratio=graph_final_frame_floor_ratio,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

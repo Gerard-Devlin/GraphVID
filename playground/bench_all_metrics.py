@@ -68,6 +68,8 @@ class BenchmarkArgs:
     graph_merge_protect_ratio: float = field(default=0.15)
     graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")
+    graph_final_tokens_per_frame: int = field(default=0)
+    graph_final_frame_floor_ratio: float = field(default=0.55)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1592,6 +1594,8 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
+        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -1809,6 +1813,8 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
+        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -1844,6 +1850,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
+        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2086,7 +2094,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
             "GraphVID config: "
             f"merge=graph, topk={args.graph_temporal_topk}, radius={args.graph_temporal_radius}, "
             f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
-            f"target_ratio={args.graph_merge_target_ratio:.2f}, rep={args.graph_merge_representative}"
+            f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
+            f"rep={args.graph_merge_representative}"
         )
     print(SEPARATOR)
 
@@ -2368,7 +2377,8 @@ def run(args: BenchmarkArgs):
             "[graphvid-active] "
             f"merge=graph, topk={args.graph_temporal_topk}, radius={args.graph_temporal_radius}, "
             f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
-            f"target_ratio={args.graph_merge_target_ratio:.2f}, rep={args.graph_merge_representative}"
+            f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
+            f"rep={args.graph_merge_representative}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]

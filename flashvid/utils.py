@@ -335,7 +335,93 @@ def segment_compression(
 
     segment_final_tokens = torch.cat(all_tokens, dim=0)  # (num_final_tokens, feat_dim)
     segment_final_global_indices = torch.cat(all_global_indices, dim=0)  # (num_final_tokens,)
+    if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid":
+        segment_final_tokens, segment_final_global_indices = _graphvid_apply_final_cap(
+            segment_final_tokens=segment_final_tokens,
+            segment_final_global_indices=segment_final_global_indices,
+            segment_global_indices=segment_global_indices,
+            cls_attention=cls_attention,
+            num_visual_tokens=num_visual_tokens,
+            flashvid_config=flashvid_config,
+        )
     return segment_final_tokens, segment_final_global_indices
+
+
+def _graphvid_apply_final_cap(
+    segment_final_tokens: torch.Tensor,
+    segment_final_global_indices: torch.Tensor,
+    segment_global_indices: torch.Tensor,
+    cls_attention: torch.Tensor,
+    num_visual_tokens: int,
+    flashvid_config: FlashVidConfig,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Apply an optional hard final budget for GraphVID outputs.
+
+    Graph merging improves the candidate pool, but FlashVID's ADTS branch can
+    still leave the final sequence near the original FlashVID budget. This
+    budget cap keeps per-frame coverage first, then fills remaining slots by
+    attention, so GraphVID can be evaluated at a real lower-token point.
+    """
+    target_per_frame = int(getattr(flashvid_config, "graph_final_tokens_per_frame", 0) or 0)
+    if target_per_frame <= 0 or segment_final_global_indices.numel() == 0:
+        return segment_final_tokens, segment_final_global_indices
+
+    num_frames = int(cls_attention.shape[0])
+    target_total = min(
+        int(segment_final_global_indices.numel()),
+        max(1, int(target_per_frame) * max(1, num_frames)),
+    )
+    if int(segment_final_global_indices.numel()) <= target_total:
+        return segment_final_tokens, segment_final_global_indices
+
+    base_frame = int((segment_global_indices[0, 0] // max(1, num_visual_tokens)).item())
+    frame_ids = (segment_final_global_indices // max(1, num_visual_tokens)) - base_frame
+    token_ids = segment_final_global_indices % max(1, num_visual_tokens)
+    valid = (
+        (frame_ids >= 0)
+        & (frame_ids < num_frames)
+        & (token_ids >= 0)
+        & (token_ids < num_visual_tokens)
+    )
+
+    scores = torch.full(
+        (segment_final_global_indices.shape[0],),
+        -1.0e6,
+        dtype=torch.float32,
+        device=segment_final_global_indices.device,
+    )
+    if valid.any():
+        scores[valid] = cls_attention.float()[frame_ids[valid].long(), token_ids[valid].long()]
+    scores = torch.nan_to_num(scores, nan=-1.0e6, posinf=1.0e6, neginf=-1.0e6)
+
+    keep_mask = torch.zeros_like(scores, dtype=torch.bool)
+    floor_ratio = min(max(float(getattr(flashvid_config, "graph_final_frame_floor_ratio", 0.55) or 0.55), 0.0), 1.0)
+    frame_floor = min(target_per_frame, max(0, int(math.floor(target_per_frame * floor_ratio))))
+    if frame_floor > 0:
+        for frame_idx in range(num_frames):
+            loc = torch.where(frame_ids == frame_idx)[0]
+            if loc.numel() == 0:
+                continue
+            k = min(frame_floor, int(loc.numel()), max(0, target_total - int(keep_mask.sum().item())))
+            if k <= 0:
+                break
+            top = torch.topk(scores[loc], k=k, largest=True).indices
+            keep_mask[loc[top]] = True
+
+    remaining = target_total - int(keep_mask.sum().item())
+    if remaining > 0:
+        candidates = torch.where(~keep_mask)[0]
+        if candidates.numel() > 0:
+            k = min(remaining, int(candidates.numel()))
+            top = torch.topk(scores[candidates], k=k, largest=True).indices
+            keep_mask[candidates[top]] = True
+
+    selected = torch.where(keep_mask)[0]
+    if selected.numel() == 0:
+        selected = torch.topk(scores, k=target_total, largest=True).indices
+    order = segment_final_global_indices[selected].argsort()
+    selected = selected[order]
+    return segment_final_tokens[selected], segment_final_global_indices[selected]
 
 
 def segment(
