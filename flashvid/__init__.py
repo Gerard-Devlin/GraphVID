@@ -93,7 +93,7 @@ def flashvid(
     graph_temporal_radius: int = 1,
     graph_temporal_skip: int = 1,
     graph_merge_protect_ratio: float = 0.15,
-    graph_merge_target_ratio: float = 1.25,
+    graph_merge_target_ratio: float = 0.65,
     graph_merge_representative: str = "medoid",
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",

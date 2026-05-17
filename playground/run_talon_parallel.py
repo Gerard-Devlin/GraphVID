@@ -578,7 +578,7 @@ def main() -> None:
     parser.add_argument("--graph_temporal_radius", type=int, default=1)
     parser.add_argument("--graph_temporal_skip", type=int, default=1)
     parser.add_argument("--graph_merge_protect_ratio", type=float, default=0.15)
-    parser.add_argument("--graph_merge_target_ratio", type=float, default=1.25)
+    parser.add_argument("--graph_merge_target_ratio", type=float, default=0.65)
     parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean"])
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)

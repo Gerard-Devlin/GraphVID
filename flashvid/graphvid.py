@@ -30,6 +30,26 @@ def _local_neighbors(index: int, h: int, w: int, radius: int, device: torch.devi
     return torch.tensor(ids, dtype=torch.long, device=device)
 
 
+def _neighbor_table(num_visual_tokens: int, h: int, w: int, radius: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+    rows = []
+    max_len = 0
+    for idx in range(num_visual_tokens):
+        neighbors = _local_neighbors(idx, h, w, radius, device="cpu").tolist()
+        rows.append(neighbors)
+        max_len = max(max_len, len(neighbors))
+    table = torch.zeros((num_visual_tokens, max_len), dtype=torch.long)
+    valid = torch.zeros((num_visual_tokens, max_len), dtype=torch.bool)
+    for idx, neighbors in enumerate(rows):
+        if not neighbors:
+            table[idx, 0] = idx
+            valid[idx, 0] = True
+            continue
+        n = len(neighbors)
+        table[idx, :n] = torch.tensor(neighbors, dtype=torch.long)
+        valid[idx, :n] = True
+    return table.to(device=device), valid.to(device=device)
+
+
 def graph_spatiotemporal_compression(
     video_features: torch.Tensor,
     temporal_threshold: float,
@@ -53,7 +73,9 @@ def graph_spatiotemporal_compression(
         return [empty_tokens for _ in range(num_frames)], [empty_indices for _ in range(num_frames)]
 
     target_context = max(1, int(getattr(flashvid_config, "num_sttm_tokens", 0) or 0) * num_frames)
-    target_ratio = max(1.0, float(getattr(flashvid_config, "graph_merge_target_ratio", 1.25) or 1.25))
+    # Ratios below 1.0 deliberately make GraphVID more aggressive than FlashVID's
+    # STTM budget, enabling real token reduction instead of an equal-budget swap.
+    target_ratio = min(max(float(getattr(flashvid_config, "graph_merge_target_ratio", 0.65) or 0.65), 0.05), 4.0)
     target_components = min(num_nodes, max(1, int(math.ceil(target_context * target_ratio))))
 
     node_id = torch.full((num_frames, num_visual_tokens), -1, dtype=torch.long, device=device)
@@ -75,6 +97,7 @@ def graph_spatiotemporal_compression(
     radius = max(0, int(getattr(flashvid_config, "graph_temporal_radius", 1) or 1))
     temporal_skip = max(1, int(getattr(flashvid_config, "graph_temporal_skip", 1) or 1))
     topk = max(1, int(getattr(flashvid_config, "graph_temporal_topk", 3) or 3))
+    neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius, device)
 
     novelty = torch.ones((num_frames, num_visual_tokens), dtype=torch.float32, device=device)
     edges: list[tuple[float, int, int]] = []
@@ -84,24 +107,24 @@ def graph_spatiotemporal_compression(
             cur_valid = torch.where(token_mask[frame_idx])[0]
             if cur_valid.numel() == 0:
                 continue
-            for cur_idx_t in cur_valid:
-                cur_idx = int(cur_idx_t.item())
-                prev_neighbors = _local_neighbors(cur_idx, h, w, radius, device)
-                prev_neighbors = prev_neighbors[token_mask[prev_frame, prev_neighbors]]
-                if prev_neighbors.numel() == 0:
-                    continue
-                sims = torch.matmul(normed[prev_frame, prev_neighbors], normed[frame_idx, cur_idx])
-                max_sim = sims.max()
-                cur_novelty = (1.0 - max_sim).clamp(0.0, 2.0) * 0.5
-                novelty[frame_idx, cur_idx] = torch.minimum(novelty[frame_idx, cur_idx], cur_novelty)
-                k = min(topk, int(prev_neighbors.numel()))
-                vals, ids = torch.topk(sims, k=k, largest=True)
-                cur_node = int(node_id[frame_idx, cur_idx].item())
-                for sim, local_id in zip(vals.tolist(), ids.tolist()):
-                    prev_idx = int(prev_neighbors[local_id].item())
-                    prev_node = int(node_id[prev_frame, prev_idx].item())
-                    if prev_node >= 0 and cur_node >= 0:
-                        edges.append((float(sim), cur_node, prev_node))
+            neigh = neighbor_idx[cur_valid]
+            valid = neighbor_valid[cur_valid] & token_mask[prev_frame, neigh]
+            prev_feats = normed[prev_frame, neigh]
+            cur_feats = normed[frame_idx, cur_valid]
+            sims = torch.sum(prev_feats * cur_feats.unsqueeze(1), dim=-1)
+            sims = sims.masked_fill(~valid, -1.0)
+            max_sim = sims.max(dim=1).values
+            cur_novelty = (1.0 - max_sim).clamp(0.0, 2.0) * 0.5
+            novelty[frame_idx, cur_valid] = torch.minimum(novelty[frame_idx, cur_valid], cur_novelty)
+
+            k = min(topk, int(sims.shape[1]))
+            vals, ids = torch.topk(sims, k=k, dim=1, largest=True)
+            cur_nodes = node_id[frame_idx, cur_valid]
+            prev_nodes = node_id[prev_frame, neigh.gather(1, ids)]
+            edge_valid = (vals > -0.5) & (cur_nodes.unsqueeze(1) >= 0) & (prev_nodes >= 0)
+            edge_rows, edge_cols = torch.where(edge_valid)
+            for row, col in zip(edge_rows.tolist(), edge_cols.tolist()):
+                edges.append((float(vals[row, col].item()), int(cur_nodes[row].item()), int(prev_nodes[row, col].item())))
 
     novelty_vals = novelty[token_mask]
     novelty_min = novelty_vals.min()

@@ -28,7 +28,7 @@ class FlashVidConfig:
     graph_temporal_radius: int = field(default=1)
     graph_temporal_skip: int = field(default=1)
     graph_merge_protect_ratio: float = field(default=0.15)
-    graph_merge_target_ratio: float = field(default=1.25)
+    graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")  # medoid | mean
 
     # Dynamic Video Segmentation (DySeg).
