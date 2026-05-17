@@ -450,7 +450,12 @@ def _combine_jsonl(paths: list[Path], out_path: Path) -> list[dict]:
 
 def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shard_dir: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
-    from playground.bench_all_metrics import _print_summary, _summarize_pairwise_comparison, _summarize_phase
+    from playground.bench_all_metrics import (
+        _add_duration_breakdown,
+        _print_summary,
+        _summarize_pairwise_comparison,
+        _summarize_phase,
+    )
 
     combined_flashvid = shard_dir / f"{args.tag}_flashvid.jsonl"
     combined_ours = shard_dir / f"{args.tag}_ours.jsonl"
@@ -472,6 +477,11 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
             anchor_name="flashvid",
             target_name="ours",
         )
+    _add_duration_breakdown(
+        summary,
+        flashvid_records=flashvid_records if args.run_flashvid else None,
+        ours_records=ours_records,
+    )
     with combined_summary.open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     print(f"[combined] ours={combined_ours}")

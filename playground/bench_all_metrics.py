@@ -9,7 +9,7 @@ import traceback
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -1490,6 +1490,58 @@ def _summarize_pairwise_comparison(
     }
 
 
+def _add_duration_breakdown(
+    summary: dict[str, Any],
+    *,
+    baseline_records: Optional[list[dict[str, Any]]] = None,
+    flashvid_records: Optional[list[dict[str, Any]]] = None,
+    ours_records: Optional[list[dict[str, Any]]] = None,
+) -> None:
+    records_by_phase = {
+        "baseline": baseline_records,
+        "flashvid": flashvid_records,
+        "ours": ours_records,
+    }
+    durations = ["short", "medium", "long"]
+    breakdown: dict[str, Any] = {}
+    for duration in durations:
+        bucket: dict[str, Any] = {"comparison": {}}
+        phase_records: dict[str, list[dict[str, Any]]] = {}
+        for phase_name, records in records_by_phase.items():
+            if records is None:
+                continue
+            subset = [
+                r for r in records
+                if str(r.get("duration") or "").strip().lower() == duration
+            ]
+            phase_records[phase_name] = subset
+            bucket[phase_name] = _summarize_phase(subset)
+
+        if "baseline" in phase_records and "flashvid" in phase_records:
+            bucket["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
+                phase_records["baseline"],
+                phase_records["flashvid"],
+                anchor_name="baseline",
+                target_name="flashvid",
+            )
+        if "baseline" in phase_records and "ours" in phase_records:
+            bucket["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
+                phase_records["baseline"],
+                phase_records["ours"],
+                anchor_name="baseline",
+                target_name="ours",
+            )
+        if "flashvid" in phase_records and "ours" in phase_records:
+            bucket["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
+                phase_records["flashvid"],
+                phase_records["ours"],
+                anchor_name="flashvid",
+                target_name="ours",
+            )
+        breakdown[duration] = bucket
+    summary["duration_breakdown"] = breakdown
+
+
 def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
     # LLaVA backend currently has instability in inner-LLM token pruning path.
     # Keep visual-side compression enabled, but disable LLM pruning for stable benchmarking.
@@ -2077,6 +2129,61 @@ def _print_summary(summary: dict[str, Any]):
                 print(f"    {vision_ratio_key}: {comp[vision_ratio_key]['mean']:.3f}")
             if vision_token_red is not None:
                 print(f"    vision-side token reduction: {vision_token_red * 100:.2f}%")
+
+    duration_breakdown = summary.get("duration_breakdown", {})
+    if duration_breakdown:
+        printed_header = False
+        for duration in ("short", "medium", "long"):
+            bucket = duration_breakdown.get(duration)
+            if not bucket:
+                continue
+            phase_values = [
+                bucket.get(phase_name)
+                for phase_name in ("baseline", "flashvid", "ours")
+                if bucket.get(phase_name) is not None
+            ]
+            if not phase_values or all(int(phase.get("num_samples", 0) or 0) == 0 for phase in phase_values):
+                continue
+            if not printed_header:
+                print("[by duration]")
+                printed_header = True
+            print(f"  [{duration}]")
+            for phase_name in ("baseline", "flashvid", "ours"):
+                phase = bucket.get(phase_name)
+                if phase is None:
+                    continue
+                acc = phase.get("accuracy")
+                acc_text = f"{acc * 100:.2f}%" if acc is not None else "N/A"
+                vt_mean = phase.get("compressed_visual_tokens", {}).get("mean")
+                vision_vt_mean = phase.get("vision_compressed_visual_tokens", {}).get("mean")
+                target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
+                channel = (
+                    phase.get("talon_anchor_tokens", {}).get("mean"),
+                    phase.get("talon_event_tokens", {}).get("mean"),
+                    phase.get("talon_recall_tokens", {}).get("mean"),
+                )
+                line = f"    [{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}"
+                if vt_mean is not None:
+                    line += f" vtoken={vt_mean:.2f}"
+                if vision_vt_mean is not None:
+                    line += f" vision={vision_vt_mean:.2f}"
+                if target_mean is not None:
+                    line += f" target/frame={target_mean:.2f}"
+                if channel[0] is not None:
+                    line += f" a/e/r={channel[0]:.1f}/{(channel[1] or 0.0):.1f}/{(channel[2] or 0.0):.1f}"
+                print(line)
+            comp = bucket.get("comparison", {}).get("flashvid_vs_ours")
+            if comp is not None:
+                ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
+                reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
+                ratio = comp[ratio_key]["mean"] if ratio_key else None
+                reduction = comp[reduction_key]["mean"] if reduction_key else None
+                comp_line = f"    [flashvid_vs_ours] matched={comp['matched_samples']}"
+                if ratio is not None:
+                    comp_line += f" ratio={ratio:.3f}"
+                if reduction is not None:
+                    comp_line += f" token_reduction={reduction * 100:.2f}%"
+                print(comp_line)
     print(SEPARATOR)
 
 
@@ -2219,6 +2326,12 @@ def run(args: BenchmarkArgs):
             anchor_name="flashvid",
             target_name="ours",
         )
+    _add_duration_breakdown(
+        summary,
+        baseline_records=baseline_records,
+        flashvid_records=flashvid_records,
+        ours_records=ours_records,
+    )
 
     summary_path = Path(args.summary_output_json)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
