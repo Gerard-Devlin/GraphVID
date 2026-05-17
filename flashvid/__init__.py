@@ -88,6 +88,13 @@ def flashvid(
     temporal_local_radius: int = 2,
     temporal_hysteresis: float = 0.0,
     min_keep_per_frame: int = 0,
+    temporal_merge_mode: str = "tree",
+    graph_temporal_topk: int = 3,
+    graph_temporal_radius: int = 1,
+    graph_temporal_skip: int = 1,
+    graph_merge_protect_ratio: float = 0.15,
+    graph_merge_target_ratio: float = 1.25,
+    graph_merge_representative: str = "medoid",
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -311,6 +318,7 @@ def flashvid(
         temporal_hysteresis (float, optional): Hysteresis margin for temporal merge decisions.
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
+            "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -434,8 +442,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon")
+    if variant not in ("flashvid", "talon", "graphvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid")
+    if variant == "graphvid":
+        temporal_merge_mode = "graph"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -455,6 +465,13 @@ def flashvid(
         temporal_local_radius=temporal_local_radius,
         temporal_hysteresis=temporal_hysteresis,
         min_keep_per_frame=min_keep_per_frame,
+        temporal_merge_mode=temporal_merge_mode,
+        graph_temporal_topk=graph_temporal_topk,
+        graph_temporal_radius=graph_temporal_radius,
+        graph_temporal_skip=graph_temporal_skip,
+        graph_merge_protect_ratio=graph_merge_protect_ratio,
+        graph_merge_target_ratio=graph_merge_target_ratio,
+        graph_merge_representative=graph_merge_representative,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

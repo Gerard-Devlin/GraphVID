@@ -133,8 +133,8 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant != "flashvid":
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon")
+    if compression_variant not in ("flashvid", "graphvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|talon")
 
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
@@ -236,12 +236,26 @@ def segment_compression(
     # 1. Apply Temporal Average Merging (TAM) to the segment features.
     if num_other_tokens > 0 and flashvid_config.temporal_threshold < 1.0:
         if num_frames > 1:
-            temp_merged_token_list, temp_merged_indices_list = spatiotemporal_compression(
-                video_features=segment_features,
-                temporal_threshold=flashvid_config.temporal_threshold,
-                token_mask=mask,
-                flashvid_config=flashvid_config,
-            )
+            merge_mode = str(getattr(flashvid_config, "temporal_merge_mode", "tree") or "tree").strip().lower()
+            if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid":
+                merge_mode = "graph"
+            if merge_mode == "graph":
+                from .graphvid import graph_spatiotemporal_compression
+
+                temp_merged_token_list, temp_merged_indices_list = graph_spatiotemporal_compression(
+                    video_features=segment_features,
+                    temporal_threshold=flashvid_config.temporal_threshold,
+                    token_mask=mask,
+                    flashvid_config=flashvid_config,
+                    cls_attention=cls_attention,
+                )
+            else:
+                temp_merged_token_list, temp_merged_indices_list = spatiotemporal_compression(
+                    video_features=segment_features,
+                    temporal_threshold=flashvid_config.temporal_threshold,
+                    token_mask=mask,
+                    flashvid_config=flashvid_config,
+                )
             temp_merged_global_indices_list = [segment_global_indices.view(num_frames, -1)[i][temp_merged_indices] for i, temp_merged_indices in enumerate(temp_merged_indices_list)]
         else:
             # Single-frame segment, no temporal merging needed.

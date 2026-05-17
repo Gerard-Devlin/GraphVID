@@ -49,6 +49,7 @@ class BenchmarkArgs:
     run_baseline: bool = field(default=True)
     run_flashvid: bool = field(default=True)
     run_ours: bool = field(default=True)
+    run_graphvid: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
@@ -60,6 +61,13 @@ class BenchmarkArgs:
     token_selection_method: str = field(default="attn_div_v2")
     alpha: float = field(default=0.70)
     temporal_threshold: float = field(default=0.8)
+    temporal_merge_mode: str = field(default="tree")
+    graph_temporal_topk: int = field(default=3)
+    graph_temporal_radius: int = field(default=1)
+    graph_temporal_skip: int = field(default=1)
+    graph_merge_protect_ratio: float = field(default=0.15)
+    graph_merge_target_ratio: float = field(default=1.25)
+    graph_merge_representative: str = field(default="medoid")
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -274,6 +282,7 @@ class BenchmarkArgs:
     baseline_output: str = field(default="logs/efficiency/baseline_all_metrics.jsonl")
     flashvid_output: str = field(default="logs/efficiency/flashvid_all_metrics.jsonl")
     ours_output: str = field(default="logs/efficiency/ours_all_metrics.jsonl")
+    graphvid_output: str = field(default="logs/efficiency/graphvid_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -1499,11 +1508,13 @@ def _add_duration_breakdown(
     baseline_records: Optional[list[dict[str, Any]]] = None,
     flashvid_records: Optional[list[dict[str, Any]]] = None,
     ours_records: Optional[list[dict[str, Any]]] = None,
+    graphvid_records: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     records_by_phase = {
         "baseline": baseline_records,
         "flashvid": flashvid_records,
         "ours": ours_records,
+        "graphvid": graphvid_records,
     }
     durations = ["short", "medium", "long"]
     breakdown: dict[str, Any] = {}
@@ -1541,6 +1552,13 @@ def _add_duration_breakdown(
                 anchor_name="flashvid",
                 target_name="ours",
             )
+        if "flashvid" in phase_records and "graphvid" in phase_records:
+            bucket["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
+                phase_records["flashvid"],
+                phase_records["graphvid"],
+                anchor_name="flashvid",
+                target_name="graphvid",
+            )
         breakdown[duration] = bucket
     summary["duration_breakdown"] = breakdown
 
@@ -1567,6 +1585,13 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         token_selection_method=args.token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
+        temporal_merge_mode="tree",
+        graph_temporal_topk=args.graph_temporal_topk,
+        graph_temporal_radius=args.graph_temporal_radius,
+        graph_temporal_skip=args.graph_temporal_skip,
+        graph_merge_protect_ratio=args.graph_merge_protect_ratio,
+        graph_merge_target_ratio=args.graph_merge_target_ratio,
+        graph_merge_representative=args.graph_merge_representative,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -1763,6 +1788,41 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
     )
 
 
+def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
+    from flashvid import flashvid
+    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
+
+    return flashvid(
+        model=model,
+        retention_ratio=args.retention_ratio,
+        do_segment=args.do_segment,
+        segment_threshold=args.segment_threshold,
+        min_segment_num=args.min_segment_num,
+        complementary_segment=args.complementary_segment,
+        token_selection_method=args.token_selection_method,
+        alpha=args.alpha,
+        temporal_threshold=args.temporal_threshold,
+        temporal_merge_mode="graph",
+        graph_temporal_topk=args.graph_temporal_topk,
+        graph_temporal_radius=args.graph_temporal_radius,
+        graph_temporal_skip=args.graph_temporal_skip,
+        graph_merge_protect_ratio=args.graph_merge_protect_ratio,
+        graph_merge_target_ratio=args.graph_merge_target_ratio,
+        graph_merge_representative=args.graph_merge_representative,
+        expansion=args.expansion,
+        pruning_layer=pruning_layer,
+        llm_retention_ratio=llm_retention_ratio,
+        compression_variant="graphvid",
+        question_aware_reweighting=False,
+        question_reweight_beta=args.question_reweight_beta,
+        adaptive_token_budget=False,
+        decode_policy=args.decode_policy,
+        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
+        decode_update_interval=args.decode_update_interval,
+        decode_start_layer=args.decode_start_layer,
+    )
+
+
 def _apply_ours(model, args: BenchmarkArgs, backend: str):
     from flashvid import flashvid
     pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
@@ -1777,6 +1837,13 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         token_selection_method=args.token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
+        temporal_merge_mode=args.temporal_merge_mode,
+        graph_temporal_topk=args.graph_temporal_topk,
+        graph_temporal_radius=args.graph_temporal_radius,
+        graph_temporal_skip=args.graph_temporal_skip,
+        graph_merge_protect_ratio=args.graph_merge_protect_ratio,
+        graph_merge_target_ratio=args.graph_merge_target_ratio,
+        graph_merge_representative=args.graph_merge_representative,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -1994,7 +2061,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Max new tokens: {args.max_new_tokens}")
     print(
         "Run phases    : "
-        f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, ours={args.run_ours}"
+        f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
+        f"ours={args.run_ours}, graphvid={args.run_graphvid}"
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
@@ -2006,11 +2074,19 @@ def _print_header(args: BenchmarkArgs, backend: str):
         print(
             "Ours config   : "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
+            f"temporal_merge={args.temporal_merge_mode}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
             f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
             f"duration_targets={duration_targets}, "
             f"event_cap={args.talon_event_budget_ratio:.2f}, "
             f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
+        )
+    if args.run_graphvid:
+        print(
+            "GraphVID config: "
+            f"merge=graph, topk={args.graph_temporal_topk}, radius={args.graph_temporal_radius}, "
+            f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
+            f"target_ratio={args.graph_merge_target_ratio:.2f}, rep={args.graph_merge_representative}"
         )
     print(SEPARATOR)
 
@@ -2019,7 +2095,7 @@ def _print_summary(summary: dict[str, Any]):
     print(SEPARATOR)
     print("Summary")
     print(SEPARATOR)
-    for phase_name in ("baseline", "flashvid", "ours"):
+    for phase_name in ("baseline", "flashvid", "ours", "graphvid"):
         phase = summary.get(phase_name)
         if phase is None:
             continue
@@ -2122,7 +2198,7 @@ def _print_summary(summary: dict[str, Any]):
     comparison = summary.get("comparison", {})
     if comparison:
         print("[comparison]")
-        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours"):
+        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid"):
             comp = comparison.get(key)
             if comp is None:
                 continue
@@ -2154,7 +2230,7 @@ def _print_summary(summary: dict[str, Any]):
                 continue
             phase_values = [
                 bucket.get(phase_name)
-                for phase_name in ("baseline", "flashvid", "ours")
+                for phase_name in ("baseline", "flashvid", "ours", "graphvid")
                 if bucket.get(phase_name) is not None
             ]
             if not phase_values or all(int(phase.get("num_samples", 0) or 0) == 0 for phase in phase_values):
@@ -2163,7 +2239,7 @@ def _print_summary(summary: dict[str, Any]):
                 print("[by duration]")
                 printed_header = True
             print(f"  [{duration}]")
-            for phase_name in ("baseline", "flashvid", "ours"):
+            for phase_name in ("baseline", "flashvid", "ours", "graphvid"):
                 phase = bucket.get(phase_name)
                 if phase is None:
                     continue
@@ -2187,13 +2263,17 @@ def _print_summary(summary: dict[str, Any]):
                 if channel[0] is not None:
                     line += f" a/e/r={channel[0]:.1f}/{(channel[1] or 0.0):.1f}/{(channel[2] or 0.0):.1f}"
                 print(line)
-            comp = bucket.get("comparison", {}).get("flashvid_vs_ours")
+            comp_key = "flashvid_vs_ours"
+            comp = bucket.get("comparison", {}).get(comp_key)
+            if comp is None:
+                comp_key = "flashvid_vs_graphvid"
+                comp = bucket.get("comparison", {}).get(comp_key)
             if comp is not None:
                 ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
                 reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
                 ratio = comp[ratio_key]["mean"] if ratio_key else None
                 reduction = comp[reduction_key]["mean"] if reduction_key else None
-                comp_line = f"    [flashvid_vs_ours] matched={comp['matched_samples']}"
+                comp_line = f"    [{comp_key}] matched={comp['matched_samples']}"
                 if ratio is not None:
                     comp_line += f" ratio={ratio:.3f}"
                 if reduction is not None:
@@ -2206,8 +2286,8 @@ def run(args: BenchmarkArgs):
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
-    if not (args.run_baseline or args.run_flashvid or args.run_ours):
-        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours")
+    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid):
+        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid")
 
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
@@ -2223,7 +2303,7 @@ def run(args: BenchmarkArgs):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours)
+    total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours) + int(args.run_graphvid)
     phase_idx = 1
     def _acquire_phase_bundle():
         if args.reload_model_each_phase:
@@ -2282,11 +2362,36 @@ def run(args: BenchmarkArgs):
             _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
+    if args.run_graphvid:
+        print(f"\nPhase {phase_idx}/{total_phases}: GraphVID ...")
+        print(
+            "[graphvid-active] "
+            f"merge=graph, topk={args.graph_temporal_topk}, radius={args.graph_temporal_radius}, "
+            f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
+            f"target_ratio={args.graph_merge_target_ratio:.2f}, rep={args.graph_merge_representative}"
+        )
+        phase_bundle = _acquire_phase_bundle()
+        phase_backend = phase_bundle["backend"]
+        phase_bundle["model"] = _apply_graphvid(phase_bundle["model"], args, phase_backend)
+        try:
+            _run_phase(
+                model_bundle=phase_bundle,
+                args=args,
+                samples=samples,
+                phase_name="GraphVID",
+                use_acceleration=True,
+                output_path=args.graphvid_output,
+            )
+        finally:
+            _release_phase_bundle(phase_bundle)
+        phase_idx += 1
+
     if args.run_ours:
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
         print(
             "[talon-active][ours] "
             f"path=clean, qaware={args.question_aware_reweighting}, "
+            f"variant={args.compression_variant}, merge={args.temporal_merge_mode}, "
             f"target/frame={args.talon_target_tokens_per_frame}, "
             f"duration_targets={args.talon_short_target_tokens_per_frame}/"
             f"{args.talon_medium_target_tokens_per_frame}/"
@@ -2313,6 +2418,7 @@ def run(args: BenchmarkArgs):
     baseline_records = None
     flashvid_records = None
     ours_records = None
+    graphvid_records = None
     if args.run_baseline:
         baseline_records = _read_jsonl(args.baseline_output)
         summary["baseline"] = _summarize_phase(baseline_records)
@@ -2322,6 +2428,9 @@ def run(args: BenchmarkArgs):
     if args.run_ours:
         ours_records = _read_jsonl(args.ours_output)
         summary["ours"] = _summarize_phase(ours_records)
+    if args.run_graphvid:
+        graphvid_records = _read_jsonl(args.graphvid_output)
+        summary["graphvid"] = _summarize_phase(graphvid_records)
 
     if baseline_records is not None and flashvid_records is not None:
         summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
@@ -2344,11 +2453,19 @@ def run(args: BenchmarkArgs):
             anchor_name="flashvid",
             target_name="ours",
         )
+    if flashvid_records is not None and graphvid_records is not None:
+        summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
+            flashvid_records,
+            graphvid_records,
+            anchor_name="flashvid",
+            target_name="graphvid",
+        )
     _add_duration_breakdown(
         summary,
         baseline_records=baseline_records,
         flashvid_records=flashvid_records,
         ours_records=ours_records,
+        graphvid_records=graphvid_records,
     )
 
     summary_path = Path(args.summary_output_json)

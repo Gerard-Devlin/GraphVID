@@ -322,6 +322,31 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
     )
 
 
+def _append_graphvid_args(cmd: list[str], args: argparse.Namespace) -> None:
+    cmd.extend(
+        [
+            "--llm_retention_ratio",
+            "1.0",
+            "--retention_ratio",
+            "0.10",
+            "--temporal_merge_mode",
+            "graph",
+            "--graph_temporal_topk",
+            str(args.graph_temporal_topk),
+            "--graph_temporal_radius",
+            str(args.graph_temporal_radius),
+            "--graph_temporal_skip",
+            str(args.graph_temporal_skip),
+            "--graph_merge_protect_ratio",
+            str(args.graph_merge_protect_ratio),
+            "--graph_merge_target_ratio",
+            str(args.graph_merge_target_ratio),
+            "--graph_merge_representative",
+            args.graph_merge_representative,
+        ]
+    )
+
+
 def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path) -> list[dict[str, object]]:
     ranges = _split_ranges(args.start_index, args.total_limit, len(gpu_ids))
     shard_dir = work_dir / "logs" / "efficiency" / "parallel" / args.tag
@@ -331,6 +356,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
     for shard_idx, ((start, limit), gpu_id) in enumerate(zip(ranges, gpu_ids)):
         flashvid_out = shard_dir / f"flashvid_shard{shard_idx:02d}.jsonl"
         ours_out = shard_dir / f"ours_shard{shard_idx:02d}.jsonl"
+        graphvid_out = shard_dir / f"graphvid_shard{shard_idx:02d}.jsonl"
         summary_out = shard_dir / f"summary_shard{shard_idx:02d}.json"
         log_out = shard_dir / f"run_shard{shard_idx:02d}.log"
 
@@ -369,15 +395,22 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             "--run_flashvid",
             _str_bool(args.run_flashvid),
             "--run_ours",
-            "True",
+            _str_bool(not args.run_graphvid),
+            "--run_graphvid",
+            _str_bool(args.run_graphvid),
             "--flashvid_output",
             str(flashvid_out),
             "--ours_output",
             str(ours_out),
+            "--graphvid_output",
+            str(graphvid_out),
             "--summary_output_json",
             str(summary_out),
         ]
-        _append_common_talon_args(cmd, args)
+        if args.run_graphvid:
+            _append_graphvid_args(cmd, args)
+        else:
+            _append_common_talon_args(cmd, args)
 
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -404,6 +437,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
                 "limit": limit,
                 "flashvid_out": flashvid_out,
                 "ours_out": ours_out,
+                "graphvid_out": graphvid_out,
                 "summary_out": summary_out,
                 "log_out": log_out,
             }
@@ -465,18 +499,34 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
 
     combined_flashvid = shard_dir / f"{args.tag}_flashvid.jsonl"
     combined_ours = shard_dir / f"{args.tag}_ours.jsonl"
+    combined_graphvid = shard_dir / f"{args.tag}_graphvid.jsonl"
     combined_summary = shard_dir / f"{args.tag}_summary.json"
 
     flashvid_records = []
     if args.run_flashvid:
         flashvid_records = _combine_jsonl([Path(j["flashvid_out"]) for j in jobs], combined_flashvid)
-    ours_records = _combine_jsonl([Path(j["ours_out"]) for j in jobs], combined_ours)
+    ours_records = []
+    graphvid_records = []
+    if args.run_graphvid:
+        graphvid_records = _combine_jsonl([Path(j["graphvid_out"]) for j in jobs], combined_graphvid)
+    else:
+        ours_records = _combine_jsonl([Path(j["ours_out"]) for j in jobs], combined_ours)
 
     summary: dict[str, object] = {"comparison": {}}
     if args.run_flashvid:
         summary["flashvid"] = _summarize_phase(flashvid_records)
-    summary["ours"] = _summarize_phase(ours_records)
-    if args.run_flashvid:
+    if args.run_graphvid:
+        summary["graphvid"] = _summarize_phase(graphvid_records)
+    else:
+        summary["ours"] = _summarize_phase(ours_records)
+    if args.run_flashvid and args.run_graphvid:
+        summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
+            flashvid_records,
+            graphvid_records,
+            anchor_name="flashvid",
+            target_name="graphvid",
+        )
+    elif args.run_flashvid:
         summary["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
             flashvid_records,
             ours_records,
@@ -486,11 +536,15 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     _add_duration_breakdown(
         summary,
         flashvid_records=flashvid_records if args.run_flashvid else None,
-        ours_records=ours_records,
+        ours_records=None if args.run_graphvid else ours_records,
+        graphvid_records=graphvid_records if args.run_graphvid else None,
     )
     with combined_summary.open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
-    print(f"[combined] ours={combined_ours}")
+    if args.run_graphvid:
+        print(f"[combined] graphvid={combined_graphvid}")
+    else:
+        print(f"[combined] ours={combined_ours}")
     if args.run_flashvid:
         print(f"[combined] flashvid={combined_flashvid}")
     print(f"[combined] summary={combined_summary}")
@@ -513,12 +567,19 @@ def main() -> None:
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--local_files_only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_flashvid", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
     parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")
     parser.add_argument("--gpu_ids", default="", help="Comma-separated GPU ids. Overrides auto selection.")
     parser.add_argument("--tag", default="talon_recall08_t20_parallel")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=20)
+    parser.add_argument("--graph_temporal_topk", type=int, default=3)
+    parser.add_argument("--graph_temporal_radius", type=int, default=1)
+    parser.add_argument("--graph_temporal_skip", type=int, default=1)
+    parser.add_argument("--graph_merge_protect_ratio", type=float, default=0.15)
+    parser.add_argument("--graph_merge_target_ratio", type=float, default=1.25)
+    parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean"])
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

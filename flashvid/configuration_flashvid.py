@@ -23,6 +23,13 @@ class FlashVidConfig:
     temporal_local_radius: int = field(default=2)
     temporal_hysteresis: float = field(default=0.0)
     min_keep_per_frame: int = field(default=0)
+    temporal_merge_mode: str = field(default="tree")  # tree | graph
+    graph_temporal_topk: int = field(default=3)
+    graph_temporal_radius: int = field(default=1)
+    graph_temporal_skip: int = field(default=1)
+    graph_merge_protect_ratio: float = field(default=0.15)
+    graph_merge_target_ratio: float = field(default=1.25)
+    graph_merge_representative: str = field(default="medoid")  # medoid | mean
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
