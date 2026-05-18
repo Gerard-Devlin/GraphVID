@@ -156,7 +156,6 @@ If you find this project useful in your research, please consider citing:
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Fanziyang-v/FlashVID&type=Date)](https://star-history.com/#Fanziyang-v/FlashVID&Date)
 
-
 ```
 conda activate graphvid311
 cd ~/GraphVID
@@ -164,5 +163,6 @@ cd ~/GraphVID
 export HF_HOME=/gluster/envs/users/wuzhijian/hf_home
 export HF_HUB_CACHE=$HF_HOME/hub
 export HF_DATASETS_CACHE=$HF_HOME/datasets
+export DECORD_EOF_RETRY_MAX=20480
 export CUDA_VISIBLE_DEVICES=7
 ```
