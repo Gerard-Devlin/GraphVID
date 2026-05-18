@@ -69,9 +69,11 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
     cmd.extend(
         [
             "--llm_retention_ratio",
-            "1.0",
+            str(args.llm_retention_ratio),
             "--retention_ratio",
-            "0.10",
+            str(args.retention_ratio),
+            "--expansion",
+            str(args.expansion),
             "--compression_variant",
             "talon",
             "--question_aware_reweighting",
@@ -326,9 +328,11 @@ def _append_graphvid_args(cmd: list[str], args: argparse.Namespace) -> None:
     cmd.extend(
         [
             "--llm_retention_ratio",
-            "1.0",
+            str(args.llm_retention_ratio),
             "--retention_ratio",
-            "0.10",
+            str(args.retention_ratio),
+            "--expansion",
+            str(args.expansion),
             "--temporal_merge_mode",
             "graph",
             "--graph_temporal_topk",
@@ -407,7 +411,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             "--run_flashvid",
             _str_bool(args.run_flashvid),
             "--run_ours",
-            _str_bool(not args.run_graphvid),
+            _str_bool(args.run_ours and not args.run_graphvid),
             "--run_graphvid",
             _str_bool(args.run_graphvid),
             "--flashvid_output",
@@ -521,7 +525,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     graphvid_records = []
     if args.run_graphvid:
         graphvid_records = _combine_jsonl([Path(j["graphvid_out"]) for j in jobs], combined_graphvid)
-    else:
+    elif args.run_ours:
         ours_records = _combine_jsonl([Path(j["ours_out"]) for j in jobs], combined_ours)
 
     summary: dict[str, object] = {"comparison": {}}
@@ -529,7 +533,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
         summary["flashvid"] = _summarize_phase(flashvid_records)
     if args.run_graphvid:
         summary["graphvid"] = _summarize_phase(graphvid_records)
-    else:
+    elif args.run_ours:
         summary["ours"] = _summarize_phase(ours_records)
     if args.run_flashvid and args.run_graphvid:
         summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
@@ -538,7 +542,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
             anchor_name="flashvid",
             target_name="graphvid",
         )
-    elif args.run_flashvid:
+    elif args.run_flashvid and args.run_ours:
         summary["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
             flashvid_records,
             ours_records,
@@ -555,7 +559,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
         json.dump(summary, f, ensure_ascii=False, indent=2)
     if args.run_graphvid:
         print(f"[combined] graphvid={combined_graphvid}")
-    else:
+    elif args.run_ours:
         print(f"[combined] ours={combined_ours}")
     if args.run_flashvid:
         print(f"[combined] flashvid={combined_flashvid}")
@@ -582,7 +586,11 @@ def main() -> None:
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_v2")
     parser.add_argument("--local_files_only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_flashvid", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--run_ours", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--retention_ratio", type=float, default=0.10)
+    parser.add_argument("--expansion", type=float, default=1.25)
+    parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
     parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")

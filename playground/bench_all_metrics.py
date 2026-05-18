@@ -441,6 +441,21 @@ def _resolve_video_path(video_id: str, hf_home_override: str | None) -> str:
     raise FileNotFoundError(f"missing video for videoID={video_id} under {base_dir}")
 
 
+def _resolve_sample_video_path(sample: dict[str, Any], hf_home_override: str | None) -> str:
+    for key in ("video_path", "video", "path", "video_file"):
+        value = sample.get(key)
+        if value:
+            path = Path(str(value)).expanduser()
+            if not path.is_absolute():
+                path = Path.cwd() / path
+            if path.exists():
+                return str(path)
+            raise FileNotFoundError(f"missing video path from sample[{key!r}]: {path}")
+    if "videoID" not in sample:
+        raise KeyError("sample must contain either video_path/video/path/video_file or videoID")
+    return _resolve_video_path(str(sample["videoID"]), hf_home_override)
+
+
 def _load_dataset(
     dataset_jsonl: str,
     limit: int | None,
@@ -656,7 +671,7 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
 
 
 def _prepare_inputs(model_bundle, args: BenchmarkArgs, sample: dict[str, Any]):
-    video_path = _resolve_video_path(sample["videoID"], args.hf_home)
+    video_path = _resolve_sample_video_path(sample, args.hf_home)
     prompt_text = sample["input"]
     backend = model_bundle["backend"]
     if backend == "llava":
@@ -1082,6 +1097,9 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     record = {
         "question_id": sample.get("question_id"),
         "videoID": sample.get("videoID"),
+        "dataset": sample.get("dataset"),
+        "split": sample.get("split"),
+        "subset": sample.get("subset"),
         "duration": sample.get("duration"),
         "category": sample.get("category"),
         "task_category": sample.get("task_category"),
