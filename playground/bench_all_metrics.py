@@ -724,13 +724,16 @@ def _clone_inputs(backend: str, prepared_inputs):
 
 
 def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) -> tuple[str, int]:
-    generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
-    gen_tokens = int(generated.shape[1])
-    if gen_tokens == 0:
-        return "", 0
-
     backend = model_bundle["backend"]
     if backend == "llava":
+        # LLaVA-Video generation is driven by inputs_embeds. On recent
+        # transformers versions, generate() can return only newly generated
+        # token ids rather than prompt + generation. Do not blindly slice by
+        # prompt_len in that case, or every prediction becomes empty.
+        generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids
+        gen_tokens = int(generated.shape[1])
+        if gen_tokens == 0:
+            return "", 0
         tokenizer = model_bundle["tokenizer"]
         text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
         answer = _extract_choice_letter(text)
@@ -739,6 +742,11 @@ def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) 
         first_token_id = int(generated[0, 0].item())
         first_token = tokenizer.decode([first_token_id], skip_special_tokens=True)
         return _extract_choice_letter(first_token), gen_tokens
+
+    generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
+    gen_tokens = int(generated.shape[1])
+    if gen_tokens == 0:
+        return "", 0
 
     processor = model_bundle["processor"]
     text = processor.batch_decode(generated, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
