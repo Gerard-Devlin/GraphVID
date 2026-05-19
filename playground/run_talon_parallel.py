@@ -394,6 +394,10 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             "False",
             "--num_frames",
             str(args.num_frames),
+            "--min_pixels",
+            str(args.min_pixels),
+            "--max_pixels",
+            str(args.max_pixels),
             "--num_warmup",
             str(args.num_warmup),
             "--num_runs",
@@ -577,6 +581,8 @@ def main() -> None:
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--total_limit", type=int, default=200)
     parser.add_argument("--num_frames", type=int, default=32)
+    parser.add_argument("--min_pixels", type=int, default=64 * 28 * 28)
+    parser.add_argument("--max_pixels", type=int, default=256 * 28 * 28)
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)

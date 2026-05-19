@@ -602,38 +602,61 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
     except ImportError as exc:
         raise ImportError("qwen_vl_utils is required for Qwen video processing") from exc
 
+    video_content: dict[str, Any] = {
+        "type": "video",
+        "video": video_path,
+        "max_pixels": args.max_pixels,
+        "min_pixels": args.min_pixels,
+    }
+    # lmms-eval/Qwen2.5-VL does not pass nframes into qwen_vl_utils. It decodes
+    # the video first, then uniformly samples max_num_frames afterwards.
+    if backend != "qwen2_5_vl":
+        video_content["nframes"] = args.num_frames
+
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {
             "role": "user",
-            "content": [
-                {
-                    "video": video_path,
-                    "max_pixels": args.max_pixels,
-                    "min_pixels": args.min_pixels,
-                    "nframes": args.num_frames,
-                },
-                {"type": "text", "text": prompt_text},
-            ],
+            "content": [video_content, {"type": "text", "text": prompt_text}],
         },
     ]
 
     video_kwargs: dict[str, Any] = {}
     video_metadata = None
-    try:
-        # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
-        if backend == "qwen3_vl":
+    if backend == "qwen2_5_vl":
+        images, videos = process_vision_info([messages])
+        if videos is not None:
+            if torch.is_tensor(videos):
+                videos = [videos]
+            elif isinstance(videos, tuple):
+                videos = list(videos)
+            if len(videos) > 0:
+                total_frames = int(videos[0].shape[0])
+                if total_frames > 0 and args.num_frames > 0:
+                    indices = np.linspace(0, total_frames - 1, args.num_frames, dtype=int)
+                    indices = np.unique(indices)
+                    if total_frames - 1 not in indices:
+                        indices = np.append(indices, total_frames - 1)
+                        indices = np.unique(indices)
+                    videos[0] = videos[0][indices]
+    else:
+        try:
+            # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
+            if backend == "qwen3_vl":
+                images, videos, video_kwargs = process_vision_info(
+                    messages,
+                    return_video_kwargs=True,
+                    return_video_metadata=True,
+                    image_patch_size=16,
+                )
+            else:
+                images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+        except TypeError:
+            # Backward compatibility for older qwen_vl_utils versions.
             images, videos, video_kwargs = process_vision_info(
                 messages,
                 return_video_kwargs=True,
-                return_video_metadata=True,
-                image_patch_size=16,
             )
-        else:
-            images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-    except TypeError:
-        # Backward compatibility for older qwen_vl_utils versions.
-        images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
 
     # qwen_vl_utils may return [(video_tensor, metadata), ...] when return_video_metadata=True.
     if videos is not None and len(videos) > 0 and isinstance(videos[0], tuple):
@@ -641,7 +664,8 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
         videos = list(videos)
         video_metadata = list(video_metadata)
 
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    template_messages = [messages] if backend == "qwen2_5_vl" else messages
+    text = processor.apply_chat_template(template_messages, tokenize=False, add_generation_prompt=True)
     processor_kwargs = {
         "text": text,
         "images": images,
