@@ -1849,7 +1849,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         segment_threshold=args.segment_threshold,
         min_segment_num=args.min_segment_num,
         complementary_segment=args.complementary_segment,
-        token_selection_method=args.flashvid_token_selection_method,
+        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
         temporal_merge_mode="graph",
