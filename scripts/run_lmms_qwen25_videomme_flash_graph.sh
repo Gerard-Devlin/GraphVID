@@ -8,6 +8,8 @@ export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-20480}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
+export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
 export PYTHONPATH="$PWD:$PWD/lmms-eval:${PYTHONPATH:-}"
 
 MODEL_PATH="${MODEL_PATH:-/gluster/envs/users/wuzhijian/hf_home/hub/models--Qwen--Qwen2.5-VL-7B-Instruct/snapshots/cc594898137f460bfe9f0759e9844b3ce807cfb5}"
