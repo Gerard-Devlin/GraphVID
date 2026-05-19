@@ -37,11 +37,12 @@ def extract_question_features(
     if batch_index >= input_ids.shape[0] or batch_index >= inputs_embeds.shape[0]:
         return None
 
-    token_ids = input_ids[batch_index]
+    embed_device = inputs_embeds.device
+    token_ids = input_ids[batch_index].to(embed_device)
     token_mask = torch.ones_like(token_ids, dtype=torch.bool)
 
     if attention_mask is not None and attention_mask.ndim == 2:
-        attn = attention_mask[batch_index]
+        attn = attention_mask[batch_index].to(embed_device)
         token_mask &= attn.bool() if attn.dtype == torch.bool else attn > 0
 
     if invalid_token_ids is not None:
