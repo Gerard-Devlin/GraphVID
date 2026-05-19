@@ -399,9 +399,11 @@ def flashvid(
         LlavaMetaForCausalLM.prepare_inputs_labels_for_multimodal = LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal
         SigLipAttention.forward = SigLipAttention_forward
         SigLipVisionTower.forward = SigLipVisionTower_forward
-        Qwen2Attention.forward = Qwen2Attention_forward
-        Qwen2DecoderLayer.forward = Qwen2DecoderLayer_forward
-        Qwen2Model.forward = Qwen2Model_forward
+        # Keep LLaVA-Video on its native language-model forward path.
+        # Its generation API prepares multimodal inputs through inputs_embeds, and
+        # patching the inner Qwen2 stack can expose the -200 image placeholder to
+        # the embedding path on some transformers versions, causing CUDA asserts.
+        # Vision-side compression still runs through the patched LLaVA prepare path.
         model.get_vision_tower().vision_tower.vision_model.encoder.layers[-1].self_attn.is_last_layer = True
     elif type(model) is Qwen2_5_VLForConditionalGeneration:  ## For Qwen2.5-VL
         Qwen2_5_VLAttention.forward = Qwen2_5_VLAttention_forward
