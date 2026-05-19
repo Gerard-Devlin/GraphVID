@@ -487,9 +487,17 @@ def _load_llava_model(args: BenchmarkArgs):
     from llava.mm_utils import get_model_name_from_path
 
     model_name = get_model_name_from_path(args.model_path)
+    normalized_model_path = str(args.model_path).replace("\\", "/")
+    is_llava_video_qwen2 = (
+        normalized_model_path == "lmms-lab/LLaVA-Video-7B-Qwen2"
+        or "LLaVA-Video-7B-Qwen2" in normalized_model_path
+        or "models--lmms-lab--LLaVA-Video-7B-Qwen2" in normalized_model_path
+    )
+    if is_llava_video_qwen2:
+        model_name = "LLaVA-Video-7B-Qwen2"
     overwrite_config = (
         {"mm_spatial_pool_mode": "average", "mm_newline_position": "frame"}
-        if args.model_path == "lmms-lab/LLaVA-Video-7B-Qwen2"
+        if is_llava_video_qwen2
         else {}
     )
     attn_impl = _resolve_attn_implementation(args.attn_implementation)

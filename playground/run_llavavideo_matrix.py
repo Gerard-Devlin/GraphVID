@@ -30,16 +30,6 @@ def _parse_rates(text: str) -> list[tuple[str, float]]:
     return rates
 
 
-def _latest_local_llava_snapshot(hf_home: str) -> str:
-    root = Path(hf_home) / "hub" / "models--lmms-lab--LLaVA-Video-7B-Qwen2" / "snapshots"
-    if root.is_dir():
-        snapshots = [p for p in root.iterdir() if p.is_dir()]
-        if snapshots:
-            snapshots.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            return str(snapshots[0])
-    return DEFAULT_MODEL_ID
-
-
 def _count_jsonl(path: Path) -> int:
     count = 0
     with path.open("r", encoding="utf-8") as f:
@@ -269,7 +259,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     hf_home = os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home")
     parser = argparse.ArgumentParser(description="Run LLaVA-Video FlashVID vs GraphVID matrix.")
-    parser.add_argument("--model_path", default=_latest_local_llava_snapshot(hf_home))
+    parser.add_argument("--model_path", default=DEFAULT_MODEL_ID)
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
