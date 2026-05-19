@@ -1638,9 +1638,9 @@ def _add_duration_breakdown(
 
 
 def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
-    # LLaVA backend currently has instability in inner-LLM token pruning path.
-    # Keep visual-side compression enabled, but disable LLM pruning for stable benchmarking.
-    if backend == "llava":
+    # For LLaVA, keep the stable vision-only path unless the caller explicitly
+    # requests inner-LLM pruning with llm_retention_ratio < 1.0.
+    if backend == "llava" and float(args.llm_retention_ratio) >= 0.9999:
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
 
@@ -2378,7 +2378,13 @@ def run(args: BenchmarkArgs):
     backend = model_bundle["backend"]
     _print_header(args, backend)
     if backend == "llava":
-        print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
+        if float(args.llm_retention_ratio) >= 0.9999:
+            print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
+        else:
+            print(
+                "[info] LLaVA backend: inner-LLM pruning is enabled "
+                f"(pruning_layer={args.pruning_layer}, llm_retention_ratio={args.llm_retention_ratio})."
+            )
     print(f"Loaded {len(samples)} samples.\n")
     if args.reload_model_each_phase:
         model_bundle["model"] = None
