@@ -115,6 +115,15 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                 flashvid_config.visual_token_start_index = visual_token_start_index
                 pooled_image_feature = self.get_2dPool(image_feat)
                 pooled_cls_attentions = self.get_2dPool(cls_attentions.unsqueeze(-1)).squeeze(-1)
+                raw_num_frames, raw_tokens_per_frame = pooled_image_feature.shape[:2]
+                mm_newline_position_for_raw = getattr(self.config, "mm_newline_position", "one_token")
+                raw_visual_length = int(raw_num_frames * raw_tokens_per_frame)
+                if mm_newline_position_for_raw == "frame":
+                    raw_visual_length += int(raw_num_frames)
+                elif mm_newline_position_for_raw in ("grid", "one_token") and "unpad" in getattr(self.config, "mm_patch_merge_type", "flat"):
+                    raw_visual_length += 1
+                flashvid_config.raw_vision_token_length = raw_visual_length
+                flashvid_config.raw_visual_token_length = raw_visual_length
                 # LLaVA uses IMAGE_TOKEN_INDEX=-200 as a placeholder. It must
                 # not be passed to the text embedding table; keep it masked out
                 # for question feature extraction and embed a safe placeholder.

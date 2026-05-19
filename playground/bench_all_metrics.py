@@ -765,6 +765,16 @@ def _safe_int_metric(value, fallback: int) -> int:
         return fallback
 
 
+def _get_raw_visual_token_metric(model, fallback: int, use_acceleration: bool) -> int:
+    if not use_acceleration or not hasattr(model, "flashvid_config"):
+        return fallback
+    cfg = getattr(model, "flashvid_config")
+    return _safe_int_metric(
+        getattr(cfg, "raw_visual_token_length", None),
+        _safe_int_metric(getattr(cfg, "raw_vision_token_length", None), fallback),
+    )
+
+
 def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: bool) -> tuple[int, int]:
     if not use_acceleration or not hasattr(model, "flashvid_config"):
         return raw_visual_tokens, raw_visual_tokens
@@ -1050,6 +1060,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
+    raw_visual_tokens = _get_raw_visual_token_metric(model, raw_visual_tokens, use_acceleration)
     compressed_visual_tokens = float(np.mean(compressed_tokens_per_run)) if compressed_tokens_per_run else float(raw_visual_tokens)
     vision_compressed_visual_tokens = float(np.mean(vision_tokens_per_run)) if vision_tokens_per_run else float(raw_visual_tokens)
     talon_target_tokens_per_frame = float(np.mean(talon_target_per_run)) if talon_target_per_run else None
