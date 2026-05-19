@@ -70,13 +70,32 @@ def _duration_acc(summary: dict[str, Any] | None, phase: str, duration: str) -> 
     return float(section["accuracy"]) * 100.0
 
 
+def _stat_mean(value: Any) -> float | None:
+    if isinstance(value, dict) and value.get("mean") is not None:
+        return float(value["mean"])
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def _comparison(summary: dict[str, Any] | None, key: str) -> float | None:
     if not summary:
         return None
     comp = summary.get("comparison", {}).get("flashvid_vs_graphvid", {})
-    if not isinstance(comp, dict) or comp.get(key) is None:
+    if not isinstance(comp, dict):
         return None
-    return float(comp[key])
+    key_aliases = {
+        "latency_speedup": ["latency_speedup_ratio", "latency_speedup"],
+        "visual_token_reduction": [
+            "visual_token_reduction_vs_flashvid",
+            "visual_token_reduction",
+        ],
+    }
+    for candidate in key_aliases.get(key, [key]):
+        value = _stat_mean(comp.get(candidate))
+        if value is not None:
+            return value
+    return None
 
 
 def _fmt(value: float | None, digits: int = 2) -> str:
