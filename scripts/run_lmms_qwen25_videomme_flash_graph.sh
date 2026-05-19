@@ -20,6 +20,7 @@ PORT_FLASH="${PORT_FLASH:-18888}"
 PORT_GRAPH="${PORT_GRAPH:-18889}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-logs/lmms_eval}"
 TAG="${TAG:-qwen25_r10_smoke100}"
+TASK_NAME="${TASK_NAME:-videomme_local}"
 RUN_FLASHVID="${RUN_FLASHVID:-1}"
 RUN_GRAPHVID="${RUN_GRAPHVID:-1}"
 GRAPH_FINAL_TPF="${GRAPH_FINAL_TPF:-0}"
@@ -42,7 +43,7 @@ if [[ "$RUN_FLASHVID" == "1" ]]; then
     -m lmms_eval \
     --model qwen2_5_vl \
     --model_args "$BASE_MODEL_ARGS,$COMMON_FLASH_ARGS,compression_variant=flashvid" \
-    --tasks videomme \
+    --tasks "$TASK_NAME" \
     --batch_size 1 \
     "${LIMIT_ARGS[@]}" \
     --log_samples \
@@ -58,7 +59,7 @@ if [[ "$RUN_GRAPHVID" == "1" ]]; then
     -m lmms_eval \
     --model qwen2_5_vl \
     --model_args "$BASE_MODEL_ARGS,$COMMON_FLASH_ARGS,compression_variant=graphvid,graph_temporal_topk=2,graph_temporal_radius=1,graph_temporal_skip=1,graph_merge_protect_ratio=0.15,graph_merge_target_ratio=1.00,graph_merge_representative=medoid,graph_final_tokens_per_frame=$GRAPH_FINAL_TPF" \
-    --tasks videomme \
+    --tasks "$TASK_NAME" \
     --batch_size 1 \
     "${LIMIT_ARGS[@]}" \
     --log_samples \
