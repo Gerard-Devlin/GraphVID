@@ -43,6 +43,22 @@ class FlashVidConfig:
     graph_final_frame_floor_ratio: float = field(default=0.55)
     graph_skip_spatial_merge_when_capped: bool = field(default=True)
 
+    # GRAFT-VID constrained temporal forest.
+    graft_temporal_topk: int = field(default=3)
+    graft_temporal_radius: int = field(default=1)
+    graft_temporal_skip: int = field(default=1)
+    graft_anchor_ratio: float = field(default=0.65)
+    graft_edge_threshold: float = field(default=0.80)
+    graft_component_radius_eps: float = field(default=0.12)
+    graft_split_radius_eps: float = field(default=0.20)
+    graft_parent_capacity: int = field(default=1)
+    graft_mutual_knn: bool = field(default=True)
+    graft_one_token_per_frame: bool = field(default=True)
+    graft_spatial_penalty: float = field(default=0.10)
+    graft_importance_penalty: float = field(default=0.05)
+    graft_hub_penalty: float = field(default=0.05)
+    graft_adaptive_aggregation: bool = field(default=True)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -65,6 +81,7 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
+    # "graftvid": ADTS + constrained temporal forest path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

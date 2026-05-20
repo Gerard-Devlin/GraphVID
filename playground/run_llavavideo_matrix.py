@@ -36,6 +36,8 @@ def _parse_methods(text: str) -> set[str]:
         "flashvid": "flashvid",
         "graph": "graphvid",
         "graphvid": "graphvid",
+        "graft": "graftvid",
+        "graftvid": "graftvid",
     }
     methods: set[str] = set()
     for part in str(text).split(","):
@@ -99,10 +101,10 @@ def _stat_mean(value: Any) -> float | None:
     return None
 
 
-def _comparison(summary: dict[str, Any] | None, key: str) -> float | None:
+def _comparison(summary: dict[str, Any] | None, key: str, target: str = "graphvid") -> float | None:
     if not summary:
         return None
-    comp = summary.get("comparison", {}).get("flashvid_vs_graphvid", {})
+    comp = summary.get("comparison", {}).get(f"flashvid_vs_{target}", {})
     if not isinstance(comp, dict):
         return None
     key_aliases = {
@@ -212,6 +214,33 @@ def _build_command(
     ]
     cmd.append("--run_flashvid" if "flashvid" in methods else "--no-run_flashvid")
     cmd.append("--run_graphvid" if "graphvid" in methods else "--no-run_graphvid")
+    cmd.append("--run_graftvid" if "graftvid" in methods else "--no-run_graftvid")
+    cmd.extend(
+        [
+            "--graft_temporal_topk",
+            str(args.graft_temporal_topk),
+            "--graft_temporal_radius",
+            str(args.graft_temporal_radius),
+            "--graft_temporal_skip",
+            str(args.graft_temporal_skip),
+            "--graft_anchor_ratio",
+            str(args.graft_anchor_ratio),
+            "--graft_edge_threshold",
+            str(args.graft_edge_threshold),
+            "--graft_component_radius_eps",
+            str(args.graft_component_radius_eps),
+            "--graft_split_radius_eps",
+            str(args.graft_split_radius_eps),
+            "--graft_parent_capacity",
+            str(args.graft_parent_capacity),
+            "--graft_spatial_penalty",
+            str(args.graft_spatial_penalty),
+            "--graft_importance_penalty",
+            str(args.graft_importance_penalty),
+            "--graft_hub_penalty",
+            str(args.graft_hub_penalty),
+        ]
+    )
     if args.graph_respect_temporal_threshold:
         cmd.append("--graph_respect_temporal_threshold")
     else:
@@ -224,6 +253,9 @@ def _build_command(
         cmd.append("--graph_skip_spatial_merge_when_capped")
     else:
         cmd.append("--no-graph_skip_spatial_merge_when_capped")
+    cmd.append("--graft_mutual_knn" if args.graft_mutual_knn else "--no-graft_mutual_knn")
+    cmd.append("--graft_one_token_per_frame" if args.graft_one_token_per_frame else "--no-graft_one_token_per_frame")
+    cmd.append("--graft_adaptive_aggregation" if args.graft_adaptive_aggregation else "--no-graft_adaptive_aggregation")
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
     cmd.extend(args.extra_args)
@@ -240,25 +272,36 @@ def _load_summary(path: Path) -> dict[str, Any] | None:
 def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     flash_tokens = _mean(summary, "flashvid", "compressed_visual_tokens")
     graph_tokens = _mean(summary, "graphvid", "compressed_visual_tokens")
+    graft_tokens = _mean(summary, "graftvid", "compressed_visual_tokens")
     flash_acc = _acc(summary, "flashvid")
     graph_acc = _acc(summary, "graphvid")
+    graft_acc = _acc(summary, "graftvid")
     return {
         "retention_ratio": f"{rate_label.replace('p', '.')}%",
         "flashvid_acc": flash_acc,
         "graphvid_acc": graph_acc,
+        "graftvid_acc": graft_acc,
         "acc_delta": None if flash_acc is None or graph_acc is None else graph_acc - flash_acc,
+        "graft_acc_delta": None if flash_acc is None or graft_acc is None else graft_acc - flash_acc,
         "flashvid_short": _duration_acc(summary, "flashvid", "short"),
         "graphvid_short": _duration_acc(summary, "graphvid", "short"),
+        "graftvid_short": _duration_acc(summary, "graftvid", "short"),
         "flashvid_medium": _duration_acc(summary, "flashvid", "medium"),
         "graphvid_medium": _duration_acc(summary, "graphvid", "medium"),
+        "graftvid_medium": _duration_acc(summary, "graftvid", "medium"),
         "flashvid_long": _duration_acc(summary, "flashvid", "long"),
         "graphvid_long": _duration_acc(summary, "graphvid", "long"),
+        "graftvid_long": _duration_acc(summary, "graftvid", "long"),
         "flashvid_tokens": flash_tokens,
         "graphvid_tokens": graph_tokens,
+        "graftvid_tokens": graft_tokens,
         "token_reduction": _comparison(summary, "visual_token_reduction"),
+        "graft_token_reduction": _comparison(summary, "visual_token_reduction", target="graftvid"),
         "flashvid_latency_ms": _mean(summary, "flashvid", "latency_ms"),
         "graphvid_latency_ms": _mean(summary, "graphvid", "latency_ms"),
+        "graftvid_latency_ms": _mean(summary, "graftvid", "latency_ms"),
         "latency_speedup": _comparison(summary, "latency_speedup"),
+        "graft_latency_speedup": _comparison(summary, "latency_speedup", target="graftvid"),
     }
 
 
@@ -271,19 +314,28 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "retention_ratio",
         "flashvid_acc",
         "graphvid_acc",
+        "graftvid_acc",
         "acc_delta",
+        "graft_acc_delta",
         "flashvid_short",
         "graphvid_short",
+        "graftvid_short",
         "flashvid_medium",
         "graphvid_medium",
+        "graftvid_medium",
         "flashvid_long",
         "graphvid_long",
+        "graftvid_long",
         "flashvid_tokens",
         "graphvid_tokens",
+        "graftvid_tokens",
         "token_reduction",
+        "graft_token_reduction",
         "flashvid_latency_ms",
         "graphvid_latency_ms",
+        "graftvid_latency_ms",
         "latency_speedup",
+        "graft_latency_speedup",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -294,28 +346,37 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
     lines = [
-        "| R | FlashVID Acc | GraphVID Acc | Delta | F Short | G Short | F Medium | G Medium | F Long | G Long | F Tokens | G Tokens | Token Red. | F Lat. | G Lat. | Speedup |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | G Delta | GRAFT Delta | F Short | G Short | GRAFT Short | F Medium | G Medium | GRAFT Medium | F Long | G Long | GRAFT Long | F Tokens | G Tokens | GRAFT Tokens | G Token Red. | GRAFT Token Red. | F Lat. | G Lat. | GRAFT Lat. | G Speedup | GRAFT Speedup |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {r} | {fa} | {ga} | {d} | {fs} | {gs} | {fm} | {gm} | {fl} | {gl} | {ft} | {gt} | {tr} | {flat} | {glat} | {sp} |".format(
+            "| {r} | {fa} | {ga} | {gfa} | {d} | {gd} | {fs} | {gs} | {gfs} | {fm} | {gm} | {gfm} | {fl} | {gl} | {gfl} | {ft} | {gt} | {gft} | {tr} | {gtr} | {flat} | {glat} | {gflat} | {sp} | {gsp} |".format(
                 r=row["retention_ratio"],
                 fa=_fmt(row.get("flashvid_acc")),
                 ga=_fmt(row.get("graphvid_acc")),
+                gfa=_fmt(row.get("graftvid_acc")),
                 d=_fmt(row.get("acc_delta")),
+                gd=_fmt(row.get("graft_acc_delta")),
                 fs=_fmt(row.get("flashvid_short")),
                 gs=_fmt(row.get("graphvid_short")),
+                gfs=_fmt(row.get("graftvid_short")),
                 fm=_fmt(row.get("flashvid_medium")),
                 gm=_fmt(row.get("graphvid_medium")),
+                gfm=_fmt(row.get("graftvid_medium")),
                 fl=_fmt(row.get("flashvid_long")),
                 gl=_fmt(row.get("graphvid_long")),
+                gfl=_fmt(row.get("graftvid_long")),
                 ft=_fmt(row.get("flashvid_tokens")),
                 gt=_fmt(row.get("graphvid_tokens")),
+                gft=_fmt(row.get("graftvid_tokens")),
                 tr=_fmt(row.get("token_reduction")),
+                gtr=_fmt(row.get("graft_token_reduction")),
                 flat=_fmt(row.get("flashvid_latency_ms")),
                 glat=_fmt(row.get("graphvid_latency_ms")),
+                gflat=_fmt(row.get("graftvid_latency_ms")),
                 sp=_fmt(row.get("latency_speedup"), 3),
+                gsp=_fmt(row.get("graft_latency_speedup"), 3),
             )
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -331,7 +392,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
-    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid.")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")
@@ -371,6 +432,20 @@ def main() -> None:
     parser.add_argument("--graph_final_tokens_per_frame", type=int, default=0)
     parser.add_argument("--graph_final_frame_floor_ratio", type=float, default=0.55)
     parser.add_argument("--graph_skip_spatial_merge_when_capped", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--graft_temporal_topk", type=int, default=3)
+    parser.add_argument("--graft_temporal_radius", type=int, default=1)
+    parser.add_argument("--graft_temporal_skip", type=int, default=1)
+    parser.add_argument("--graft_anchor_ratio", type=float, default=0.65)
+    parser.add_argument("--graft_edge_threshold", type=float, default=0.80)
+    parser.add_argument("--graft_component_radius_eps", type=float, default=0.12)
+    parser.add_argument("--graft_split_radius_eps", type=float, default=0.20)
+    parser.add_argument("--graft_parent_capacity", type=int, default=1)
+    parser.add_argument("--graft_mutual_knn", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--graft_one_token_per_frame", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--graft_spatial_penalty", type=float, default=0.10)
+    parser.add_argument("--graft_importance_penalty", type=float, default=0.05)
+    parser.add_argument("--graft_hub_penalty", type=float, default=0.05)
+    parser.add_argument("--graft_adaptive_aggregation", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args, extra_args = parser.parse_known_args()

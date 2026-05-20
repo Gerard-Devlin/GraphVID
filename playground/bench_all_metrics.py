@@ -19,6 +19,19 @@ from transformers.hf_argparser import HfArgumentParser
 warnings.filterwarnings("ignore")
 
 SEPARATOR = "=" * 72
+GRAFT_METRIC_KEYS = [
+    "graft_component_count",
+    "graft_avg_component_size",
+    "graft_max_component_size",
+    "graft_radius_mean",
+    "graft_radius_max",
+    "graft_edges_considered",
+    "graft_edges_accepted",
+    "graft_mutual_rejected",
+    "graft_radius_rejected",
+    "graft_capacity_rejected",
+    "graft_same_frame_rejected",
+]
 
 
 @dataclass
@@ -50,6 +63,7 @@ class BenchmarkArgs:
     run_flashvid: bool = field(default=True)
     run_ours: bool = field(default=True)
     run_graphvid: bool = field(default=False)
+    run_graftvid: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
@@ -82,6 +96,20 @@ class BenchmarkArgs:
     graph_final_tokens_per_frame: int = field(default=0)
     graph_final_frame_floor_ratio: float = field(default=0.55)
     graph_skip_spatial_merge_when_capped: bool = field(default=True)
+    graft_temporal_topk: int = field(default=3)
+    graft_temporal_radius: int = field(default=1)
+    graft_temporal_skip: int = field(default=1)
+    graft_anchor_ratio: float = field(default=0.65)
+    graft_edge_threshold: float = field(default=0.80)
+    graft_component_radius_eps: float = field(default=0.12)
+    graft_split_radius_eps: float = field(default=0.20)
+    graft_parent_capacity: int = field(default=1)
+    graft_mutual_knn: bool = field(default=True)
+    graft_one_token_per_frame: bool = field(default=True)
+    graft_spatial_penalty: float = field(default=0.10)
+    graft_importance_penalty: float = field(default=0.05)
+    graft_hub_penalty: float = field(default=0.05)
+    graft_adaptive_aggregation: bool = field(default=True)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -297,6 +325,7 @@ class BenchmarkArgs:
     flashvid_output: str = field(default="logs/efficiency/flashvid_all_metrics.jsonl")
     ours_output: str = field(default="logs/efficiency/ours_all_metrics.jsonl")
     graphvid_output: str = field(default="logs/efficiency/graphvid_all_metrics.jsonl")
+    graftvid_output: str = field(default="logs/efficiency/graftvid_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -916,6 +945,18 @@ def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
     }
 
 
+def _get_graft_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in GRAFT_METRIC_KEYS}
+    if not hasattr(model, "flashvid_config"):
+        return empty
+    cfg = getattr(model, "flashvid_config")
+    values: dict[str, float | None] = {}
+    for key in GRAFT_METRIC_KEYS:
+        value = getattr(cfg, f"last_{key}", None)
+        values[key] = float(value) if value is not None else None
+    return values
+
+
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
@@ -979,6 +1020,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_budget_max_per_run = []
     talon_core_grid_h_per_run = []
     talon_core_grid_w_per_run = []
+    graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -1014,8 +1056,12 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
         debug_metrics = _get_talon_debug_metrics(model)
         talon_core_metrics = _get_talon_core_debug_metrics(model)
+        graft_metrics = _get_graft_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
+        for key in GRAFT_METRIC_KEYS:
+            if graft_metrics.get(key) is not None:
+                graft_metrics_per_run[key].append(float(graft_metrics[key]))
         if debug_metrics["talon_target_tokens_per_frame"] is not None:
             talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
         if debug_metrics["talon_complexity_score"] is not None:
@@ -1109,6 +1155,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_budget_max = float(np.mean(talon_core_budget_max_per_run)) if talon_core_budget_max_per_run else None
     talon_core_grid_h = float(np.mean(talon_core_grid_h_per_run)) if talon_core_grid_h_per_run else None
     talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
+    graft_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in graft_metrics_per_run.items()
+    }
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1150,6 +1200,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_core_budget_max": talon_core_budget_max,
         "talon_core_grid_h": talon_core_grid_h,
         "talon_core_grid_w": talon_core_grid_w,
+        **graft_metric_means,
     }
 
 
@@ -1203,6 +1254,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "error": None,
         "error_traceback": None,
     }
+    record.update({key: None for key in GRAFT_METRIC_KEYS})
 
     try:
         if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
@@ -1260,6 +1312,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_core_budget_max": result.get("talon_core_budget_max"),
                 "talon_core_grid_h": result.get("talon_core_grid_h"),
                 "talon_core_grid_w": result.get("talon_core_grid_w"),
+                **{key: result.get(key) for key in GRAFT_METRIC_KEYS},
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -1488,6 +1541,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("vision_visual_token_reduction_ratio") is not None
     ]
+    graft_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in GRAFT_METRIC_KEYS
+    }
 
     return {
         "num_samples": len(records),
@@ -1529,6 +1586,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_core_budget_max": _stats(talon_core_budget_max),
         "talon_core_grid_h": _stats(talon_core_grid_h),
         "talon_core_grid_w": _stats(talon_core_grid_w),
+        **graft_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1592,12 +1650,14 @@ def _add_duration_breakdown(
     flashvid_records: Optional[list[dict[str, Any]]] = None,
     ours_records: Optional[list[dict[str, Any]]] = None,
     graphvid_records: Optional[list[dict[str, Any]]] = None,
+    graftvid_records: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     records_by_phase = {
         "baseline": baseline_records,
         "flashvid": flashvid_records,
         "ours": ours_records,
         "graphvid": graphvid_records,
+        "graftvid": graftvid_records,
     }
     durations = ["short", "medium", "long"]
     breakdown: dict[str, Any] = {}
@@ -1641,6 +1701,13 @@ def _add_duration_breakdown(
                 phase_records["graphvid"],
                 anchor_name="flashvid",
                 target_name="graphvid",
+            )
+        if "flashvid" in phase_records and "graftvid" in phase_records:
+            bucket["comparison"]["flashvid_vs_graftvid"] = _summarize_pairwise_comparison(
+                phase_records["flashvid"],
+                phase_records["graftvid"],
+                anchor_name="flashvid",
+                target_name="graftvid",
             )
         breakdown[duration] = bucket
     summary["duration_breakdown"] = breakdown
@@ -1687,6 +1754,20 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
+        graft_temporal_topk=args.graft_temporal_topk,
+        graft_temporal_radius=args.graft_temporal_radius,
+        graft_temporal_skip=args.graft_temporal_skip,
+        graft_anchor_ratio=args.graft_anchor_ratio,
+        graft_edge_threshold=args.graft_edge_threshold,
+        graft_component_radius_eps=args.graft_component_radius_eps,
+        graft_split_radius_eps=args.graft_split_radius_eps,
+        graft_parent_capacity=args.graft_parent_capacity,
+        graft_mutual_knn=args.graft_mutual_knn,
+        graft_one_token_per_frame=args.graft_one_token_per_frame,
+        graft_spatial_penalty=args.graft_spatial_penalty,
+        graft_importance_penalty=args.graft_importance_penalty,
+        graft_hub_penalty=args.graft_hub_penalty,
+        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -1916,10 +1997,85 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
+        graft_temporal_topk=args.graft_temporal_topk,
+        graft_temporal_radius=args.graft_temporal_radius,
+        graft_temporal_skip=args.graft_temporal_skip,
+        graft_anchor_ratio=args.graft_anchor_ratio,
+        graft_edge_threshold=args.graft_edge_threshold,
+        graft_component_radius_eps=args.graft_component_radius_eps,
+        graft_split_radius_eps=args.graft_split_radius_eps,
+        graft_parent_capacity=args.graft_parent_capacity,
+        graft_mutual_knn=args.graft_mutual_knn,
+        graft_one_token_per_frame=args.graft_one_token_per_frame,
+        graft_spatial_penalty=args.graft_spatial_penalty,
+        graft_importance_penalty=args.graft_importance_penalty,
+        graft_hub_penalty=args.graft_hub_penalty,
+        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="graphvid",
+        question_aware_reweighting=False,
+        question_reweight_beta=args.question_reweight_beta,
+        adaptive_token_budget=False,
+        decode_policy=args.decode_policy,
+        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
+        decode_update_interval=args.decode_update_interval,
+        decode_start_layer=args.decode_start_layer,
+    )
+
+
+def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
+    from flashvid import flashvid
+    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
+
+    return flashvid(
+        model=model,
+        retention_ratio=args.retention_ratio,
+        do_segment=args.do_segment,
+        segment_threshold=args.segment_threshold,
+        min_segment_num=args.min_segment_num,
+        complementary_segment=args.complementary_segment,
+        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
+        alpha=args.alpha,
+        temporal_threshold=args.temporal_threshold,
+        temporal_merge_mode="graft",
+        graph_temporal_topk=args.graph_temporal_topk,
+        graph_temporal_radius=args.graph_temporal_radius,
+        graph_temporal_skip=args.graph_temporal_skip,
+        graph_merge_protect_ratio=args.graph_merge_protect_ratio,
+        graph_merge_target_ratio=args.graph_merge_target_ratio,
+        graph_merge_representative=args.graph_merge_representative,
+        graph_representative_position=args.graph_representative_position,
+        graph_protection_attn_weight=args.graph_protection_attn_weight,
+        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
+        graph_protection_detail_weight=args.graph_protection_detail_weight,
+        graph_adaptive_detail_protection=args.graph_adaptive_detail_protection,
+        graph_adaptive_detail_boost=args.graph_adaptive_detail_boost,
+        graph_adaptive_protect_boost=args.graph_adaptive_protect_boost,
+        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
+        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
+        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
+        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
+        graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
+        graft_temporal_topk=args.graft_temporal_topk,
+        graft_temporal_radius=args.graft_temporal_radius,
+        graft_temporal_skip=args.graft_temporal_skip,
+        graft_anchor_ratio=args.graft_anchor_ratio,
+        graft_edge_threshold=args.graft_edge_threshold,
+        graft_component_radius_eps=args.graft_component_radius_eps,
+        graft_split_radius_eps=args.graft_split_radius_eps,
+        graft_parent_capacity=args.graft_parent_capacity,
+        graft_mutual_knn=args.graft_mutual_knn,
+        graft_one_token_per_frame=args.graft_one_token_per_frame,
+        graft_spatial_penalty=args.graft_spatial_penalty,
+        graft_importance_penalty=args.graft_importance_penalty,
+        graft_hub_penalty=args.graft_hub_penalty,
+        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
+        expansion=args.expansion,
+        pruning_layer=pruning_layer,
+        llm_retention_ratio=llm_retention_ratio,
+        compression_variant="graftvid",
         question_aware_reweighting=False,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=False,
@@ -1963,6 +2119,20 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
+        graft_temporal_topk=args.graft_temporal_topk,
+        graft_temporal_radius=args.graft_temporal_radius,
+        graft_temporal_skip=args.graft_temporal_skip,
+        graft_anchor_ratio=args.graft_anchor_ratio,
+        graft_edge_threshold=args.graft_edge_threshold,
+        graft_component_radius_eps=args.graft_component_radius_eps,
+        graft_split_radius_eps=args.graft_split_radius_eps,
+        graft_parent_capacity=args.graft_parent_capacity,
+        graft_mutual_knn=args.graft_mutual_knn,
+        graft_one_token_per_frame=args.graft_one_token_per_frame,
+        graft_spatial_penalty=args.graft_spatial_penalty,
+        graft_importance_penalty=args.graft_importance_penalty,
+        graft_hub_penalty=args.graft_hub_penalty,
+        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2181,7 +2351,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
-        f"ours={args.run_ours}, graphvid={args.run_graphvid}"
+        f"ours={args.run_ours}, graphvid={args.run_graphvid}, graftvid={args.run_graftvid}"
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
@@ -2214,6 +2384,17 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"penalty={args.graph_merge_importance_penalty:.2f}, "
             f"respect_thr={args.graph_respect_temporal_threshold}"
         )
+    if args.run_graftvid:
+        print(
+            "GRAFT-VID config: "
+            f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
+            f"skip={args.graft_temporal_skip}, anchor={args.graft_anchor_ratio:.2f}, "
+            f"edge_thr={args.graft_edge_threshold:.2f}, radius_eps={args.graft_component_radius_eps:.3f}, "
+            f"split_eps={args.graft_split_radius_eps:.3f}, capacity={args.graft_parent_capacity}, "
+            f"mutual={args.graft_mutual_knn}, one_frame={args.graft_one_token_per_frame}, "
+            f"spatial_pen={args.graft_spatial_penalty:.2f}, imp_pen={args.graft_importance_penalty:.2f}, "
+            f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}"
+        )
     print(SEPARATOR)
 
 
@@ -2221,7 +2402,7 @@ def _print_summary(summary: dict[str, Any]):
     print(SEPARATOR)
     print("Summary")
     print(SEPARATOR)
-    for phase_name in ("baseline", "flashvid", "ours", "graphvid"):
+    for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid"):
         phase = summary.get(phase_name)
         if phase is None:
             continue
@@ -2260,6 +2441,17 @@ def _print_summary(summary: dict[str, Any]):
         talon_core_budget_max_mean = phase.get("talon_core_budget_max", {}).get("mean")
         talon_core_grid_h_mean = phase.get("talon_core_grid_h", {}).get("mean")
         talon_core_grid_w_mean = phase.get("talon_core_grid_w", {}).get("mean")
+        graft_count_mean = phase.get("graft_component_count", {}).get("mean")
+        graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
+        graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
+        graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
+        graft_radius_max_mean = phase.get("graft_radius_max", {}).get("mean")
+        graft_edges_mean = phase.get("graft_edges_considered", {}).get("mean")
+        graft_accept_mean = phase.get("graft_edges_accepted", {}).get("mean")
+        graft_mutual_rej_mean = phase.get("graft_mutual_rejected", {}).get("mean")
+        graft_radius_rej_mean = phase.get("graft_radius_rejected", {}).get("mean")
+        graft_capacity_rej_mean = phase.get("graft_capacity_rejected", {}).get("mean")
+        graft_same_frame_rej_mean = phase.get("graft_same_frame_rejected", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -2316,6 +2508,21 @@ def _print_summary(summary: dict[str, Any]):
             )
         if talon_core_grid_h_mean is not None:
             print(f"  talon-core grid H/W mean: {talon_core_grid_h_mean:.2f}/{(talon_core_grid_w_mean or 0.0):.2f}")
+        if graft_count_mean is not None:
+            print(
+                "  graft components avg/max/radius mean: "
+                f"{graft_count_mean:.2f}/{(graft_size_mean or 0.0):.2f}/{(graft_max_size_mean or 0.0):.2f}/"
+                f"{(graft_radius_mean or 0.0):.4f}"
+            )
+        if graft_radius_max_mean is not None:
+            print(f"  graft radius max mean: {graft_radius_max_mean:.4f}")
+        if graft_edges_mean is not None:
+            print(
+                "  graft edges considered/accepted/rej(m/r/c/sf) mean: "
+                f"{graft_edges_mean:.2f}/{(graft_accept_mean or 0.0):.2f}/"
+                f"{(graft_mutual_rej_mean or 0.0):.2f}/{(graft_radius_rej_mean or 0.0):.2f}/"
+                f"{(graft_capacity_rej_mean or 0.0):.2f}/{(graft_same_frame_rej_mean or 0.0):.2f}"
+            )
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -2324,7 +2531,7 @@ def _print_summary(summary: dict[str, Any]):
     comparison = summary.get("comparison", {})
     if comparison:
         print("[comparison]")
-        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid"):
+        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid", "flashvid_vs_graftvid"):
             comp = comparison.get(key)
             if comp is None:
                 continue
@@ -2356,7 +2563,7 @@ def _print_summary(summary: dict[str, Any]):
                 continue
             phase_values = [
                 bucket.get(phase_name)
-                for phase_name in ("baseline", "flashvid", "ours", "graphvid")
+                for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid")
                 if bucket.get(phase_name) is not None
             ]
             if not phase_values or all(int(phase.get("num_samples", 0) or 0) == 0 for phase in phase_values):
@@ -2365,7 +2572,7 @@ def _print_summary(summary: dict[str, Any]):
                 print("[by duration]")
                 printed_header = True
             print(f"  [{duration}]")
-            for phase_name in ("baseline", "flashvid", "ours", "graphvid"):
+            for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid"):
                 phase = bucket.get(phase_name)
                 if phase is None:
                     continue
@@ -2394,6 +2601,9 @@ def _print_summary(summary: dict[str, Any]):
             if comp is None:
                 comp_key = "flashvid_vs_graphvid"
                 comp = bucket.get("comparison", {}).get(comp_key)
+            if comp is None:
+                comp_key = "flashvid_vs_graftvid"
+                comp = bucket.get("comparison", {}).get(comp_key)
             if comp is not None:
                 ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
                 reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
@@ -2412,8 +2622,8 @@ def run(args: BenchmarkArgs):
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
-    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid):
-        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid")
+    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid or args.run_graftvid):
+        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid/run_graftvid")
 
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
@@ -2435,7 +2645,13 @@ def run(args: BenchmarkArgs):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours) + int(args.run_graphvid)
+    total_phases = (
+        int(args.run_baseline)
+        + int(args.run_flashvid)
+        + int(args.run_ours)
+        + int(args.run_graphvid)
+        + int(args.run_graftvid)
+    )
     phase_idx = 1
     def _acquire_phase_bundle():
         if args.reload_model_each_phase:
@@ -2525,6 +2741,32 @@ def run(args: BenchmarkArgs):
             _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
+    if args.run_graftvid:
+        print(f"\nPhase {phase_idx}/{total_phases}: GRAFT-VID ...")
+        print(
+            "[graftvid-active] "
+            f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
+            f"skip={args.graft_temporal_skip}, anchor={args.graft_anchor_ratio:.2f}, "
+            f"edge_thr={args.graft_edge_threshold:.2f}, eps={args.graft_component_radius_eps:.3f}, "
+            f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
+            f"one_frame={args.graft_one_token_per_frame}"
+        )
+        phase_bundle = _acquire_phase_bundle()
+        phase_backend = phase_bundle["backend"]
+        phase_bundle["model"] = _apply_graftvid(phase_bundle["model"], args, phase_backend)
+        try:
+            _run_phase(
+                model_bundle=phase_bundle,
+                args=args,
+                samples=samples,
+                phase_name="GraftVID",
+                use_acceleration=True,
+                output_path=args.graftvid_output,
+            )
+        finally:
+            _release_phase_bundle(phase_bundle)
+        phase_idx += 1
+
     if args.run_ours:
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
         print(
@@ -2558,6 +2800,7 @@ def run(args: BenchmarkArgs):
     flashvid_records = None
     ours_records = None
     graphvid_records = None
+    graftvid_records = None
     if args.run_baseline:
         baseline_records = _read_jsonl(args.baseline_output)
         summary["baseline"] = _summarize_phase(baseline_records)
@@ -2570,6 +2813,9 @@ def run(args: BenchmarkArgs):
     if args.run_graphvid:
         graphvid_records = _read_jsonl(args.graphvid_output)
         summary["graphvid"] = _summarize_phase(graphvid_records)
+    if args.run_graftvid:
+        graftvid_records = _read_jsonl(args.graftvid_output)
+        summary["graftvid"] = _summarize_phase(graftvid_records)
 
     if baseline_records is not None and flashvid_records is not None:
         summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
@@ -2599,12 +2845,20 @@ def run(args: BenchmarkArgs):
             anchor_name="flashvid",
             target_name="graphvid",
         )
+    if flashvid_records is not None and graftvid_records is not None:
+        summary["comparison"]["flashvid_vs_graftvid"] = _summarize_pairwise_comparison(
+            flashvid_records,
+            graftvid_records,
+            anchor_name="flashvid",
+            target_name="graftvid",
+        )
     _add_duration_breakdown(
         summary,
         baseline_records=baseline_records,
         flashvid_records=flashvid_records,
         ours_records=ours_records,
         graphvid_records=graphvid_records,
+        graftvid_records=graftvid_records,
     )
 
     summary_path = Path(args.summary_output_json)

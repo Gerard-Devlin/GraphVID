@@ -107,6 +107,20 @@ def flashvid(
     graph_final_tokens_per_frame: int = 0,
     graph_final_frame_floor_ratio: float = 0.55,
     graph_skip_spatial_merge_when_capped: bool = True,
+    graft_temporal_topk: int = 3,
+    graft_temporal_radius: int = 1,
+    graft_temporal_skip: int = 1,
+    graft_anchor_ratio: float = 0.65,
+    graft_edge_threshold: float = 0.80,
+    graft_component_radius_eps: float = 0.12,
+    graft_split_radius_eps: float = 0.20,
+    graft_parent_capacity: int = 1,
+    graft_mutual_knn: bool = True,
+    graft_one_token_per_frame: bool = True,
+    graft_spatial_penalty: float = 0.10,
+    graft_importance_penalty: float = 0.05,
+    graft_hub_penalty: float = 0.05,
+    graft_adaptive_aggregation: bool = True,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -331,6 +345,7 @@ def flashvid(
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
+            "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -458,10 +473,12 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
+    elif variant == "graftvid":
+        temporal_merge_mode = "graft"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -500,6 +517,20 @@ def flashvid(
         graph_final_tokens_per_frame=graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=graph_skip_spatial_merge_when_capped,
+        graft_temporal_topk=graft_temporal_topk,
+        graft_temporal_radius=graft_temporal_radius,
+        graft_temporal_skip=graft_temporal_skip,
+        graft_anchor_ratio=graft_anchor_ratio,
+        graft_edge_threshold=graft_edge_threshold,
+        graft_component_radius_eps=graft_component_radius_eps,
+        graft_split_radius_eps=graft_split_radius_eps,
+        graft_parent_capacity=graft_parent_capacity,
+        graft_mutual_knn=graft_mutual_knn,
+        graft_one_token_per_frame=graft_one_token_per_frame,
+        graft_spatial_penalty=graft_spatial_penalty,
+        graft_importance_penalty=graft_importance_penalty,
+        graft_hub_penalty=graft_hub_penalty,
+        graft_adaptive_aggregation=graft_adaptive_aggregation,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

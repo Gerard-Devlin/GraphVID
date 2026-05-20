@@ -136,8 +136,12 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant not in ("flashvid", "graphvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|talon")
+    if compression_variant not in ("flashvid", "graphvid", "graftvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|talon")
+    if compression_variant == "graftvid":
+        from .graftvid import _reset_graft_metrics
+
+        _reset_graft_metrics(flashvid_config)
 
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
@@ -240,12 +244,25 @@ def segment_compression(
     if num_other_tokens > 0 and flashvid_config.temporal_threshold < 1.0:
         if num_frames > 1:
             merge_mode = str(getattr(flashvid_config, "temporal_merge_mode", "tree") or "tree").strip().lower()
-            if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid":
+            compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+            if compression_variant == "graphvid":
                 merge_mode = "graph"
+            elif compression_variant == "graftvid":
+                merge_mode = "graft"
             if merge_mode == "graph":
                 from .graphvid import graph_spatiotemporal_compression
 
                 temp_merged_token_list, temp_merged_indices_list = graph_spatiotemporal_compression(
+                    video_features=segment_features,
+                    temporal_threshold=flashvid_config.temporal_threshold,
+                    token_mask=mask,
+                    flashvid_config=flashvid_config,
+                    cls_attention=cls_attention,
+                )
+            elif merge_mode == "graft":
+                from .graftvid import graft_spatiotemporal_compression
+
+                temp_merged_token_list, temp_merged_indices_list = graft_spatiotemporal_compression(
                     video_features=segment_features,
                     temporal_threshold=flashvid_config.temporal_threshold,
                     token_mask=mask,
@@ -270,13 +287,14 @@ def segment_compression(
         temp_merged_global_indices_list = []
 
     is_graphvid = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid"
+    is_graph_family = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() in ("graphvid", "graftvid")
     all_tokens = [selected_features.view(-1, feat_dim)]
     all_global_indices = [selected_global_indices]
     # 2. Apply Spatial Merging to the tokens after temporal merging.
     if num_other_tokens > 0: ## Only apply spatial merging when there are STTM tokens.
         graph_final_cap = int(getattr(flashvid_config, "graph_final_tokens_per_frame", 0) or 0)
         skip_spatial_merge = (
-            is_graphvid
+            is_graph_family
             and graph_final_cap > 0
             and bool(getattr(flashvid_config, "graph_skip_spatial_merge_when_capped", True))
         )
@@ -349,7 +367,7 @@ def segment_compression(
 
     segment_final_tokens = torch.cat(all_tokens, dim=0)  # (num_final_tokens, feat_dim)
     segment_final_global_indices = torch.cat(all_global_indices, dim=0)  # (num_final_tokens,)
-    if is_graphvid:
+    if is_graph_family:
         segment_final_tokens, segment_final_global_indices = _graphvid_apply_final_cap(
             segment_final_tokens=segment_final_tokens,
             segment_final_global_indices=segment_final_global_indices,
