@@ -84,6 +84,14 @@ def _spatial_detail_score(
     return detail
 
 
+def _top_fraction_mean(values: torch.Tensor, fraction: float) -> torch.Tensor:
+    if values.numel() == 0:
+        return torch.tensor(0.0, dtype=torch.float32, device=values.device)
+    fraction = min(max(float(fraction), 0.0), 1.0)
+    k = max(1, int(math.ceil(values.numel() * fraction)))
+    return torch.topk(values.float(), k=k, largest=True).values.mean()
+
+
 def graph_spatiotemporal_compression(
     video_features: torch.Tensor,
     temporal_threshold: float,
@@ -168,25 +176,20 @@ def graph_spatiotemporal_compression(
     novelty_max = novelty_vals.max()
     novelty_norm = (novelty - novelty_min) / (novelty_max - novelty_min + 1e-6)
     detail_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_detail_weight", 0.0) or 0.0))
-    task_aware = bool(getattr(flashvid_config, "graph_task_aware_protection", False))
-    if task_aware:
-        task = str(getattr(flashvid_config, "current_task_category", "") or "").strip().lower()
-        duration = str(getattr(flashvid_config, "current_video_duration", "") or "").strip().lower()
-        detail_tasks = (
-            "object recognition",
-            "attribute perception",
-            "ocr problems",
-            "temporal perception",
-        )
-        if task in detail_tasks:
-            detail_weight = max(detail_weight, 0.20)
-        if duration == "medium" and task in detail_tasks:
-            detail_weight = max(detail_weight, 0.25)
-
+    adaptive_detail = bool(getattr(flashvid_config, "graph_adaptive_detail_protection", False))
     detail_norm = torch.zeros_like(attn_norm)
-    if detail_weight > 0.0:
+    detail_pressure = 0.0
+    if detail_weight > 0.0 or adaptive_detail:
         detail = _spatial_detail_score(normed, neighbor_idx, neighbor_valid)
         detail_norm = _normalize_on_mask(detail, token_mask)
+        if adaptive_detail:
+            valid_detail = detail_norm[token_mask]
+            valid_attn = attn_norm[token_mask]
+            detail_tail = _top_fraction_mean(valid_detail, 0.15)
+            attn_tail = _top_fraction_mean(valid_attn, 0.15)
+            detail_pressure = float((0.65 * detail_tail + 0.35 * attn_tail).clamp(0.0, 1.0).item())
+            detail_boost = max(0.0, float(getattr(flashvid_config, "graph_adaptive_detail_boost", 0.22) or 0.0))
+            detail_weight = max(detail_weight, detail_boost * detail_pressure)
 
     attn_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_attn_weight", 0.70) or 0.0))
     novelty_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_novelty_weight", 0.30) or 0.0))
@@ -202,19 +205,9 @@ def graph_spatiotemporal_compression(
 
     protected = torch.zeros(num_nodes, dtype=torch.bool, device=device)
     protect_ratio = min(max(float(getattr(flashvid_config, "graph_merge_protect_ratio", 0.15)), 0.0), 0.80)
-    if task_aware:
-        task = str(getattr(flashvid_config, "current_task_category", "") or "").strip().lower()
-        duration = str(getattr(flashvid_config, "current_video_duration", "") or "").strip().lower()
-        detail_tasks = (
-            "object recognition",
-            "attribute perception",
-            "ocr problems",
-            "temporal perception",
-        )
-        if task in detail_tasks:
-            protect_ratio = min(0.80, protect_ratio + 0.10)
-        if duration == "medium" and task in detail_tasks:
-            protect_ratio = min(0.80, protect_ratio + 0.05)
+    if adaptive_detail and detail_pressure > 0.0:
+        protect_boost = max(0.0, float(getattr(flashvid_config, "graph_adaptive_protect_boost", 0.10) or 0.0))
+        protect_ratio = min(0.80, protect_ratio + protect_boost * detail_pressure)
     protect_count = min(num_nodes, int(math.ceil(target_components * protect_ratio)))
     if protect_count > 0:
         protected[torch.topk(protection, k=protect_count, largest=True).indices] = True
