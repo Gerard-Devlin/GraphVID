@@ -214,6 +214,14 @@ def _build_command(
                 str(args.graph_merge_target_ratio),
                 "--graph_merge_representative",
                 args.graph_merge_representative,
+                "--graph_protection_attn_weight",
+                str(args.graph_protection_attn_weight),
+                "--graph_protection_novelty_weight",
+                str(args.graph_protection_novelty_weight),
+                "--graph_protection_detail_weight",
+                str(args.graph_protection_detail_weight),
+                "--graph_merge_importance_penalty",
+                str(args.graph_merge_importance_penalty),
                 "--graph_final_tokens_per_frame",
                 str(graph_cap),
                 "--graph_final_frame_floor_ratio",
@@ -228,6 +236,14 @@ def _build_command(
             cmd.append("--graph_skip_spatial_merge_when_capped")
         else:
             cmd.append("--no-graph_skip_spatial_merge_when_capped")
+        if args.graph_respect_temporal_threshold:
+            cmd.append("--graph_respect_temporal_threshold")
+        else:
+            cmd.append("--no-graph_respect_temporal_threshold")
+        if args.graph_task_aware_protection:
+            cmd.append("--graph_task_aware_protection")
+        else:
+            cmd.append("--no-graph_task_aware_protection")
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
@@ -387,7 +403,13 @@ def main() -> None:
     parser.add_argument("--graph_temporal_skip", type=int, default=1)
     parser.add_argument("--graph_merge_protect_ratio", type=float, default=0.15)
     parser.add_argument("--graph_merge_target_ratio", type=float, default=1.00)
-    parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean"])
+    parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean", "weighted_mean"])
+    parser.add_argument("--graph_protection_attn_weight", type=float, default=0.70)
+    parser.add_argument("--graph_protection_novelty_weight", type=float, default=0.30)
+    parser.add_argument("--graph_protection_detail_weight", type=float, default=0.0)
+    parser.add_argument("--graph_merge_importance_penalty", type=float, default=0.0)
+    parser.add_argument("--graph_respect_temporal_threshold", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--graph_task_aware_protection", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--graph_final_frame_floor_ratio", type=float, default=0.55)
     parser.add_argument("--graph_skip_spatial_merge_when_capped", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--token_selection_method", default="attn_div_stable")

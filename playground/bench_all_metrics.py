@@ -70,6 +70,12 @@ class BenchmarkArgs:
     graph_merge_protect_ratio: float = field(default=0.15)
     graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")
+    graph_protection_attn_weight: float = field(default=0.70)
+    graph_protection_novelty_weight: float = field(default=0.30)
+    graph_protection_detail_weight: float = field(default=0.0)
+    graph_merge_importance_penalty: float = field(default=0.0)
+    graph_respect_temporal_threshold: bool = field(default=False)
+    graph_task_aware_protection: bool = field(default=False)
     graph_final_tokens_per_frame: int = field(default=0)
     graph_final_frame_floor_ratio: float = field(default=0.55)
     graph_skip_spatial_merge_when_capped: bool = field(default=True)
@@ -1666,6 +1672,12 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_protection_attn_weight=args.graph_protection_attn_weight,
+        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
+        graph_protection_detail_weight=args.graph_protection_detail_weight,
+        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
+        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
+        graph_task_aware_protection=args.graph_task_aware_protection,
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
@@ -1886,6 +1898,12 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_protection_attn_weight=args.graph_protection_attn_weight,
+        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
+        graph_protection_detail_weight=args.graph_protection_detail_weight,
+        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
+        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
+        graph_task_aware_protection=args.graph_task_aware_protection,
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
@@ -1924,6 +1942,12 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_protection_attn_weight=args.graph_protection_attn_weight,
+        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
+        graph_protection_detail_weight=args.graph_protection_detail_weight,
+        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
+        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
+        graph_task_aware_protection=args.graph_task_aware_protection,
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
@@ -2171,7 +2195,11 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
-            f"rep={args.graph_merge_representative}"
+            f"rep={args.graph_merge_representative}, "
+            f"detail_w={args.graph_protection_detail_weight:.2f}, "
+            f"penalty={args.graph_merge_importance_penalty:.2f}, "
+            f"respect_thr={args.graph_respect_temporal_threshold}, "
+            f"task_aware={args.graph_task_aware_protection}"
         )
     print(SEPARATOR)
 
@@ -2461,7 +2489,11 @@ def run(args: BenchmarkArgs):
             f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
-            f"rep={args.graph_merge_representative}"
+            f"rep={args.graph_merge_representative}, "
+            f"detail_w={args.graph_protection_detail_weight:.2f}, "
+            f"penalty={args.graph_merge_importance_penalty:.2f}, "
+            f"respect_thr={args.graph_respect_temporal_threshold}, "
+            f"task_aware={args.graph_task_aware_protection}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]

@@ -50,6 +50,40 @@ def _neighbor_table(num_visual_tokens: int, h: int, w: int, radius: int, device:
     return table.to(device=device), valid.to(device=device)
 
 
+def _normalize_on_mask(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    valid = values[mask]
+    if valid.numel() == 0:
+        return torch.zeros_like(values)
+    min_val = valid.min()
+    max_val = valid.max()
+    return (values - min_val) / (max_val - min_val + 1e-6)
+
+
+def _spatial_detail_score(
+    normed_features: torch.Tensor,
+    neighbor_idx: torch.Tensor,
+    neighbor_valid: torch.Tensor,
+) -> torch.Tensor:
+    """Estimate local detail from same-frame neighborhood uniqueness."""
+    num_frames, num_visual_tokens, _ = normed_features.shape
+    device = normed_features.device
+    token_ids = torch.arange(num_visual_tokens, dtype=torch.long, device=device)
+    neigh = neighbor_idx[token_ids]
+    valid = neighbor_valid[token_ids] & (neigh != token_ids.unsqueeze(1))
+    detail = torch.zeros((num_frames, num_visual_tokens), dtype=torch.float32, device=device)
+    if valid.numel() == 0 or not valid.any():
+        return detail
+
+    for frame_idx in range(num_frames):
+        cur = normed_features[frame_idx, token_ids]
+        neigh_feats = normed_features[frame_idx, neigh]
+        sims = torch.sum(neigh_feats * cur.unsqueeze(1), dim=-1)
+        sims = sims.masked_fill(~valid, -1.0)
+        max_sim = sims.max(dim=1).values.clamp(min=-1.0, max=1.0)
+        detail[frame_idx] = ((1.0 - max_sim) * 0.5).clamp(0.0, 1.0)
+    return detail
+
+
 def graph_spatiotemporal_compression(
     video_features: torch.Tensor,
     temporal_threshold: float,
@@ -133,11 +167,54 @@ def graph_spatiotemporal_compression(
     novelty_min = novelty_vals.min()
     novelty_max = novelty_vals.max()
     novelty_norm = (novelty - novelty_min) / (novelty_max - novelty_min + 1e-6)
-    protection_map = 0.7 * attn_norm + 0.3 * novelty_norm
+    detail_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_detail_weight", 0.0) or 0.0))
+    task_aware = bool(getattr(flashvid_config, "graph_task_aware_protection", False))
+    if task_aware:
+        task = str(getattr(flashvid_config, "current_task_category", "") or "").strip().lower()
+        duration = str(getattr(flashvid_config, "current_video_duration", "") or "").strip().lower()
+        detail_tasks = (
+            "object recognition",
+            "attribute perception",
+            "ocr problems",
+            "temporal perception",
+        )
+        if task in detail_tasks:
+            detail_weight = max(detail_weight, 0.20)
+        if duration == "medium" and task in detail_tasks:
+            detail_weight = max(detail_weight, 0.25)
+
+    detail_norm = torch.zeros_like(attn_norm)
+    if detail_weight > 0.0:
+        detail = _spatial_detail_score(normed, neighbor_idx, neighbor_valid)
+        detail_norm = _normalize_on_mask(detail, token_mask)
+
+    attn_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_attn_weight", 0.70) or 0.0))
+    novelty_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_novelty_weight", 0.30) or 0.0))
+    total_weight = attn_weight + novelty_weight + detail_weight
+    if total_weight <= 0.0:
+        attn_weight, novelty_weight, detail_weight, total_weight = 0.70, 0.30, 0.0, 1.0
+    protection_map = (
+        attn_weight * attn_norm
+        + novelty_weight * novelty_norm
+        + detail_weight * detail_norm
+    ) / total_weight
     protection = protection_map[token_mask]
 
     protected = torch.zeros(num_nodes, dtype=torch.bool, device=device)
     protect_ratio = min(max(float(getattr(flashvid_config, "graph_merge_protect_ratio", 0.15)), 0.0), 0.80)
+    if task_aware:
+        task = str(getattr(flashvid_config, "current_task_category", "") or "").strip().lower()
+        duration = str(getattr(flashvid_config, "current_video_duration", "") or "").strip().lower()
+        detail_tasks = (
+            "object recognition",
+            "attribute perception",
+            "ocr problems",
+            "temporal perception",
+        )
+        if task in detail_tasks:
+            protect_ratio = min(0.80, protect_ratio + 0.10)
+        if duration == "medium" and task in detail_tasks:
+            protect_ratio = min(0.80, protect_ratio + 0.05)
     protect_count = min(num_nodes, int(math.ceil(target_components * protect_ratio)))
     if protect_count > 0:
         protected[torch.topk(protection, k=protect_count, largest=True).indices] = True
@@ -172,13 +249,26 @@ def graph_spatiotemporal_compression(
         edge_scores = torch.cat(edge_score_parts).float().cpu()
         edge_src = torch.cat(edge_src_parts).long().cpu()
         edge_dst = torch.cat(edge_dst_parts).long().cpu()
-        edge_order = torch.argsort(edge_scores, descending=True)
+        importance_penalty = max(0.0, float(getattr(flashvid_config, "graph_merge_importance_penalty", 0.0) or 0.0))
+        if importance_penalty > 0.0:
+            edge_importance = torch.tensor(
+                [
+                    max(protection_cpu[int(src)], protection_cpu[int(dst)])
+                    for src, dst in zip(edge_src.tolist(), edge_dst.tolist())
+                ],
+                dtype=edge_scores.dtype,
+            )
+            edge_sort_scores = edge_scores - importance_penalty * edge_importance
+        else:
+            edge_sort_scores = edge_scores
+        edge_order = torch.argsort(edge_sort_scores, descending=True)
+        respect_threshold = bool(getattr(flashvid_config, "graph_respect_temporal_threshold", False))
         for edge_idx in edge_order.tolist():
             if component_count <= target_components:
                 break
             sim = float(edge_scores[edge_idx].item())
-            if sim < temporal_threshold and component_count <= target_components:
-                break
+            if respect_threshold and sim < temporal_threshold:
+                continue
             union(int(edge_src[edge_idx].item()), int(edge_dst[edge_idx].item()))
 
     groups: dict[int, list[int]] = {}
@@ -194,7 +284,16 @@ def graph_spatiotemporal_compression(
         rep_node = max(members, key=lambda node: protection_cpu[node])
         rep_frame = int(node_frames[rep_node])
         rep_token = int(node_tokens[rep_node])
-        if representative_mode == "mean":
+        if representative_mode in ("weighted_mean", "attn_mean", "protection_mean"):
+            member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
+            weights = torch.tensor(
+                [max(1.0e-4, protection_cpu[m]) for m in members],
+                dtype=torch.float32,
+                device=device,
+            )
+            weights = weights / weights.sum().clamp_min(1.0e-6)
+            out_token = torch.sum(member_feats.float() * weights.unsqueeze(-1), dim=0).to(dtype=video_features.dtype)
+        elif representative_mode == "mean":
             member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
             out_token = member_feats.mean(dim=0).to(dtype=video_features.dtype)
         else:
