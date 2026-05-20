@@ -92,37 +92,6 @@ def _top_fraction_mean(values: torch.Tensor, fraction: float) -> torch.Tensor:
     return torch.topk(values.float(), k=k, largest=True).values.mean()
 
 
-def _split_by_temporal_span(members: list[int], node_frames: list[int], max_span: int) -> list[list[int]]:
-    if max_span <= 0 or len(members) <= 1:
-        return [members]
-    chunks: list[list[int]] = []
-    cur: list[int] = []
-    start_frame: int | None = None
-    for node in sorted(members, key=lambda item: (node_frames[item], item)):
-        frame = int(node_frames[node])
-        if start_frame is None or frame - start_frame + 1 <= max_span:
-            if start_frame is None:
-                start_frame = frame
-            cur.append(node)
-            continue
-        if cur:
-            chunks.append(cur)
-        cur = [node]
-        start_frame = frame
-    if cur:
-        chunks.append(cur)
-    return chunks
-
-
-def _component_spatial_radius(members: list[int], node_tokens: list[int], rep_token: int, w: int) -> int:
-    rep_row, rep_col = divmod(int(rep_token), w)
-    max_radius = 0
-    for node in members:
-        row, col = divmod(int(node_tokens[node]), w)
-        max_radius = max(max_radius, abs(row - rep_row), abs(col - rep_col))
-    return max_radius
-
-
 def graph_spatiotemporal_compression(
     video_features: torch.Tensor,
     temporal_threshold: float,
@@ -302,62 +271,28 @@ def graph_spatiotemporal_compression(
     representative_mode = str(
         getattr(flashvid_config, "graph_merge_representative", "medoid") or "medoid"
     ).strip().lower()
-    blend_alpha = min(
-        max(float(getattr(flashvid_config, "graph_representative_blend_alpha", 0.20) or 0.0), 0.0),
-        1.0,
-    )
-    spatial_guard_radius = max(0, int(getattr(flashvid_config, "graph_spatial_spread_guard_radius", 0) or 0))
-    temporal_span_guard = max(0, int(getattr(flashvid_config, "graph_temporal_span_guard", 0) or 0))
     frame_tokens: list[list[torch.Tensor]] = [[] for _ in range(num_frames)]
     frame_indices: list[list[int]] = [[] for _ in range(num_frames)]
-    for raw_members in groups.values():
-        for members in _split_by_temporal_span(raw_members, node_frames, temporal_span_guard):
-            if not members:
-                continue
-            rep_node = max(members, key=lambda node: protection_cpu[node])
-            rep_frame = int(node_frames[rep_node])
-            rep_token = int(node_tokens[rep_node])
-            anchor = video_features[rep_frame, rep_token]
-            spread_too_wide = (
-                spatial_guard_radius > 0
-                and _component_spatial_radius(members, node_tokens, rep_token, w) > spatial_guard_radius
+    for members in groups.values():
+        rep_node = max(members, key=lambda node: protection_cpu[node])
+        rep_frame = int(node_frames[rep_node])
+        rep_token = int(node_tokens[rep_node])
+        if representative_mode in ("weighted_mean", "attn_mean", "protection_mean"):
+            member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
+            weights = torch.tensor(
+                [max(1.0e-4, protection_cpu[m]) for m in members],
+                dtype=torch.float32,
+                device=device,
             )
-
-            if representative_mode in ("hybrid_anchor", "anchor_blend", "hybrid", "weighted_anchor"):
-                if len(members) == 1 or blend_alpha <= 0.0 or spread_too_wide:
-                    out_token = anchor
-                else:
-                    member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
-                    weights = torch.tensor(
-                        [max(1.0e-4, protection_cpu[m]) for m in members],
-                        dtype=torch.float32,
-                        device=device,
-                    )
-                    weights = weights / weights.sum().clamp_min(1.0e-6)
-                    weighted = torch.sum(member_feats.float() * weights.unsqueeze(-1), dim=0)
-                    out_token = (anchor.float() + blend_alpha * (weighted - anchor.float())).to(dtype=video_features.dtype)
-            elif representative_mode in ("weighted_mean", "attn_mean", "protection_mean"):
-                if len(members) == 1 or spread_too_wide:
-                    out_token = anchor
-                else:
-                    member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
-                    weights = torch.tensor(
-                        [max(1.0e-4, protection_cpu[m]) for m in members],
-                        dtype=torch.float32,
-                        device=device,
-                    )
-                    weights = weights / weights.sum().clamp_min(1.0e-6)
-                    out_token = torch.sum(member_feats.float() * weights.unsqueeze(-1), dim=0).to(dtype=video_features.dtype)
-            elif representative_mode == "mean":
-                if len(members) == 1 or spread_too_wide:
-                    out_token = anchor
-                else:
-                    member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
-                    out_token = member_feats.mean(dim=0).to(dtype=video_features.dtype)
-            else:
-                out_token = anchor
-            frame_tokens[rep_frame].append(out_token)
-            frame_indices[rep_frame].append(rep_token)
+            weights = weights / weights.sum().clamp_min(1.0e-6)
+            out_token = torch.sum(member_feats.float() * weights.unsqueeze(-1), dim=0).to(dtype=video_features.dtype)
+        elif representative_mode == "mean":
+            member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
+            out_token = member_feats.mean(dim=0).to(dtype=video_features.dtype)
+        else:
+            out_token = video_features[rep_frame, rep_token]
+        frame_tokens[rep_frame].append(out_token)
+        frame_indices[rep_frame].append(rep_token)
 
     final_tokens: list[torch.Tensor] = []
     retained_token_indices: list[torch.Tensor] = []

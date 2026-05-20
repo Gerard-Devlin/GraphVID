@@ -70,9 +70,6 @@ class BenchmarkArgs:
     graph_merge_protect_ratio: float = field(default=0.15)
     graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")
-    graph_representative_blend_alpha: float = field(default=0.20)
-    graph_spatial_spread_guard_radius: int = field(default=0)
-    graph_temporal_span_guard: int = field(default=0)
     graph_protection_attn_weight: float = field(default=0.70)
     graph_protection_novelty_weight: float = field(default=0.30)
     graph_protection_detail_weight: float = field(default=0.0)
@@ -1677,9 +1674,6 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
-        graph_representative_blend_alpha=args.graph_representative_blend_alpha,
-        graph_spatial_spread_guard_radius=args.graph_spatial_spread_guard_radius,
-        graph_temporal_span_guard=args.graph_temporal_span_guard,
         graph_protection_attn_weight=args.graph_protection_attn_weight,
         graph_protection_novelty_weight=args.graph_protection_novelty_weight,
         graph_protection_detail_weight=args.graph_protection_detail_weight,
@@ -1908,9 +1902,6 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
-        graph_representative_blend_alpha=args.graph_representative_blend_alpha,
-        graph_spatial_spread_guard_radius=args.graph_spatial_spread_guard_radius,
-        graph_temporal_span_guard=args.graph_temporal_span_guard,
         graph_protection_attn_weight=args.graph_protection_attn_weight,
         graph_protection_novelty_weight=args.graph_protection_novelty_weight,
         graph_protection_detail_weight=args.graph_protection_detail_weight,
@@ -1957,9 +1948,6 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
-        graph_representative_blend_alpha=args.graph_representative_blend_alpha,
-        graph_spatial_spread_guard_radius=args.graph_spatial_spread_guard_radius,
-        graph_temporal_span_guard=args.graph_temporal_span_guard,
         graph_protection_attn_weight=args.graph_protection_attn_weight,
         graph_protection_novelty_weight=args.graph_protection_novelty_weight,
         graph_protection_detail_weight=args.graph_protection_detail_weight,
@@ -2216,9 +2204,6 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
             f"rep={args.graph_merge_representative}, "
-            f"blend={args.graph_representative_blend_alpha:.2f}, "
-            f"spread_guard={args.graph_spatial_spread_guard_radius}, "
-            f"span_guard={args.graph_temporal_span_guard}, "
             f"detail_w={args.graph_protection_detail_weight:.2f}, "
             f"adaptive_detail={args.graph_adaptive_detail_protection}, "
             f"penalty={args.graph_merge_importance_penalty:.2f}, "
@@ -2513,9 +2498,6 @@ def run(args: BenchmarkArgs):
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
             f"rep={args.graph_merge_representative}, "
-            f"blend={args.graph_representative_blend_alpha:.2f}, "
-            f"spread_guard={args.graph_spatial_spread_guard_radius}, "
-            f"span_guard={args.graph_temporal_span_guard}, "
             f"detail_w={args.graph_protection_detail_weight:.2f}, "
             f"adaptive_detail={args.graph_adaptive_detail_protection}, "
             f"penalty={args.graph_merge_importance_penalty:.2f}, "
