@@ -30,6 +30,7 @@ class FlashVidConfig:
     graph_merge_protect_ratio: float = field(default=0.15)
     graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")  # medoid | mean | weighted_mean
+    graph_representative_position: str = field(default="protection")  # protection | earliest | latest | medoid
     graph_protection_attn_weight: float = field(default=0.70)
     graph_protection_novelty_weight: float = field(default=0.30)
     graph_protection_detail_weight: float = field(default=0.0)

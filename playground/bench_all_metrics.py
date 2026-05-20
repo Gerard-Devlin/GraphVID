@@ -70,6 +70,7 @@ class BenchmarkArgs:
     graph_merge_protect_ratio: float = field(default=0.15)
     graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")
+    graph_representative_position: str = field(default="protection")
     graph_protection_attn_weight: float = field(default=0.70)
     graph_protection_novelty_weight: float = field(default=0.30)
     graph_protection_detail_weight: float = field(default=0.0)
@@ -1674,6 +1675,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_representative_position=args.graph_representative_position,
         graph_protection_attn_weight=args.graph_protection_attn_weight,
         graph_protection_novelty_weight=args.graph_protection_novelty_weight,
         graph_protection_detail_weight=args.graph_protection_detail_weight,
@@ -1902,6 +1904,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_representative_position=args.graph_representative_position,
         graph_protection_attn_weight=args.graph_protection_attn_weight,
         graph_protection_novelty_weight=args.graph_protection_novelty_weight,
         graph_protection_detail_weight=args.graph_protection_detail_weight,
@@ -1948,6 +1951,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
+        graph_representative_position=args.graph_representative_position,
         graph_protection_attn_weight=args.graph_protection_attn_weight,
         graph_protection_novelty_weight=args.graph_protection_novelty_weight,
         graph_protection_detail_weight=args.graph_protection_detail_weight,
@@ -2204,6 +2208,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
             f"rep={args.graph_merge_representative}, "
+            f"pos={args.graph_representative_position}, "
             f"detail_w={args.graph_protection_detail_weight:.2f}, "
             f"adaptive_detail={args.graph_adaptive_detail_protection}, "
             f"penalty={args.graph_merge_importance_penalty:.2f}, "
@@ -2498,6 +2503,7 @@ def run(args: BenchmarkArgs):
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
             f"rep={args.graph_merge_representative}, "
+            f"pos={args.graph_representative_position}, "
             f"detail_w={args.graph_protection_detail_weight:.2f}, "
             f"adaptive_detail={args.graph_adaptive_detail_protection}, "
             f"penalty={args.graph_merge_importance_penalty:.2f}, "

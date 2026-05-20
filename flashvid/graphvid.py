@@ -92,6 +92,41 @@ def _top_fraction_mean(values: torch.Tensor, fraction: float) -> torch.Tensor:
     return torch.topk(values.float(), k=k, largest=True).values.mean()
 
 
+def _choose_position_node(
+    members: list[int],
+    node_frames: list[int],
+    node_tokens: list[int],
+    protection_cpu: list[float],
+    w: int,
+    mode: str,
+) -> int:
+    mode = (mode or "protection").strip().lower()
+    if mode == "earliest":
+        frame = min(node_frames[node] for node in members)
+        candidates = [node for node in members if node_frames[node] == frame]
+        return max(candidates, key=lambda node: (protection_cpu[node], -node_tokens[node]))
+    if mode == "latest":
+        frame = max(node_frames[node] for node in members)
+        candidates = [node for node in members if node_frames[node] == frame]
+        return max(candidates, key=lambda node: (protection_cpu[node], -node_tokens[node]))
+    if mode in ("medoid", "position_medoid", "temporal_medoid"):
+        mean_frame = sum(float(node_frames[node]) for node in members) / max(1, len(members))
+        mean_row = sum(float(node_tokens[node] // w) for node in members) / max(1, len(members))
+        mean_col = sum(float(node_tokens[node] % w) for node in members) / max(1, len(members))
+
+        def key(node: int) -> tuple[float, float, int]:
+            row, col = divmod(node_tokens[node], w)
+            dist = (
+                (float(node_frames[node]) - mean_frame) ** 2
+                + (float(row) - mean_row) ** 2
+                + (float(col) - mean_col) ** 2
+            )
+            return (dist, -protection_cpu[node], node_tokens[node])
+
+        return min(members, key=key)
+    return max(members, key=lambda node: (protection_cpu[node], -node_tokens[node]))
+
+
 def graph_spatiotemporal_compression(
     video_features: torch.Tensor,
     temporal_threshold: float,
@@ -274,12 +309,15 @@ def graph_spatiotemporal_compression(
     representative_mode = str(
         getattr(flashvid_config, "graph_merge_representative", "medoid") or "medoid"
     ).strip().lower()
+    position_mode = str(
+        getattr(flashvid_config, "graph_representative_position", "protection") or "protection"
+    ).strip().lower()
     frame_tokens: list[list[torch.Tensor]] = [[] for _ in range(num_frames)]
     frame_indices: list[list[int]] = [[] for _ in range(num_frames)]
     for members in groups.values():
-        rep_node = max(members, key=lambda node: protection_cpu[node])
-        rep_frame = int(node_frames[rep_node])
-        rep_token = int(node_tokens[rep_node])
+        pos_node = _choose_position_node(members, node_frames, node_tokens, protection_cpu, w, position_mode)
+        rep_frame = int(node_frames[pos_node])
+        rep_token = int(node_tokens[pos_node])
         if representative_mode in ("weighted_mean", "attn_mean", "protection_mean"):
             member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
             weights = torch.tensor(

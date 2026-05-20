@@ -347,6 +347,8 @@ def _append_graphvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.graph_merge_target_ratio),
             "--graph_merge_representative",
             args.graph_merge_representative,
+            "--graph_representative_position",
+            args.graph_representative_position,
             "--graph_protection_attn_weight",
             str(args.graph_protection_attn_weight),
             "--graph_protection_novelty_weight",
@@ -625,6 +627,11 @@ def main() -> None:
     parser.add_argument("--graph_merge_protect_ratio", type=float, default=0.15)
     parser.add_argument("--graph_merge_target_ratio", type=float, default=0.65)
     parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean", "weighted_mean"])
+    parser.add_argument(
+        "--graph_representative_position",
+        default="protection",
+        choices=["protection", "earliest", "latest", "medoid", "position_medoid", "temporal_medoid"],
+    )
     parser.add_argument("--graph_protection_attn_weight", type=float, default=0.70)
     parser.add_argument("--graph_protection_novelty_weight", type=float, default=0.30)
     parser.add_argument("--graph_protection_detail_weight", type=float, default=0.0)
