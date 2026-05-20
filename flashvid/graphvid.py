@@ -136,7 +136,10 @@ def graph_spatiotemporal_compression(
         attn_norm = torch.zeros_like(attn)
 
     h, w = _grid_hw(num_visual_tokens, flashvid_config)
-    radius = max(0, int(getattr(flashvid_config, "graph_temporal_radius", 1) or 1))
+    raw_radius = int(getattr(flashvid_config, "graph_temporal_radius", 1) or 1)
+    # Negative radius means global temporal matching, mirroring FlashVID TSTM's
+    # full previous-frame search while still allowing top-k graph connectivity.
+    radius = max(h, w) if raw_radius < 0 else max(0, raw_radius)
     temporal_skip = max(1, int(getattr(flashvid_config, "graph_temporal_skip", 1) or 1))
     topk = max(1, int(getattr(flashvid_config, "graph_temporal_topk", 3) or 3))
     neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius, device)
