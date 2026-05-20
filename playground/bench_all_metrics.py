@@ -99,6 +99,7 @@ class BenchmarkArgs:
     graft_temporal_topk: int = field(default=3)
     graft_temporal_radius: int = field(default=1)
     graft_temporal_skip: int = field(default=1)
+    graft_global_topk: int = field(default=3)
     graft_anchor_ratio: float = field(default=0.65)
     graft_edge_threshold: float = field(default=0.80)
     graft_component_radius_eps: float = field(default=0.12)
@@ -110,6 +111,9 @@ class BenchmarkArgs:
     graft_importance_penalty: float = field(default=0.05)
     graft_hub_penalty: float = field(default=0.05)
     graft_adaptive_aggregation: bool = field(default=True)
+    graft_scene_threshold: float = field(default=0.0)
+    graft_min_tokens_per_frame: int = field(default=0)
+    graft_budget_correction: bool = field(default=True)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1757,6 +1761,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_temporal_topk=args.graft_temporal_topk,
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
+        graft_global_topk=args.graft_global_topk,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -1768,6 +1773,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_importance_penalty=args.graft_importance_penalty,
         graft_hub_penalty=args.graft_hub_penalty,
         graft_adaptive_aggregation=args.graft_adaptive_aggregation,
+        graft_scene_threshold=args.graft_scene_threshold,
+        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
+        graft_budget_correction=args.graft_budget_correction,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2000,6 +2008,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_temporal_topk=args.graft_temporal_topk,
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
+        graft_global_topk=args.graft_global_topk,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2011,6 +2020,9 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_importance_penalty=args.graft_importance_penalty,
         graft_hub_penalty=args.graft_hub_penalty,
         graft_adaptive_aggregation=args.graft_adaptive_aggregation,
+        graft_scene_threshold=args.graft_scene_threshold,
+        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
+        graft_budget_correction=args.graft_budget_correction,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2061,6 +2073,7 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_temporal_topk=args.graft_temporal_topk,
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
+        graft_global_topk=args.graft_global_topk,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2072,6 +2085,9 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_importance_penalty=args.graft_importance_penalty,
         graft_hub_penalty=args.graft_hub_penalty,
         graft_adaptive_aggregation=args.graft_adaptive_aggregation,
+        graft_scene_threshold=args.graft_scene_threshold,
+        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
+        graft_budget_correction=args.graft_budget_correction,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2122,6 +2138,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_temporal_topk=args.graft_temporal_topk,
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
+        graft_global_topk=args.graft_global_topk,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2133,6 +2150,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_importance_penalty=args.graft_importance_penalty,
         graft_hub_penalty=args.graft_hub_penalty,
         graft_adaptive_aggregation=args.graft_adaptive_aggregation,
+        graft_scene_threshold=args.graft_scene_threshold,
+        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
+        graft_budget_correction=args.graft_budget_correction,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2388,12 +2408,15 @@ def _print_header(args: BenchmarkArgs, backend: str):
         print(
             "GRAFT-VID config: "
             f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
-            f"skip={args.graft_temporal_skip}, anchor={args.graft_anchor_ratio:.2f}, "
+            f"skip={args.graft_temporal_skip}, global_topk={args.graft_global_topk}, "
+            f"anchor={args.graft_anchor_ratio:.2f}, "
             f"edge_thr={args.graft_edge_threshold:.2f}, radius_eps={args.graft_component_radius_eps:.3f}, "
             f"split_eps={args.graft_split_radius_eps:.3f}, capacity={args.graft_parent_capacity}, "
             f"mutual={args.graft_mutual_knn}, one_frame={args.graft_one_token_per_frame}, "
             f"spatial_pen={args.graft_spatial_penalty:.2f}, imp_pen={args.graft_importance_penalty:.2f}, "
-            f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}"
+            f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}, "
+            f"scene_thr={args.graft_scene_threshold:.2f}, minpf={args.graft_min_tokens_per_frame}, "
+            f"budget_fix={args.graft_budget_correction}"
         )
     print(SEPARATOR)
 
@@ -2746,10 +2769,12 @@ def run(args: BenchmarkArgs):
         print(
             "[graftvid-active] "
             f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
-            f"skip={args.graft_temporal_skip}, anchor={args.graft_anchor_ratio:.2f}, "
+            f"skip={args.graft_temporal_skip}, global_topk={args.graft_global_topk}, "
+            f"anchor={args.graft_anchor_ratio:.2f}, "
             f"edge_thr={args.graft_edge_threshold:.2f}, eps={args.graft_component_radius_eps:.3f}, "
             f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
-            f"one_frame={args.graft_one_token_per_frame}"
+            f"one_frame={args.graft_one_token_per_frame}, scene_thr={args.graft_scene_threshold:.2f}, "
+            f"minpf={args.graft_min_tokens_per_frame}, budget_fix={args.graft_budget_correction}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]

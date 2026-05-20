@@ -47,6 +47,7 @@ class FlashVidConfig:
     graft_temporal_topk: int = field(default=3)
     graft_temporal_radius: int = field(default=1)
     graft_temporal_skip: int = field(default=1)
+    graft_global_topk: int = field(default=3)
     graft_anchor_ratio: float = field(default=0.65)
     graft_edge_threshold: float = field(default=0.80)
     graft_component_radius_eps: float = field(default=0.12)
@@ -58,6 +59,9 @@ class FlashVidConfig:
     graft_importance_penalty: float = field(default=0.05)
     graft_hub_penalty: float = field(default=0.05)
     graft_adaptive_aggregation: bool = field(default=True)
+    graft_scene_threshold: float = field(default=0.0)
+    graft_min_tokens_per_frame: int = field(default=0)
+    graft_budget_correction: bool = field(default=True)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)

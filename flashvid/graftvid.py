@@ -11,10 +11,26 @@ from .graphvid import _choose_position_node, _grid_hw, _neighbor_table, _normali
 
 
 def _bool_config(config: FlashVidConfig, name: str, default: bool) -> bool:
-    value = getattr(config, name, default)
+    value = getattr(config, name, None)
+    if value is None:
+        return default
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _cfg_float(config: FlashVidConfig, name: str, default: float) -> float:
+    value = getattr(config, name, None)
+    if value is None:
+        return float(default)
+    return float(value)
+
+
+def _cfg_int(config: FlashVidConfig, name: str, default: int) -> int:
+    value = getattr(config, name, None)
+    if value is None:
+        return int(default)
+    return int(value)
 
 
 def _component_radius(node_features: torch.Tensor, members: list[int]) -> float:
@@ -155,34 +171,55 @@ def _accumulate_graft_metrics(
     setattr(config, "last_graft_same_frame_rejected", float(getattr(config, "_graft_same_frame_rejected", 0.0)))
 
 
-def _reverse_mutual_pairs(
+def _collect_candidate_pairs(
     normed: torch.Tensor,
     token_mask: torch.Tensor,
     node_id: torch.Tensor,
     neighbor_idx: torch.Tensor,
     neighbor_valid: torch.Tensor,
-    prev_frame: int,
-    cur_frame: int,
+    src_frame: int,
+    dst_frame: int,
     topk: int,
-) -> set[tuple[int, int]]:
-    reverse_pairs: set[tuple[int, int]] = set()
-    prev_valid = torch.where(token_mask[prev_frame])[0]
-    if prev_valid.numel() == 0:
-        return reverse_pairs
-    neigh = neighbor_idx[prev_valid]
-    valid = neighbor_valid[prev_valid] & token_mask[cur_frame, neigh]
-    sims = torch.sum(normed[cur_frame, neigh] * normed[prev_frame, prev_valid].unsqueeze(1), dim=-1)
+    global_topk: int,
+) -> dict[tuple[int, int], float]:
+    """Collect local+global top-k candidate pairs as (src_node, dst_node) -> sim."""
+    pairs: dict[tuple[int, int], float] = {}
+    src_valid = torch.where(token_mask[src_frame])[0]
+    dst_valid = torch.where(token_mask[dst_frame])[0]
+    if src_valid.numel() == 0 or dst_valid.numel() == 0:
+        return pairs
+
+    neigh = neighbor_idx[src_valid]
+    valid = neighbor_valid[src_valid] & token_mask[dst_frame, neigh]
+    sims = torch.sum(normed[dst_frame, neigh] * normed[src_frame, src_valid].unsqueeze(1), dim=-1)
     sims = sims.masked_fill(~valid, -1.0)
     k = min(topk, int(sims.shape[1]))
-    if k <= 0:
-        return reverse_pairs
-    vals, ids = torch.topk(sims, k=k, dim=1, largest=True)
-    prev_nodes = node_id[prev_frame, prev_valid].unsqueeze(1).expand_as(vals)
-    cur_nodes = node_id[cur_frame, neigh.gather(1, ids)]
-    edge_valid = (vals > -0.5) & (prev_nodes >= 0) & (cur_nodes >= 0)
-    for cur_node, prev_node in zip(cur_nodes[edge_valid].detach().cpu().tolist(), prev_nodes[edge_valid].detach().cpu().tolist()):
-        reverse_pairs.add((int(cur_node), int(prev_node)))
-    return reverse_pairs
+    if k > 0:
+        vals, ids = torch.topk(sims, k=k, dim=1, largest=True)
+        src_nodes = node_id[src_frame, src_valid].unsqueeze(1).expand_as(vals)
+        dst_nodes = node_id[dst_frame, neigh.gather(1, ids)]
+        edge_valid = (vals > -0.5) & (src_nodes >= 0) & (dst_nodes >= 0)
+        for sim, src, dst in zip(
+            vals[edge_valid].detach().cpu().tolist(),
+            src_nodes[edge_valid].detach().cpu().tolist(),
+            dst_nodes[edge_valid].detach().cpu().tolist(),
+        ):
+            pairs[(int(src), int(dst))] = max(float(sim), pairs.get((int(src), int(dst)), -1.0))
+
+    gk = min(max(0, global_topk), int(dst_valid.numel()))
+    if gk > 0:
+        global_sims = torch.matmul(normed[src_frame, src_valid].float(), normed[dst_frame, dst_valid].float().transpose(0, 1))
+        vals, ids = torch.topk(global_sims, k=gk, dim=1, largest=True)
+        src_nodes = node_id[src_frame, src_valid].unsqueeze(1).expand_as(vals)
+        dst_nodes = node_id[dst_frame, dst_valid[ids]]
+        edge_valid = (vals > -0.5) & (src_nodes >= 0) & (dst_nodes >= 0)
+        for sim, src, dst in zip(
+            vals[edge_valid].detach().cpu().tolist(),
+            src_nodes[edge_valid].detach().cpu().tolist(),
+            dst_nodes[edge_valid].detach().cpu().tolist(),
+        ):
+            pairs[(int(src), int(dst))] = max(float(sim), pairs.get((int(src), int(dst)), -1.0))
+    return pairs
 
 
 def graft_spatiotemporal_compression(
@@ -219,8 +256,18 @@ def graft_spatiotemporal_compression(
         empty_indices = torch.empty((0,), dtype=torch.long, device=device)
         return [empty_tokens for _ in range(num_frames)], [empty_indices for _ in range(num_frames)]
 
-    target_components = max(1, int(getattr(flashvid_config, "num_sttm_tokens", 0) or 0) * num_frames)
-    target_components = min(num_nodes, target_components)
+    num_sttm_tokens_value = getattr(flashvid_config, "num_sttm_tokens", None)
+    if num_sttm_tokens_value is None:
+        fallback_ratio = min(max(_cfg_float(flashvid_config, "retention_ratio", 0.10), 0.0), 1.0)
+        target_components = int(math.ceil(num_nodes * fallback_ratio))
+    else:
+        per_frame_budget = int(num_sttm_tokens_value)
+        if per_frame_budget <= 0:
+            fallback_ratio = min(max(_cfg_float(flashvid_config, "retention_ratio", 0.10), 0.0), 1.0)
+            target_components = int(math.ceil(num_nodes * fallback_ratio))
+        else:
+            target_components = per_frame_budget * num_frames
+    target_components = min(num_nodes, max(1, target_components))
 
     node_id = torch.full((num_frames, num_visual_tokens), -1, dtype=torch.long, device=device)
     node_id[candidate_positions] = torch.arange(num_nodes, dtype=torch.long, device=device)
@@ -234,10 +281,20 @@ def graft_spatiotemporal_compression(
     attn = cls_attention.float()
     attn_norm = _normalize_on_mask(attn, token_mask)
     h, w = _grid_hw(num_visual_tokens, flashvid_config)
-    radius = max(0, int(getattr(flashvid_config, "graft_temporal_radius", 1) or 1))
-    topk = max(1, int(getattr(flashvid_config, "graft_temporal_topk", 3) or 3))
-    temporal_skip = max(1, int(getattr(flashvid_config, "graft_temporal_skip", 1) or 1))
+    radius = max(0, _cfg_int(flashvid_config, "graft_temporal_radius", 1))
+    topk = max(1, _cfg_int(flashvid_config, "graft_temporal_topk", 3))
+    global_topk = max(0, _cfg_int(flashvid_config, "graft_global_topk", topk))
+    temporal_skip = max(1, _cfg_int(flashvid_config, "graft_temporal_skip", 1))
     neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius, device)
+
+    frame_embeds: list[torch.Tensor] = []
+    for frame_idx in range(num_frames):
+        valid = token_mask[frame_idx]
+        if bool(valid.any().item()):
+            frame_embeds.append(normed[frame_idx, valid].float().mean(dim=0))
+        else:
+            frame_embeds.append(normed[frame_idx].float().mean(dim=0))
+    frame_embeds_t = F.normalize(torch.stack(frame_embeds, dim=0), p=2, dim=-1, eps=1e-6)
 
     novelty = torch.ones((num_frames, num_visual_tokens), dtype=torch.float32, device=device)
     for lag in range(1, temporal_skip + 1):
@@ -251,6 +308,13 @@ def graft_spatiotemporal_compression(
             sims = torch.sum(normed[prev_frame, neigh] * normed[frame_idx, cur_valid].unsqueeze(1), dim=-1)
             sims = sims.masked_fill(~valid, -1.0)
             max_sim = sims.max(dim=1).values
+            prev_valid = torch.where(token_mask[prev_frame])[0]
+            if global_topk > 0 and prev_valid.numel() > 0:
+                global_sims = torch.matmul(
+                    normed[frame_idx, cur_valid].float(),
+                    normed[prev_frame, prev_valid].float().transpose(0, 1),
+                )
+                max_sim = torch.maximum(max_sim, global_sims.max(dim=1).values)
             cur_novelty = (1.0 - max_sim).clamp(0.0, 2.0) * 0.5
             novelty[frame_idx, cur_valid] = torch.minimum(novelty[frame_idx, cur_valid], cur_novelty)
     novelty_norm = _normalize_on_mask(novelty, token_mask)
@@ -261,52 +325,92 @@ def graft_spatiotemporal_compression(
     protection_cpu = protection.detach().float().cpu().tolist()
 
     protected = torch.zeros(num_nodes, dtype=torch.bool, device=device)
-    anchor_ratio = min(max(float(getattr(flashvid_config, "graft_anchor_ratio", 0.65) or 0.65), 0.0), 0.95)
-    protect_count = min(num_nodes, int(math.ceil(target_components * anchor_ratio)))
-    if protect_count > 0:
-        protected[torch.topk(protection, k=protect_count, largest=True).indices] = True
+    anchor_ratio = min(max(_cfg_float(flashvid_config, "graft_anchor_ratio", 0.65), 0.0), 0.95)
+    protect_budget = min(num_nodes, int(math.ceil(target_components * anchor_ratio)))
+    valid_frames = [frame_idx for frame_idx in range(num_frames) if bool(token_mask[frame_idx].any().item())]
+    used_protect = 0
+    if protect_budget > 0 and valid_frames:
+        base_budget = protect_budget // len(valid_frames)
+        extra_budget = protect_budget % len(valid_frames)
+        for offset, frame_idx in enumerate(valid_frames):
+            frame_budget = base_budget + (1 if offset < extra_budget else 0)
+            if frame_budget <= 0:
+                continue
+            frame_nodes = node_id[frame_idx, token_mask[frame_idx]]
+            frame_nodes = frame_nodes[frame_nodes >= 0]
+            if frame_nodes.numel() == 0:
+                continue
+            k = min(int(frame_nodes.numel()), frame_budget)
+            local_scores = protection[frame_nodes]
+            chosen = frame_nodes[torch.topk(local_scores, k=k, largest=True).indices]
+            protected[chosen] = True
+            used_protect += int(chosen.numel())
+        if used_protect < protect_budget:
+            remaining = torch.where(~protected)[0]
+            if remaining.numel() > 0:
+                k = min(int(remaining.numel()), protect_budget - used_protect)
+                chosen = remaining[torch.topk(protection[remaining], k=k, largest=True).indices]
+                protected[chosen] = True
     protected_cpu = protected.detach().cpu().tolist()
 
-    edge_threshold = float(getattr(flashvid_config, "graft_edge_threshold", 0.80) or 0.80)
+    edge_threshold = _cfg_float(flashvid_config, "graft_edge_threshold", 0.80)
     if edge_threshold <= 0.0:
         edge_threshold = float(temporal_threshold)
     mutual_knn = _bool_config(flashvid_config, "graft_mutual_knn", True)
     one_token_per_frame = _bool_config(flashvid_config, "graft_one_token_per_frame", True)
-    component_radius_eps = max(0.0, float(getattr(flashvid_config, "graft_component_radius_eps", 0.12) or 0.12))
-    split_radius_eps = max(component_radius_eps, float(getattr(flashvid_config, "graft_split_radius_eps", 0.20) or 0.20))
-    parent_capacity = max(1, int(getattr(flashvid_config, "graft_parent_capacity", 1) or 1))
-    spatial_penalty = max(0.0, float(getattr(flashvid_config, "graft_spatial_penalty", 0.10) or 0.10))
-    importance_penalty = max(0.0, float(getattr(flashvid_config, "graft_importance_penalty", 0.05) or 0.05))
-    hub_penalty = max(0.0, float(getattr(flashvid_config, "graft_hub_penalty", 0.05) or 0.05))
+    component_radius_eps = max(0.0, _cfg_float(flashvid_config, "graft_component_radius_eps", 0.12))
+    split_radius_eps = max(component_radius_eps, _cfg_float(flashvid_config, "graft_split_radius_eps", 0.20))
+    parent_capacity = max(1, _cfg_int(flashvid_config, "graft_parent_capacity", 1))
+    spatial_penalty = max(0.0, _cfg_float(flashvid_config, "graft_spatial_penalty", 0.10))
+    importance_penalty = max(0.0, _cfg_float(flashvid_config, "graft_importance_penalty", 0.05))
+    hub_penalty = max(0.0, _cfg_float(flashvid_config, "graft_hub_penalty", 0.05))
+    adaptive_aggregation = _bool_config(flashvid_config, "graft_adaptive_aggregation", True)
+    scene_threshold = max(0.0, _cfg_float(flashvid_config, "graft_scene_threshold", 0.0))
+    min_tokens_per_frame = max(0, _cfg_int(flashvid_config, "graft_min_tokens_per_frame", 0))
+    budget_correction = _bool_config(flashvid_config, "graft_budget_correction", True)
+    union_radius_eps = split_radius_eps if adaptive_aggregation else component_radius_eps
 
     raw_edges: list[tuple[float, int, int, float, float, float]] = []
     mutual_rejected = 0
     for lag in range(1, temporal_skip + 1):
         for frame_idx in range(lag, num_frames):
             prev_frame = frame_idx - lag
-            cur_valid = torch.where(token_mask[frame_idx])[0]
-            if cur_valid.numel() == 0:
+            if scene_threshold > 0.0:
+                scene_sim = float(torch.sum(frame_embeds_t[frame_idx] * frame_embeds_t[prev_frame]).item())
+                if scene_sim < scene_threshold:
+                    continue
+            forward_pairs = _collect_candidate_pairs(
+                normed,
+                token_mask,
+                node_id,
+                neighbor_idx,
+                neighbor_valid,
+                frame_idx,
+                prev_frame,
+                topk,
+                global_topk,
+            )
+            if not forward_pairs:
                 continue
             reverse_pairs = (
-                _reverse_mutual_pairs(normed, token_mask, node_id, neighbor_idx, neighbor_valid, prev_frame, frame_idx, topk)
+                _collect_candidate_pairs(
+                    normed,
+                    token_mask,
+                    node_id,
+                    neighbor_idx,
+                    neighbor_valid,
+                    prev_frame,
+                    frame_idx,
+                    topk,
+                    global_topk,
+                )
                 if mutual_knn
-                else set()
+                else {}
             )
-            neigh = neighbor_idx[cur_valid]
-            valid = neighbor_valid[cur_valid] & token_mask[prev_frame, neigh]
-            sims = torch.sum(normed[prev_frame, neigh] * normed[frame_idx, cur_valid].unsqueeze(1), dim=-1)
-            sims = sims.masked_fill(~valid, -1.0)
-            k = min(topk, int(sims.shape[1]))
-            if k <= 0:
-                continue
-            vals, ids = torch.topk(sims, k=k, dim=1, largest=True)
-            cur_nodes = node_id[frame_idx, cur_valid].unsqueeze(1).expand_as(vals)
-            prev_nodes = node_id[prev_frame, neigh.gather(1, ids)]
-            edge_valid = (vals >= edge_threshold) & (cur_nodes >= 0) & (prev_nodes >= 0)
-            for sim, src, dst in zip(vals[edge_valid].detach().cpu().tolist(), cur_nodes[edge_valid].detach().cpu().tolist(), prev_nodes[edge_valid].detach().cpu().tolist()):
-                src_i = int(src)
-                dst_i = int(dst)
-                if mutual_knn and (src_i, dst_i) not in reverse_pairs:
+            for (src_i, dst_i), sim in forward_pairs.items():
+                if sim < edge_threshold:
+                    continue
+                if mutual_knn and (dst_i, src_i) not in reverse_pairs:
                     mutual_rejected += 1
                     continue
                 src_row, src_col = divmod(node_tokens[src_i], w)
@@ -358,7 +462,7 @@ def graft_spatiotemporal_compression(
             same_frame_rejected += 1
             continue
         merged_members = members[src_root] + members[dst_root]
-        if _component_radius(node_features, merged_members) > component_radius_eps:
+        if _component_radius(node_features, merged_members) > union_radius_eps:
             radius_rejected += 1
             continue
         if size[src_root] < size[dst_root]:
@@ -378,36 +482,116 @@ def graft_spatiotemporal_compression(
 
     representative_mode = str(getattr(flashvid_config, "graph_merge_representative", "medoid") or "medoid").strip().lower()
     position_mode = str(getattr(flashvid_config, "graph_representative_position", "protection") or "protection").strip().lower()
-    adaptive_aggregation = _bool_config(flashvid_config, "graft_adaptive_aggregation", True)
-    out_tokens_by_frame: list[list[torch.Tensor]] = [[] for _ in range(num_frames)]
-    out_indices_by_frame: list[list[int]] = [[] for _ in range(num_frames)]
+    entries: list[dict[str, object]] = []
     radii: list[float] = []
 
-    def emit(part: list[int]) -> None:
+    def emit(part: list[int], feature_mode: str | None = None) -> None:
         if not part:
             return
-        if representative_mode in ("weighted_mean", "attn_mean", "protection_mean"):
+        mode = feature_mode or representative_mode
+        if mode in ("weighted_mean", "attn_mean", "protection_mean"):
             feature = _weighted_mean_feature(node_raw_features, part, protection_cpu)
             pos_node = _choose_position_node(part, node_frames, node_tokens, protection_cpu, w, position_mode)
-        elif representative_mode == "mean":
+        elif mode == "mean":
             feature = _mean_feature(node_raw_features, part)
             pos_node = _choose_position_node(part, node_frames, node_tokens, protection_cpu, w, position_mode)
         else:
             pos_node = _medoid_node(node_features, part)
             feature = node_raw_features[pos_node]
-        out_tokens_by_frame[node_frames[pos_node]].append(feature)
-        out_indices_by_frame[node_frames[pos_node]].append(node_tokens[pos_node])
+        entries.append(
+            {
+                "frame": node_frames[pos_node],
+                "token": node_tokens[pos_node],
+                "feature": feature,
+                "node": pos_node,
+                "score": max(float(protection_cpu[node]) for node in part),
+            }
+        )
 
     for comp_members in components:
         comp_members = sorted(comp_members, key=lambda node: (node_frames[node], node_tokens[node]))
         radius_value = _component_radius(node_features, comp_members)
         radii.append(radius_value)
-        if adaptive_aggregation and radius_value >= split_radius_eps and len(comp_members) >= 2:
+        if adaptive_aggregation and radius_value <= component_radius_eps:
+            safe_mode = "weighted_mean" if representative_mode == "medoid" else representative_mode
+            emit(comp_members, safe_mode)
+        elif adaptive_aggregation and radius_value <= split_radius_eps and len(comp_members) >= 2:
             midpoint = len(comp_members) // 2
-            emit(comp_members[:midpoint])
-            emit(comp_members[midpoint:])
+            emit(comp_members[:midpoint], "medoid")
+            emit(comp_members[midpoint:], "medoid")
         else:
             emit(comp_members)
+
+    if budget_correction and entries:
+        target_total = min(max(1, target_components), num_nodes)
+        min_pf = min_tokens_per_frame
+        if min_pf * num_frames > target_total:
+            min_pf = max(0, target_total // max(1, num_frames))
+
+        def entry_key(entry: dict[str, object]) -> tuple[int, int]:
+            return int(entry["frame"]), int(entry["token"])
+
+        if len(entries) > target_total:
+            frame_sorted: dict[int, list[dict[str, object]]] = {}
+            for entry in entries:
+                frame_sorted.setdefault(int(entry["frame"]), []).append(entry)
+            for frame_entries in frame_sorted.values():
+                frame_entries.sort(key=lambda item: (-float(item["score"]), int(item["token"])))
+
+            selected: list[dict[str, object]] = []
+            selected_keys: set[tuple[int, int]] = set()
+            if min_pf > 0:
+                for frame_idx in range(num_frames):
+                    for entry in frame_sorted.get(frame_idx, [])[:min_pf]:
+                        key = entry_key(entry)
+                        if key not in selected_keys and len(selected) < target_total:
+                            selected.append(entry)
+                            selected_keys.add(key)
+            for entry in sorted(entries, key=lambda item: (-float(item["score"]), int(item["frame"]), int(item["token"]))):
+                key = entry_key(entry)
+                if key in selected_keys:
+                    continue
+                selected.append(entry)
+                selected_keys.add(key)
+                if len(selected) >= target_total:
+                    break
+            entries = selected
+
+        if len(entries) < target_total:
+            used_keys = {entry_key(entry) for entry in entries}
+
+            def add_rescue(node: int) -> bool:
+                key = (node_frames[node], node_tokens[node])
+                if key in used_keys:
+                    return False
+                entries.append(
+                    {
+                        "frame": node_frames[node],
+                        "token": node_tokens[node],
+                        "feature": node_raw_features[node],
+                        "node": node,
+                        "score": float(protection_cpu[node]),
+                    }
+                )
+                used_keys.add(key)
+                return True
+
+            if min_pf > 0:
+                for frame_idx in range(num_frames):
+                    while len(entries) < target_total and sum(1 for entry in entries if int(entry["frame"]) == frame_idx) < min_pf:
+                        frame_nodes = [node for node in range(num_nodes) if node_frames[node] == frame_idx and (node_frames[node], node_tokens[node]) not in used_keys]
+                        if not frame_nodes:
+                            break
+                        frame_nodes.sort(key=lambda node: (-float(protection_cpu[node]), node_tokens[node]))
+                        if not add_rescue(frame_nodes[0]):
+                            break
+            if len(entries) < target_total:
+                rescue_nodes = [node for node in range(num_nodes) if (node_frames[node], node_tokens[node]) not in used_keys]
+                rescue_nodes.sort(key=lambda node: (-float(protection_cpu[node]), node_frames[node], node_tokens[node]))
+                for node in rescue_nodes:
+                    if len(entries) >= target_total:
+                        break
+                    add_rescue(node)
 
     component_sizes = [len(comp) for comp in components]
     _accumulate_graft_metrics(
@@ -424,6 +608,12 @@ def graft_spatiotemporal_compression(
 
     token_lists: list[torch.Tensor] = []
     index_lists: list[torch.Tensor] = []
+    out_tokens_by_frame: list[list[torch.Tensor]] = [[] for _ in range(num_frames)]
+    out_indices_by_frame: list[list[int]] = [[] for _ in range(num_frames)]
+    for entry in sorted(entries, key=lambda item: (int(item["frame"]), int(item["token"]))):
+        frame_idx = int(entry["frame"])
+        out_tokens_by_frame[frame_idx].append(entry["feature"])  # type: ignore[arg-type]
+        out_indices_by_frame[frame_idx].append(int(entry["token"]))
     for frame_idx in range(num_frames):
         if out_tokens_by_frame[frame_idx]:
             frame_tokens = torch.stack(out_tokens_by_frame[frame_idx], dim=0).to(dtype=video_features.dtype)

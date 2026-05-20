@@ -248,6 +248,8 @@ def _build_command(
                     str(args.graft_temporal_radius),
                     "--graft_temporal_skip",
                     str(args.graft_temporal_skip),
+                    "--graft_global_topk",
+                    str(args.graft_global_topk),
                     "--graft_anchor_ratio",
                     str(args.graft_anchor_ratio),
                     "--graft_edge_threshold",
@@ -264,11 +266,16 @@ def _build_command(
                     str(args.graft_importance_penalty),
                     "--graft_hub_penalty",
                     str(args.graft_hub_penalty),
+                    "--graft_scene_threshold",
+                    str(args.graft_scene_threshold),
+                    "--graft_min_tokens_per_frame",
+                    str(args.graft_min_tokens_per_frame),
                 ]
             )
             cmd.append("--graft_mutual_knn" if args.graft_mutual_knn else "--no-graft_mutual_knn")
             cmd.append("--graft_one_token_per_frame" if args.graft_one_token_per_frame else "--no-graft_one_token_per_frame")
             cmd.append("--graft_adaptive_aggregation" if args.graft_adaptive_aggregation else "--no-graft_adaptive_aggregation")
+            cmd.append("--graft_budget_correction" if args.graft_budget_correction else "--no-graft_budget_correction")
         if args.graph_skip_spatial_merge_when_capped:
             cmd.append("--graph_skip_spatial_merge_when_capped")
         else:
@@ -459,6 +466,7 @@ def main() -> None:
     parser.add_argument("--graft_temporal_topk", type=int, default=3)
     parser.add_argument("--graft_temporal_radius", type=int, default=1)
     parser.add_argument("--graft_temporal_skip", type=int, default=1)
+    parser.add_argument("--graft_global_topk", type=int, default=3)
     parser.add_argument("--graft_anchor_ratio", type=float, default=0.65)
     parser.add_argument("--graft_edge_threshold", type=float, default=0.80)
     parser.add_argument("--graft_component_radius_eps", type=float, default=0.12)
@@ -470,6 +478,9 @@ def main() -> None:
     parser.add_argument("--graft_importance_penalty", type=float, default=0.05)
     parser.add_argument("--graft_hub_penalty", type=float, default=0.05)
     parser.add_argument("--graft_adaptive_aggregation", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--graft_scene_threshold", type=float, default=0.0)
+    parser.add_argument("--graft_min_tokens_per_frame", type=int, default=0)
+    parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--token_selection_method", default="attn_div_stable")
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_stable")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=22)
