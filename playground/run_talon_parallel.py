@@ -419,6 +419,8 @@ def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.graft_min_tokens_per_frame),
             "--graft_budget_correction",
             _str_bool(args.graft_budget_correction),
+            "--graft_budget_diversity_weight",
+            str(args.graft_budget_diversity_weight),
         ]
     )
     if args.graft_anchor_ratio is not None:
@@ -735,6 +737,7 @@ def main() -> None:
     parser.add_argument("--graft_scene_threshold", type=float, default=0.0)
     parser.add_argument("--graft_min_tokens_per_frame", type=int, default=0)
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

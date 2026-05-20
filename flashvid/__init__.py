@@ -128,6 +128,7 @@ def flashvid(
     graft_scene_threshold: float = 0.0,
     graft_min_tokens_per_frame: int = 0,
     graft_budget_correction: bool = True,
+    graft_budget_diversity_weight: float = 0.35,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -543,6 +544,7 @@ def flashvid(
         graft_scene_threshold=graft_scene_threshold,
         graft_min_tokens_per_frame=graft_min_tokens_per_frame,
         graft_budget_correction=graft_budget_correction,
+        graft_budget_diversity_weight=graft_budget_diversity_weight,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

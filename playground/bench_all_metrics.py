@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import gc
 import json
 import os
@@ -29,6 +29,7 @@ GRAFT_METRIC_KEYS = [
     "graft_global_topk",
     "graft_anchor_ratio",
     "graft_input_is_residual",
+    "graft_budget_diversity_weight",
     "graft_component_count",
     "graft_avg_component_size",
     "graft_max_component_size",
@@ -124,6 +125,7 @@ class BenchmarkArgs:
     graft_scene_threshold: float = field(default=0.0)
     graft_min_tokens_per_frame: int = field(default=0)
     graft_budget_correction: bool = field(default=True)
+    graft_budget_diversity_weight: float = field(default=0.35)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1787,6 +1789,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_scene_threshold=args.graft_scene_threshold,
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
+        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2035,6 +2038,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_scene_threshold=args.graft_scene_threshold,
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
+        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2101,6 +2105,7 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_scene_threshold=args.graft_scene_threshold,
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
+        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2167,6 +2172,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_scene_threshold=args.graft_scene_threshold,
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
+        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2431,7 +2437,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"spatial_pen={args.graft_spatial_penalty:.2f}, imp_pen={args.graft_importance_penalty:.2f}, "
             f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}, "
             f"scene_thr={args.graft_scene_threshold:.2f}, minpf={args.graft_min_tokens_per_frame}, "
-            f"budget_fix={args.graft_budget_correction}"
+            f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}"
         )
     print(SEPARATOR)
 
@@ -2487,6 +2493,7 @@ def _print_summary(summary: dict[str, Any]):
         graft_entries_after_mean = phase.get("graft_entries_after_budget", {}).get("mean")
         graft_anchor_mean = phase.get("graft_anchor_ratio", {}).get("mean")
         graft_residual_mean = phase.get("graft_input_is_residual", {}).get("mean")
+        graft_budget_div_mean = phase.get("graft_budget_diversity_weight", {}).get("mean")
         graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
         graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
         graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
@@ -2563,8 +2570,8 @@ def _print_summary(summary: dict[str, Any]):
                 )
             if graft_anchor_mean is not None:
                 print(
-                    "  graft anchor/residual-input mean: "
-                    f"{graft_anchor_mean:.3f}/{(graft_residual_mean or 0.0):.2f}"
+                    "  graft anchor/residual-input/budget-div mean: "
+                    f"{graft_anchor_mean:.3f}/{(graft_residual_mean or 0.0):.2f}/{(graft_budget_div_mean or 0.0):.2f}"
                 )
             print(
                 "  graft components avg/max/radius mean: "
@@ -2809,7 +2816,8 @@ def run(args: BenchmarkArgs):
             f"edge_thr={args.graft_edge_threshold:.2f}, eps={args.graft_component_radius_eps:.3f}, "
             f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
             f"one_frame={args.graft_one_token_per_frame}, scene_thr={args.graft_scene_threshold:.2f}, "
-            f"minpf={args.graft_min_tokens_per_frame}, budget_fix={args.graft_budget_correction}"
+            f"minpf={args.graft_min_tokens_per_frame}, budget_fix={args.graft_budget_correction}, "
+            f"budget_div={args.graft_budget_diversity_weight:.2f}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
@@ -2939,5 +2947,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

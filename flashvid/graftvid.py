@@ -83,6 +83,7 @@ def _reset_graft_metrics(config: FlashVidConfig) -> None:
         "last_graft_global_topk": 0.0,
         "last_graft_anchor_ratio": None,
         "last_graft_input_is_residual": 1.0,
+        "last_graft_budget_diversity_weight": 0.0,
         "last_graft_component_count": 0.0,
         "last_graft_avg_component_size": None,
         "last_graft_max_component_size": 0.0,
@@ -381,6 +382,7 @@ def graft_spatiotemporal_compression(
     scene_threshold = max(0.0, _cfg_float(flashvid_config, "graft_scene_threshold", 0.0))
     min_tokens_per_frame = max(0, _cfg_int(flashvid_config, "graft_min_tokens_per_frame", 0))
     budget_correction = _bool_config(flashvid_config, "graft_budget_correction", True)
+    budget_diversity_weight = max(0.0, _cfg_float(flashvid_config, "graft_budget_diversity_weight", 0.35))
     union_radius_eps = split_radius_eps if adaptive_aggregation else component_radius_eps
 
     raw_edges: list[tuple[float, int, int, float, float, float]] = []
@@ -545,6 +547,50 @@ def graft_spatiotemporal_compression(
         def entry_key(entry: dict[str, object]) -> tuple[int, int]:
             return int(entry["frame"]), int(entry["token"])
 
+        def append_diverse_entries(
+            selected: list[dict[str, object]],
+            selected_keys: set[tuple[int, int]],
+            candidates: list[dict[str, object]],
+            target: int,
+        ) -> None:
+            remaining = [entry for entry in candidates if entry_key(entry) not in selected_keys]
+            if not remaining:
+                return
+            if len(selected) >= target:
+                return
+
+            scores = torch.tensor(
+                [float(entry["score"]) for entry in remaining],
+                dtype=torch.float32,
+                device=device,
+            )
+            score_min = scores.min()
+            score_range = (scores.max() - score_min).clamp_min(1.0e-6)
+            scores = (scores - score_min) / score_range
+            feats = torch.stack([entry["feature"].detach().float() for entry in remaining], dim=0)  # type: ignore[union-attr]
+            feats = F.normalize(feats, p=2, dim=-1, eps=1.0e-6)
+            alive = torch.ones(len(remaining), dtype=torch.bool, device=device)
+
+            if selected:
+                selected_feats = torch.stack([entry["feature"].detach().float() for entry in selected], dim=0)  # type: ignore[union-attr]
+                selected_feats = F.normalize(selected_feats, p=2, dim=-1, eps=1.0e-6)
+                diversity = (1.0 - torch.matmul(feats, selected_feats.transpose(0, 1)).max(dim=1).values).clamp(0.0, 2.0) * 0.5
+            else:
+                diversity = torch.ones(len(remaining), dtype=torch.float32, device=device)
+
+            while len(selected) < target and bool(alive.any().item()):
+                values = scores + budget_diversity_weight * diversity
+                values = values.masked_fill(~alive, -1.0e9)
+                idx = int(torch.argmax(values).item())
+                entry = remaining[idx]
+                selected.append(entry)
+                selected_keys.add(entry_key(entry))
+                alive[idx] = False
+                if not bool(alive.any().item()):
+                    break
+                sim_to_new = torch.matmul(feats, feats[idx].unsqueeze(-1)).squeeze(-1)
+                diversity = torch.minimum(diversity, (1.0 - sim_to_new).clamp(0.0, 2.0) * 0.5)
+
         if len(entries) > target_total:
             frame_sorted: dict[int, list[dict[str, object]]] = {}
             for entry in entries:
@@ -561,14 +607,7 @@ def graft_spatiotemporal_compression(
                         if key not in selected_keys and len(selected) < target_total:
                             selected.append(entry)
                             selected_keys.add(key)
-            for entry in sorted(entries, key=lambda item: (-float(item["score"]), int(item["frame"]), int(item["token"]))):
-                key = entry_key(entry)
-                if key in selected_keys:
-                    continue
-                selected.append(entry)
-                selected_keys.add(key)
-                if len(selected) >= target_total:
-                    break
+            append_diverse_entries(selected, selected_keys, entries, target_total)
             entries = selected
 
         if len(entries) < target_total:
@@ -616,6 +655,7 @@ def graft_spatiotemporal_compression(
     setattr(flashvid_config, "last_graft_global_topk", float(global_topk))
     setattr(flashvid_config, "last_graft_anchor_ratio", float(anchor_ratio))
     setattr(flashvid_config, "last_graft_input_is_residual", float(bool(input_is_residual)))
+    setattr(flashvid_config, "last_graft_budget_diversity_weight", float(budget_diversity_weight))
 
     component_sizes = [len(comp) for comp in components]
     _accumulate_graft_metrics(
