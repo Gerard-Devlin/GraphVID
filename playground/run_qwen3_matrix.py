@@ -214,6 +214,12 @@ def _build_command(
                 str(args.graph_merge_target_ratio),
                 "--graph_merge_representative",
                 args.graph_merge_representative,
+                "--graph_representative_blend_alpha",
+                str(args.graph_representative_blend_alpha),
+                "--graph_spatial_spread_guard_radius",
+                str(args.graph_spatial_spread_guard_radius),
+                "--graph_temporal_span_guard",
+                str(args.graph_temporal_span_guard),
                 "--graph_protection_attn_weight",
                 str(args.graph_protection_attn_weight),
                 "--graph_protection_novelty_weight",
@@ -407,7 +413,14 @@ def main() -> None:
     parser.add_argument("--graph_temporal_skip", type=int, default=1)
     parser.add_argument("--graph_merge_protect_ratio", type=float, default=0.15)
     parser.add_argument("--graph_merge_target_ratio", type=float, default=1.00)
-    parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean", "weighted_mean"])
+    parser.add_argument(
+        "--graph_merge_representative",
+        default="medoid",
+        choices=["medoid", "mean", "weighted_mean", "hybrid_anchor", "anchor_blend", "hybrid", "weighted_anchor"],
+    )
+    parser.add_argument("--graph_representative_blend_alpha", type=float, default=0.20)
+    parser.add_argument("--graph_spatial_spread_guard_radius", type=int, default=0)
+    parser.add_argument("--graph_temporal_span_guard", type=int, default=0)
     parser.add_argument("--graph_protection_attn_weight", type=float, default=0.70)
     parser.add_argument("--graph_protection_novelty_weight", type=float, default=0.30)
     parser.add_argument("--graph_protection_detail_weight", type=float, default=0.0)
