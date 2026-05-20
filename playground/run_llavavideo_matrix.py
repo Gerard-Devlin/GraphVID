@@ -30,6 +30,27 @@ def _parse_rates(text: str) -> list[tuple[str, float]]:
     return rates
 
 
+def _parse_methods(text: str) -> set[str]:
+    aliases = {
+        "flash": "flashvid",
+        "flashvid": "flashvid",
+        "graph": "graphvid",
+        "graphvid": "graphvid",
+    }
+    methods: set[str] = set()
+    for part in str(text).split(","):
+        item = part.strip().lower()
+        if not item:
+            continue
+        if item not in aliases:
+            allowed = ", ".join(sorted(set(aliases)))
+            raise ValueError(f"unknown method {item!r}; allowed: {allowed}")
+        methods.add(aliases[item])
+    if not methods:
+        raise ValueError("no methods provided")
+    return methods
+
+
 def _count_jsonl(path: Path) -> int:
     count = 0
     with path.open("r", encoding="utf-8") as f:
@@ -104,7 +125,13 @@ def _fmt(value: float | None, digits: int = 2) -> str:
     return f"{value:.{digits}f}"
 
 
-def _build_command(args: argparse.Namespace, rate_label: str, ratio: float, total_limit: int) -> tuple[list[str], Path]:
+def _build_command(
+    args: argparse.Namespace,
+    rate_label: str,
+    ratio: float,
+    total_limit: int,
+    methods: set[str],
+) -> tuple[list[str], Path]:
     run_tag = f"{args.tag}_r{rate_label}_videomme{total_limit}"
     summary_path = REPO_ROOT / "logs" / "efficiency" / "parallel" / run_tag / f"{run_tag}_summary.json"
     cmd = [
@@ -140,8 +167,6 @@ def _build_command(args: argparse.Namespace, rate_label: str, ratio: float, tota
         "--tag",
         run_tag,
         "--no-run_ours",
-        "--run_flashvid",
-        "--run_graphvid",
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -171,6 +196,8 @@ def _build_command(args: argparse.Namespace, rate_label: str, ratio: float, tota
         "--graph_final_frame_floor_ratio",
         str(args.graph_final_frame_floor_ratio),
     ]
+    cmd.append("--run_flashvid" if "flashvid" in methods else "--no-run_flashvid")
+    cmd.append("--run_graphvid" if "graphvid" in methods else "--no-run_graphvid")
     if args.graph_skip_spatial_merge_when_capped:
         cmd.append("--graph_skip_spatial_merge_when_capped")
     else:
@@ -282,6 +309,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")
@@ -319,8 +347,9 @@ def main() -> None:
     total_limit = int(args.total_limit) if int(args.total_limit) > 0 else _count_jsonl(dataset_path)
 
     rows: list[dict[str, Any]] = []
+    methods = _parse_methods(args.methods)
     for rate_label, ratio in _parse_rates(args.rates):
-        cmd, summary_path = _build_command(args, rate_label, ratio, total_limit)
+        cmd, summary_path = _build_command(args, rate_label, ratio, total_limit, methods)
         print("[run]", " ".join(shlex.quote(x) for x in cmd))
         if not args.dry_run and not (args.resume and summary_path.exists()):
             subprocess.run(cmd, cwd=REPO_ROOT, check=True)
