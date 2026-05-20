@@ -1,3 +1,5 @@
+from typing import Optional
+
 from torch import nn
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,
@@ -111,7 +113,8 @@ def flashvid(
     graft_temporal_radius: int = 1,
     graft_temporal_skip: int = 1,
     graft_global_topk: int = 3,
-    graft_anchor_ratio: float = 0.65,
+    graft_input_is_residual: bool = True,
+    graft_anchor_ratio: Optional[float] = None,
     graft_edge_threshold: float = 0.80,
     graft_component_radius_eps: float = 0.12,
     graft_split_radius_eps: float = 0.20,
@@ -525,6 +528,7 @@ def flashvid(
         graft_temporal_radius=graft_temporal_radius,
         graft_temporal_skip=graft_temporal_skip,
         graft_global_topk=graft_global_topk,
+        graft_input_is_residual=graft_input_is_residual,
         graft_anchor_ratio=graft_anchor_ratio,
         graft_edge_threshold=graft_edge_threshold,
         graft_component_radius_eps=graft_component_radius_eps,

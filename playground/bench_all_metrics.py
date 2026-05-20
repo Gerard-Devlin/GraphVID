@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import gc
 import json
 import os
@@ -20,6 +20,15 @@ warnings.filterwarnings("ignore")
 
 SEPARATOR = "=" * 72
 GRAFT_METRIC_KEYS = [
+    "graft_num_nodes",
+    "graft_target_components",
+    "graft_protected_count",
+    "graft_entries_before_budget",
+    "graft_entries_after_budget",
+    "graft_scene_threshold",
+    "graft_global_topk",
+    "graft_anchor_ratio",
+    "graft_input_is_residual",
     "graft_component_count",
     "graft_avg_component_size",
     "graft_max_component_size",
@@ -100,7 +109,8 @@ class BenchmarkArgs:
     graft_temporal_radius: int = field(default=1)
     graft_temporal_skip: int = field(default=1)
     graft_global_topk: int = field(default=3)
-    graft_anchor_ratio: float = field(default=0.65)
+    graft_input_is_residual: bool = field(default=True)
+    graft_anchor_ratio: Optional[float] = field(default=None)
     graft_edge_threshold: float = field(default=0.80)
     graft_component_radius_eps: float = field(default=0.12)
     graft_split_radius_eps: float = field(default=0.20)
@@ -1762,6 +1772,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
         graft_global_topk=args.graft_global_topk,
+        graft_input_is_residual=args.graft_input_is_residual,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2009,6 +2020,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
         graft_global_topk=args.graft_global_topk,
+        graft_input_is_residual=args.graft_input_is_residual,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2074,6 +2086,7 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
         graft_global_topk=args.graft_global_topk,
+        graft_input_is_residual=args.graft_input_is_residual,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2139,6 +2152,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_temporal_radius=args.graft_temporal_radius,
         graft_temporal_skip=args.graft_temporal_skip,
         graft_global_topk=args.graft_global_topk,
+        graft_input_is_residual=args.graft_input_is_residual,
         graft_anchor_ratio=args.graft_anchor_ratio,
         graft_edge_threshold=args.graft_edge_threshold,
         graft_component_radius_eps=args.graft_component_radius_eps,
@@ -2409,7 +2423,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
             "GRAFT-VID config: "
             f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
             f"skip={args.graft_temporal_skip}, global_topk={args.graft_global_topk}, "
-            f"anchor={args.graft_anchor_ratio:.2f}, "
+            f"residual_input={args.graft_input_is_residual}, "
+            f"anchor={(args.graft_anchor_ratio if args.graft_anchor_ratio is not None else (0.15 if args.graft_input_is_residual else 0.65)):.2f}, "
             f"edge_thr={args.graft_edge_threshold:.2f}, radius_eps={args.graft_component_radius_eps:.3f}, "
             f"split_eps={args.graft_split_radius_eps:.3f}, capacity={args.graft_parent_capacity}, "
             f"mutual={args.graft_mutual_knn}, one_frame={args.graft_one_token_per_frame}, "
@@ -2465,6 +2480,13 @@ def _print_summary(summary: dict[str, Any]):
         talon_core_grid_h_mean = phase.get("talon_core_grid_h", {}).get("mean")
         talon_core_grid_w_mean = phase.get("talon_core_grid_w", {}).get("mean")
         graft_count_mean = phase.get("graft_component_count", {}).get("mean")
+        graft_num_nodes_mean = phase.get("graft_num_nodes", {}).get("mean")
+        graft_target_mean = phase.get("graft_target_components", {}).get("mean")
+        graft_protected_mean = phase.get("graft_protected_count", {}).get("mean")
+        graft_entries_before_mean = phase.get("graft_entries_before_budget", {}).get("mean")
+        graft_entries_after_mean = phase.get("graft_entries_after_budget", {}).get("mean")
+        graft_anchor_mean = phase.get("graft_anchor_ratio", {}).get("mean")
+        graft_residual_mean = phase.get("graft_input_is_residual", {}).get("mean")
         graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
         graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
         graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
@@ -2532,6 +2554,18 @@ def _print_summary(summary: dict[str, Any]):
         if talon_core_grid_h_mean is not None:
             print(f"  talon-core grid H/W mean: {talon_core_grid_h_mean:.2f}/{(talon_core_grid_w_mean or 0.0):.2f}")
         if graft_count_mean is not None:
+            if graft_num_nodes_mean is not None:
+                print(
+                    "  graft nodes/target/protected/entries pre-post mean: "
+                    f"{graft_num_nodes_mean:.2f}/{(graft_target_mean or 0.0):.2f}/"
+                    f"{(graft_protected_mean or 0.0):.2f}/{(graft_entries_before_mean or 0.0):.2f}/"
+                    f"{(graft_entries_after_mean or 0.0):.2f}"
+                )
+            if graft_anchor_mean is not None:
+                print(
+                    "  graft anchor/residual-input mean: "
+                    f"{graft_anchor_mean:.3f}/{(graft_residual_mean or 0.0):.2f}"
+                )
             print(
                 "  graft components avg/max/radius mean: "
                 f"{graft_count_mean:.2f}/{(graft_size_mean or 0.0):.2f}/{(graft_max_size_mean or 0.0):.2f}/"
@@ -2770,7 +2804,8 @@ def run(args: BenchmarkArgs):
             "[graftvid-active] "
             f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
             f"skip={args.graft_temporal_skip}, global_topk={args.graft_global_topk}, "
-            f"anchor={args.graft_anchor_ratio:.2f}, "
+            f"residual_input={args.graft_input_is_residual}, "
+            f"anchor={(args.graft_anchor_ratio if args.graft_anchor_ratio is not None else (0.15 if args.graft_input_is_residual else 0.65)):.2f}, "
             f"edge_thr={args.graft_edge_threshold:.2f}, eps={args.graft_component_radius_eps:.3f}, "
             f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
             f"one_frame={args.graft_one_token_per_frame}, scene_thr={args.graft_scene_threshold:.2f}, "
@@ -2904,3 +2939,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

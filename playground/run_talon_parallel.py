@@ -391,8 +391,8 @@ def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.graft_temporal_skip),
             "--graft_global_topk",
             str(args.graft_global_topk),
-            "--graft_anchor_ratio",
-            str(args.graft_anchor_ratio),
+            "--graft_input_is_residual",
+            _str_bool(args.graft_input_is_residual),
             "--graft_edge_threshold",
             str(args.graft_edge_threshold),
             "--graft_component_radius_eps",
@@ -421,6 +421,8 @@ def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             _str_bool(args.graft_budget_correction),
         ]
     )
+    if args.graft_anchor_ratio is not None:
+        cmd.extend(["--graft_anchor_ratio", str(args.graft_anchor_ratio)])
 
 
 def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path) -> list[dict[str, object]]:
@@ -718,7 +720,8 @@ def main() -> None:
     parser.add_argument("--graft_temporal_radius", type=int, default=1)
     parser.add_argument("--graft_temporal_skip", type=int, default=1)
     parser.add_argument("--graft_global_topk", type=int, default=3)
-    parser.add_argument("--graft_anchor_ratio", type=float, default=0.65)
+    parser.add_argument("--graft_input_is_residual", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--graft_anchor_ratio", type=float, default=None)
     parser.add_argument("--graft_edge_threshold", type=float, default=0.80)
     parser.add_argument("--graft_component_radius_eps", type=float, default=0.12)
     parser.add_argument("--graft_split_radius_eps", type=float, default=0.20)

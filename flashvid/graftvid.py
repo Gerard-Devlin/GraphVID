@@ -74,6 +74,15 @@ def _mean_feature(node_raw_features: torch.Tensor, members: list[int]) -> torch.
 
 def _reset_graft_metrics(config: FlashVidConfig) -> None:
     public_defaults = {
+        "last_graft_num_nodes": 0.0,
+        "last_graft_target_components": 0.0,
+        "last_graft_protected_count": 0.0,
+        "last_graft_entries_before_budget": 0.0,
+        "last_graft_entries_after_budget": 0.0,
+        "last_graft_scene_threshold": 0.0,
+        "last_graft_global_topk": 0.0,
+        "last_graft_anchor_ratio": None,
+        "last_graft_input_is_residual": 1.0,
         "last_graft_component_count": 0.0,
         "last_graft_avg_component_size": None,
         "last_graft_max_component_size": 0.0,
@@ -325,7 +334,9 @@ def graft_spatiotemporal_compression(
     protection_cpu = protection.detach().float().cpu().tolist()
 
     protected = torch.zeros(num_nodes, dtype=torch.bool, device=device)
-    anchor_ratio = min(max(_cfg_float(flashvid_config, "graft_anchor_ratio", 0.65), 0.0), 0.95)
+    input_is_residual = _bool_config(flashvid_config, "graft_input_is_residual", True)
+    default_anchor_ratio = 0.15 if input_is_residual else 0.65
+    anchor_ratio = min(max(_cfg_float(flashvid_config, "graft_anchor_ratio", default_anchor_ratio), 0.0), 0.95)
     protect_budget = min(num_nodes, int(math.ceil(target_components * anchor_ratio)))
     valid_frames = [frame_idx for frame_idx in range(num_frames) if bool(token_mask[frame_idx].any().item())]
     used_protect = 0
@@ -352,6 +363,8 @@ def graft_spatiotemporal_compression(
                 chosen = remaining[torch.topk(protection[remaining], k=k, largest=True).indices]
                 protected[chosen] = True
     protected_cpu = protected.detach().cpu().tolist()
+    merge_mask = token_mask.clone()
+    merge_mask[candidate_positions] = ~protected
 
     edge_threshold = _cfg_float(flashvid_config, "graft_edge_threshold", 0.80)
     if edge_threshold <= 0.0:
@@ -381,7 +394,7 @@ def graft_spatiotemporal_compression(
                     continue
             forward_pairs = _collect_candidate_pairs(
                 normed,
-                token_mask,
+                merge_mask,
                 node_id,
                 neighbor_idx,
                 neighbor_valid,
@@ -395,7 +408,7 @@ def graft_spatiotemporal_compression(
             reverse_pairs = (
                 _collect_candidate_pairs(
                     normed,
-                    token_mask,
+                    merge_mask,
                     node_id,
                     neighbor_idx,
                     neighbor_valid,
@@ -522,6 +535,7 @@ def graft_spatiotemporal_compression(
         else:
             emit(comp_members)
 
+    entries_before_budget_count = len(entries)
     if budget_correction and entries:
         target_total = min(max(1, target_components), num_nodes)
         min_pf = min_tokens_per_frame
@@ -592,6 +606,16 @@ def graft_spatiotemporal_compression(
                     if len(entries) >= target_total:
                         break
                     add_rescue(node)
+
+    setattr(flashvid_config, "last_graft_num_nodes", float(num_nodes))
+    setattr(flashvid_config, "last_graft_target_components", float(target_components))
+    setattr(flashvid_config, "last_graft_protected_count", float(int(protected.sum().item())))
+    setattr(flashvid_config, "last_graft_entries_before_budget", float(entries_before_budget_count))
+    setattr(flashvid_config, "last_graft_entries_after_budget", float(len(entries)))
+    setattr(flashvid_config, "last_graft_scene_threshold", float(scene_threshold))
+    setattr(flashvid_config, "last_graft_global_topk", float(global_topk))
+    setattr(flashvid_config, "last_graft_anchor_ratio", float(anchor_ratio))
+    setattr(flashvid_config, "last_graft_input_is_residual", float(bool(input_is_residual)))
 
     component_sizes = [len(comp) for comp in components]
     _accumulate_graft_metrics(
