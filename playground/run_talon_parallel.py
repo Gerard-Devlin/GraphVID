@@ -423,10 +423,30 @@ def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.graft_budget_diversity_weight),
             "--graft_score_preset",
             str(args.graft_score_preset),
+            "--graft_duration_aware",
+            _str_bool(args.graft_duration_aware),
         ]
     )
     if args.graft_anchor_ratio is not None:
         cmd.extend(["--graft_anchor_ratio", str(args.graft_anchor_ratio)])
+    optional_graft_overrides = (
+        "graft_medium_temporal_skip",
+        "graft_medium_global_topk",
+        "graft_medium_edge_threshold",
+        "graft_medium_split_radius_eps",
+        "graft_medium_spatial_penalty",
+        "graft_medium_scene_threshold",
+        "graft_long_temporal_skip",
+        "graft_long_global_topk",
+        "graft_long_edge_threshold",
+        "graft_long_split_radius_eps",
+        "graft_long_spatial_penalty",
+        "graft_long_scene_threshold",
+    )
+    for name in optional_graft_overrides:
+        value = getattr(args, name, None)
+        if value is not None:
+            cmd.extend([f"--{name}", str(value)])
 
 
 def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path) -> list[dict[str, object]]:
@@ -740,7 +760,20 @@ def main() -> None:
     parser.add_argument("--graft_min_tokens_per_frame", type=int, default=0)
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
-    parser.add_argument("--graft_score_preset", default="event_v2", choices=["base", "legacy", "event", "event_v1", "event_v2"])
+    parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
+    parser.add_argument("--graft_duration_aware", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--graft_medium_temporal_skip", type=int, default=None)
+    parser.add_argument("--graft_medium_global_topk", type=int, default=None)
+    parser.add_argument("--graft_medium_edge_threshold", type=float, default=None)
+    parser.add_argument("--graft_medium_split_radius_eps", type=float, default=None)
+    parser.add_argument("--graft_medium_spatial_penalty", type=float, default=None)
+    parser.add_argument("--graft_medium_scene_threshold", type=float, default=None)
+    parser.add_argument("--graft_long_temporal_skip", type=int, default=None)
+    parser.add_argument("--graft_long_global_topk", type=int, default=None)
+    parser.add_argument("--graft_long_edge_threshold", type=float, default=None)
+    parser.add_argument("--graft_long_split_radius_eps", type=float, default=None)
+    parser.add_argument("--graft_long_spatial_penalty", type=float, default=None)
+    parser.add_argument("--graft_long_scene_threshold", type=float, default=None)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

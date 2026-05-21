@@ -64,7 +64,20 @@ class FlashVidConfig:
     graft_min_tokens_per_frame: int = field(default=0)
     graft_budget_correction: bool = field(default=True)
     graft_budget_diversity_weight: float = field(default=0.35)
-    graft_score_preset: str = field(default="event_v2")  # base | event_v1 | event_v2
+    graft_score_preset: str = field(default="base")  # base | event_v1 | event_v2
+    graft_duration_aware: bool = field(default=False)
+    graft_medium_temporal_skip: Optional[int] = field(default=None)
+    graft_medium_global_topk: Optional[int] = field(default=None)
+    graft_medium_edge_threshold: Optional[float] = field(default=None)
+    graft_medium_split_radius_eps: Optional[float] = field(default=None)
+    graft_medium_spatial_penalty: Optional[float] = field(default=None)
+    graft_medium_scene_threshold: Optional[float] = field(default=None)
+    graft_long_temporal_skip: Optional[int] = field(default=None)
+    graft_long_global_topk: Optional[int] = field(default=None)
+    graft_long_edge_threshold: Optional[float] = field(default=None)
+    graft_long_split_radius_eps: Optional[float] = field(default=None)
+    graft_long_spatial_penalty: Optional[float] = field(default=None)
+    graft_long_scene_threshold: Optional[float] = field(default=None)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)

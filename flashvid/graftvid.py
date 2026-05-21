@@ -33,6 +33,31 @@ def _cfg_int(config: FlashVidConfig, name: str, default: int) -> int:
     return int(value)
 
 
+def _duration_key(config: FlashVidConfig) -> str:
+    duration = str(getattr(config, "current_video_duration", "") or "").strip().lower()
+    return duration if duration in ("short", "medium", "long") else ""
+
+
+def _duration_cfg_float(config: FlashVidConfig, base_name: str, default: float) -> float:
+    value = getattr(config, base_name, None)
+    if _bool_config(config, "graft_duration_aware", False):
+        duration = _duration_key(config)
+        override = getattr(config, f"graft_{duration}_{base_name.removeprefix('graft_')}", None) if duration else None
+        if override is not None:
+            value = override
+    return float(default if value is None else value)
+
+
+def _duration_cfg_int(config: FlashVidConfig, base_name: str, default: int) -> int:
+    value = getattr(config, base_name, None)
+    if _bool_config(config, "graft_duration_aware", False):
+        duration = _duration_key(config)
+        override = getattr(config, f"graft_{duration}_{base_name.removeprefix('graft_')}", None) if duration else None
+        if override is not None:
+            value = override
+    return int(default if value is None else value)
+
+
 def _score_preset_code(preset: str) -> int:
     name = str(preset or "event_v2").strip().lower()
     if name in ("base", "legacy"):
@@ -93,7 +118,8 @@ def _reset_graft_metrics(config: FlashVidConfig) -> None:
         "last_graft_anchor_ratio": None,
         "last_graft_input_is_residual": 1.0,
         "last_graft_budget_diversity_weight": 0.0,
-        "last_graft_score_preset_code": 2.0,
+        "last_graft_score_preset_code": 0.0,
+        "last_graft_duration_aware": 0.0,
         "last_graft_budget_correction_active": 1.0,
         "last_graft_protected_kept_count": 0.0,
         "last_graft_component_count": 0.0,
@@ -305,8 +331,8 @@ def graft_spatiotemporal_compression(
     h, w = _grid_hw(num_visual_tokens, flashvid_config)
     radius = max(0, _cfg_int(flashvid_config, "graft_temporal_radius", 1))
     topk = max(1, _cfg_int(flashvid_config, "graft_temporal_topk", 3))
-    global_topk = max(0, _cfg_int(flashvid_config, "graft_global_topk", topk))
-    temporal_skip = max(1, _cfg_int(flashvid_config, "graft_temporal_skip", 1))
+    global_topk = max(0, _duration_cfg_int(flashvid_config, "graft_global_topk", topk))
+    temporal_skip = max(1, _duration_cfg_int(flashvid_config, "graft_temporal_skip", 1))
     neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius, device)
 
     frame_embeds: list[torch.Tensor] = []
@@ -344,7 +370,7 @@ def graft_spatiotemporal_compression(
     detail_norm = _normalize_on_mask(detail, token_mask)
     event_rel = torch.einsum("fnd,gd->fng", normed.float(), frame_embeds_t.float()).mean(dim=-1)
     event_rel_norm = _normalize_on_mask(event_rel, token_mask)
-    score_preset = str(getattr(flashvid_config, "graft_score_preset", "event_v2") or "event_v2").strip().lower()
+    score_preset = str(getattr(flashvid_config, "graft_score_preset", "base") or "base").strip().lower()
     score_preset_code = _score_preset_code(score_preset)
     if score_preset_code == 0:
         protection_map = (0.65 * attn_norm + 0.25 * novelty_norm + 0.10 * detail_norm).clamp(0.0, 1.0)
@@ -398,19 +424,19 @@ def graft_spatiotemporal_compression(
     merge_mask = token_mask.clone()
     merge_mask[candidate_positions] = ~protected
 
-    edge_threshold = _cfg_float(flashvid_config, "graft_edge_threshold", 0.80)
+    edge_threshold = _duration_cfg_float(flashvid_config, "graft_edge_threshold", 0.80)
     if edge_threshold <= 0.0:
         edge_threshold = float(temporal_threshold)
     mutual_knn = _bool_config(flashvid_config, "graft_mutual_knn", True)
     one_token_per_frame = _bool_config(flashvid_config, "graft_one_token_per_frame", True)
     component_radius_eps = max(0.0, _cfg_float(flashvid_config, "graft_component_radius_eps", 0.12))
-    split_radius_eps = max(component_radius_eps, _cfg_float(flashvid_config, "graft_split_radius_eps", 0.20))
+    split_radius_eps = max(component_radius_eps, _duration_cfg_float(flashvid_config, "graft_split_radius_eps", 0.20))
     parent_capacity = max(1, _cfg_int(flashvid_config, "graft_parent_capacity", 1))
-    spatial_penalty = max(0.0, _cfg_float(flashvid_config, "graft_spatial_penalty", 0.10))
+    spatial_penalty = max(0.0, _duration_cfg_float(flashvid_config, "graft_spatial_penalty", 0.10))
     importance_penalty = max(0.0, _cfg_float(flashvid_config, "graft_importance_penalty", 0.05))
     hub_penalty = max(0.0, _cfg_float(flashvid_config, "graft_hub_penalty", 0.05))
     adaptive_aggregation = _bool_config(flashvid_config, "graft_adaptive_aggregation", True)
-    scene_threshold = max(0.0, _cfg_float(flashvid_config, "graft_scene_threshold", 0.0))
+    scene_threshold = max(0.0, _duration_cfg_float(flashvid_config, "graft_scene_threshold", 0.0))
     min_tokens_per_frame = max(0, _cfg_int(flashvid_config, "graft_min_tokens_per_frame", 0))
     budget_correction = _bool_config(flashvid_config, "graft_budget_correction", True)
     budget_diversity_weight = max(0.0, _cfg_float(flashvid_config, "graft_budget_diversity_weight", 0.35))
@@ -725,6 +751,7 @@ def graft_spatiotemporal_compression(
     setattr(flashvid_config, "last_graft_input_is_residual", float(bool(input_is_residual)))
     setattr(flashvid_config, "last_graft_budget_diversity_weight", float(budget_diversity_weight))
     setattr(flashvid_config, "last_graft_score_preset_code", float(score_preset_code))
+    setattr(flashvid_config, "last_graft_duration_aware", float(_bool_config(flashvid_config, "graft_duration_aware", False)))
     setattr(flashvid_config, "last_graft_budget_correction_active", float(bool(budget_correction)))
     setattr(
         flashvid_config,

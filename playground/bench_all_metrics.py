@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import gc
 import json
 import os
@@ -31,6 +31,7 @@ GRAFT_METRIC_KEYS = [
     "graft_input_is_residual",
     "graft_budget_diversity_weight",
     "graft_score_preset_code",
+    "graft_duration_aware",
     "graft_budget_correction_active",
     "graft_protected_kept_count",
     "graft_component_count",
@@ -129,7 +130,20 @@ class BenchmarkArgs:
     graft_min_tokens_per_frame: int = field(default=0)
     graft_budget_correction: bool = field(default=True)
     graft_budget_diversity_weight: float = field(default=0.35)
-    graft_score_preset: str = field(default="event_v2")
+    graft_score_preset: str = field(default="base")
+    graft_duration_aware: bool = field(default=False)
+    graft_medium_temporal_skip: Optional[int] = field(default=None)
+    graft_medium_global_topk: Optional[int] = field(default=None)
+    graft_medium_edge_threshold: Optional[float] = field(default=None)
+    graft_medium_split_radius_eps: Optional[float] = field(default=None)
+    graft_medium_spatial_penalty: Optional[float] = field(default=None)
+    graft_medium_scene_threshold: Optional[float] = field(default=None)
+    graft_long_temporal_skip: Optional[int] = field(default=None)
+    graft_long_global_topk: Optional[int] = field(default=None)
+    graft_long_edge_threshold: Optional[float] = field(default=None)
+    graft_long_split_radius_eps: Optional[float] = field(default=None)
+    graft_long_spatial_penalty: Optional[float] = field(default=None)
+    graft_long_scene_threshold: Optional[float] = field(default=None)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1814,7 +1828,19 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         graft_score_preset=args.graft_score_preset,
-        expansion=args.expansion,
+        graft_duration_aware=args.graft_duration_aware,
+        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
+        graft_medium_global_topk=args.graft_medium_global_topk,
+        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
+        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
+        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
+        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
+        graft_long_temporal_skip=args.graft_long_temporal_skip,
+        graft_long_global_topk=args.graft_long_global_topk,
+        graft_long_edge_threshold=args.graft_long_edge_threshold,
+        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
+        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="flashvid",
@@ -2064,7 +2090,19 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         graft_score_preset=args.graft_score_preset,
-        expansion=args.expansion,
+        graft_duration_aware=args.graft_duration_aware,
+        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
+        graft_medium_global_topk=args.graft_medium_global_topk,
+        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
+        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
+        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
+        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
+        graft_long_temporal_skip=args.graft_long_temporal_skip,
+        graft_long_global_topk=args.graft_long_global_topk,
+        graft_long_edge_threshold=args.graft_long_edge_threshold,
+        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
+        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="graphvid",
@@ -2132,7 +2170,19 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         graft_score_preset=args.graft_score_preset,
-        expansion=args.expansion,
+        graft_duration_aware=args.graft_duration_aware,
+        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
+        graft_medium_global_topk=args.graft_medium_global_topk,
+        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
+        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
+        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
+        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
+        graft_long_temporal_skip=args.graft_long_temporal_skip,
+        graft_long_global_topk=args.graft_long_global_topk,
+        graft_long_edge_threshold=args.graft_long_edge_threshold,
+        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
+        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="graftvid",
@@ -2200,7 +2250,19 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
         graft_score_preset=args.graft_score_preset,
-        expansion=args.expansion,
+        graft_duration_aware=args.graft_duration_aware,
+        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
+        graft_medium_global_topk=args.graft_medium_global_topk,
+        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
+        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
+        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
+        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
+        graft_long_temporal_skip=args.graft_long_temporal_skip,
+        graft_long_global_topk=args.graft_long_global_topk,
+        graft_long_edge_threshold=args.graft_long_edge_threshold,
+        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
+        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant=args.compression_variant,
@@ -2465,7 +2527,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}, "
             f"scene_thr={args.graft_scene_threshold:.2f}, minpf={args.graft_min_tokens_per_frame}, "
             f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}, "
-            f"score={args.graft_score_preset}"
+            f"score={args.graft_score_preset}, dur_aware={args.graft_duration_aware}"
         )
     print(SEPARATOR)
 
@@ -2857,7 +2919,8 @@ def run(args: BenchmarkArgs):
             f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
             f"one_frame={args.graft_one_token_per_frame}, scene_thr={args.graft_scene_threshold:.2f}, "
             f"minpf={args.graft_min_tokens_per_frame}, budget_fix={args.graft_budget_correction}, "
-            f"budget_div={args.graft_budget_diversity_weight:.2f}, score={args.graft_score_preset}"
+            f"budget_div={args.graft_budget_diversity_weight:.2f}, score={args.graft_score_preset}, "
+            f"dur_aware={args.graft_duration_aware}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
@@ -2987,3 +3050,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
