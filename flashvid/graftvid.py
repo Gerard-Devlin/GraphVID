@@ -33,6 +33,15 @@ def _cfg_int(config: FlashVidConfig, name: str, default: int) -> int:
     return int(value)
 
 
+def _score_preset_code(preset: str) -> int:
+    name = str(preset or "event_v2").strip().lower()
+    if name in ("base", "legacy"):
+        return 0
+    if name in ("event_v1", "event"):
+        return 1
+    return 2
+
+
 def _component_radius(node_features: torch.Tensor, members: list[int]) -> float:
     if len(members) <= 1:
         return 0.0
@@ -84,6 +93,9 @@ def _reset_graft_metrics(config: FlashVidConfig) -> None:
         "last_graft_anchor_ratio": None,
         "last_graft_input_is_residual": 1.0,
         "last_graft_budget_diversity_weight": 0.0,
+        "last_graft_score_preset_code": 2.0,
+        "last_graft_budget_correction_active": 1.0,
+        "last_graft_protected_kept_count": 0.0,
         "last_graft_component_count": 0.0,
         "last_graft_avg_component_size": None,
         "last_graft_max_component_size": 0.0,
@@ -330,7 +342,26 @@ def graft_spatiotemporal_compression(
     novelty_norm = _normalize_on_mask(novelty, token_mask)
     detail = _spatial_detail_score(normed, neighbor_idx, neighbor_valid)
     detail_norm = _normalize_on_mask(detail, token_mask)
-    protection_map = (0.65 * attn_norm + 0.25 * novelty_norm + 0.10 * detail_norm).clamp(0.0, 1.0)
+    event_rel = torch.einsum("fnd,gd->fng", normed.float(), frame_embeds_t.float()).mean(dim=-1)
+    event_rel_norm = _normalize_on_mask(event_rel, token_mask)
+    score_preset = str(getattr(flashvid_config, "graft_score_preset", "event_v2") or "event_v2").strip().lower()
+    score_preset_code = _score_preset_code(score_preset)
+    if score_preset_code == 0:
+        protection_map = (0.65 * attn_norm + 0.25 * novelty_norm + 0.10 * detail_norm).clamp(0.0, 1.0)
+    elif score_preset_code == 1:
+        protection_map = (
+            0.45 * attn_norm
+            + 0.25 * event_rel_norm
+            + 0.20 * novelty_norm
+            + 0.10 * detail_norm
+        ).clamp(0.0, 1.0)
+    else:
+        protection_map = (
+            0.50 * attn_norm
+            + 0.30 * event_rel_norm
+            + 0.15 * novelty_norm
+            + 0.05 * detail_norm
+        ).clamp(0.0, 1.0)
     protection = protection_map[token_mask]
     protection_cpu = protection.detach().float().cpu().tolist()
 
@@ -500,9 +531,25 @@ def graft_spatiotemporal_compression(
     entries: list[dict[str, object]] = []
     radii: list[float] = []
 
-    def emit(part: list[int], feature_mode: str | None = None) -> None:
+    def component_entry_score(part: list[int], radius_value: float) -> float:
+        scores = [float(protection_cpu[node]) for node in part]
+        s_max = max(scores) if scores else 0.0
+        s_mean = sum(scores) / max(1, len(scores))
+        size_gain = math.log1p(len(part)) / math.log1p(max(2, num_frames))
+        time_span = len({node_frames[node] for node in part})
+        time_gain = math.log1p(time_span) / math.log1p(max(2, num_frames))
+        return float(
+            0.60 * s_max
+            + 0.20 * s_mean
+            + 0.15 * size_gain
+            + 0.05 * time_gain
+            - 0.10 * float(radius_value)
+        )
+
+    def emit(part: list[int], feature_mode: str | None = None, radius_value: float | None = None) -> None:
         if not part:
             return
+        part_radius = _component_radius(node_features, part) if radius_value is None else float(radius_value)
         mode = feature_mode or representative_mode
         if mode in ("weighted_mean", "attn_mean", "protection_mean"):
             feature = _weighted_mean_feature(node_raw_features, part, protection_cpu)
@@ -519,7 +566,12 @@ def graft_spatiotemporal_compression(
                 "token": node_tokens[pos_node],
                 "feature": feature,
                 "node": pos_node,
-                "score": max(float(protection_cpu[node]) for node in part),
+                "score": component_entry_score(part, part_radius),
+                "raw_score": max(float(protection_cpu[node]) for node in part),
+                "size": len(part),
+                "radius": part_radius,
+                "time_span": len({node_frames[node] for node in part}),
+                "is_protected": any(bool(protected_cpu[node]) for node in part),
             }
         )
 
@@ -529,13 +581,15 @@ def graft_spatiotemporal_compression(
         radii.append(radius_value)
         if adaptive_aggregation and radius_value <= component_radius_eps:
             safe_mode = "weighted_mean" if representative_mode == "medoid" else representative_mode
-            emit(comp_members, safe_mode)
+            emit(comp_members, safe_mode, radius_value)
         elif adaptive_aggregation and radius_value <= split_radius_eps and len(comp_members) >= 2:
             midpoint = len(comp_members) // 2
-            emit(comp_members[:midpoint], "medoid")
-            emit(comp_members[midpoint:], "medoid")
+            left = comp_members[:midpoint]
+            right = comp_members[midpoint:]
+            emit(left, "medoid", _component_radius(node_features, left))
+            emit(right, "medoid", _component_radius(node_features, right))
         else:
-            emit(comp_members)
+            emit(comp_members, None, radius_value)
 
     entries_before_budget_count = len(entries)
     if budget_correction and entries:
@@ -600,6 +654,15 @@ def graft_spatiotemporal_compression(
 
             selected: list[dict[str, object]] = []
             selected_keys: set[tuple[int, int]] = set()
+            protected_entries = [entry for entry in entries if bool(entry.get("is_protected", False))]
+            protected_entries.sort(key=lambda item: (-float(item["score"]), int(item["frame"]), int(item["token"])))
+            for entry in protected_entries:
+                if len(selected) >= target_total:
+                    break
+                key = entry_key(entry)
+                if key not in selected_keys:
+                    selected.append(entry)
+                    selected_keys.add(key)
             if min_pf > 0:
                 for frame_idx in range(num_frames):
                     for entry in frame_sorted.get(frame_idx, [])[:min_pf]:
@@ -623,7 +686,12 @@ def graft_spatiotemporal_compression(
                         "token": node_tokens[node],
                         "feature": node_raw_features[node],
                         "node": node,
-                        "score": float(protection_cpu[node]),
+                        "score": component_entry_score([node], 0.0),
+                        "raw_score": float(protection_cpu[node]),
+                        "size": 1,
+                        "radius": 0.0,
+                        "time_span": 1,
+                        "is_protected": bool(protected_cpu[node]),
                     }
                 )
                 used_keys.add(key)
@@ -656,6 +724,13 @@ def graft_spatiotemporal_compression(
     setattr(flashvid_config, "last_graft_anchor_ratio", float(anchor_ratio))
     setattr(flashvid_config, "last_graft_input_is_residual", float(bool(input_is_residual)))
     setattr(flashvid_config, "last_graft_budget_diversity_weight", float(budget_diversity_weight))
+    setattr(flashvid_config, "last_graft_score_preset_code", float(score_preset_code))
+    setattr(flashvid_config, "last_graft_budget_correction_active", float(bool(budget_correction)))
+    setattr(
+        flashvid_config,
+        "last_graft_protected_kept_count",
+        float(sum(1 for entry in entries if bool(entry.get("is_protected", False)))),
+    )
 
     component_sizes = [len(comp) for comp in components]
     _accumulate_graft_metrics(

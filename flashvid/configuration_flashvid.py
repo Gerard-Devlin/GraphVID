@@ -64,6 +64,7 @@ class FlashVidConfig:
     graft_min_tokens_per_frame: int = field(default=0)
     graft_budget_correction: bool = field(default=True)
     graft_budget_diversity_weight: float = field(default=0.35)
+    graft_score_preset: str = field(default="event_v2")  # base | event_v1 | event_v2
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)

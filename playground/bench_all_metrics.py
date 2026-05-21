@@ -30,6 +30,9 @@ GRAFT_METRIC_KEYS = [
     "graft_anchor_ratio",
     "graft_input_is_residual",
     "graft_budget_diversity_weight",
+    "graft_score_preset_code",
+    "graft_budget_correction_active",
+    "graft_protected_kept_count",
     "graft_component_count",
     "graft_avg_component_size",
     "graft_max_component_size",
@@ -126,6 +129,7 @@ class BenchmarkArgs:
     graft_min_tokens_per_frame: int = field(default=0)
     graft_budget_correction: bool = field(default=True)
     graft_budget_diversity_weight: float = field(default=0.35)
+    graft_score_preset: str = field(default="event_v2")
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1631,7 +1635,22 @@ def _summarize_pairwise_comparison(
     vision_token_ratios = []
     reduction_gains = []
     vision_reduction_gains = []
+    both_correct = 0
+    both_wrong = 0
+    anchor_only_correct = 0
+    target_only_correct = 0
     for b, f in matched:
+        b_ok = bool(b.get("correct"))
+        f_ok = bool(f.get("correct"))
+        if b_ok and f_ok:
+            both_correct += 1
+        elif (not b_ok) and (not f_ok):
+            both_wrong += 1
+        elif b_ok and not f_ok:
+            anchor_only_correct += 1
+        elif f_ok and not b_ok:
+            target_only_correct += 1
+
         b_lat = b.get("latency_ms")
         f_lat = f.get("latency_ms")
         if b_lat and f_lat and f_lat > 0:
@@ -1651,6 +1670,10 @@ def _summarize_pairwise_comparison(
 
     return {
         "matched_samples": len(matched),
+        "both_correct": both_correct,
+        "both_wrong": both_wrong,
+        f"{anchor_name}_only_correct": anchor_only_correct,
+        f"{target_name}_only_correct": target_only_correct,
         "latency_speedup_ratio": _stats(latency_ratios),
         f"visual_token_ratio_{target_name}_over_{anchor_name}": _stats(token_ratios),
         f"visual_token_reduction_vs_{anchor_name}": _stats(reduction_gains),
@@ -1790,6 +1813,7 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
+        graft_score_preset=args.graft_score_preset,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2039,6 +2063,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
+        graft_score_preset=args.graft_score_preset,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2106,6 +2131,7 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
+        graft_score_preset=args.graft_score_preset,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2173,6 +2199,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
         graft_budget_correction=args.graft_budget_correction,
         graft_budget_diversity_weight=args.graft_budget_diversity_weight,
+        graft_score_preset=args.graft_score_preset,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2437,7 +2464,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"spatial_pen={args.graft_spatial_penalty:.2f}, imp_pen={args.graft_importance_penalty:.2f}, "
             f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}, "
             f"scene_thr={args.graft_scene_threshold:.2f}, minpf={args.graft_min_tokens_per_frame}, "
-            f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}"
+            f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}, "
+            f"score={args.graft_score_preset}"
         )
     print(SEPARATOR)
 
@@ -2494,6 +2522,9 @@ def _print_summary(summary: dict[str, Any]):
         graft_anchor_mean = phase.get("graft_anchor_ratio", {}).get("mean")
         graft_residual_mean = phase.get("graft_input_is_residual", {}).get("mean")
         graft_budget_div_mean = phase.get("graft_budget_diversity_weight", {}).get("mean")
+        graft_score_preset_mean = phase.get("graft_score_preset_code", {}).get("mean")
+        graft_budget_active_mean = phase.get("graft_budget_correction_active", {}).get("mean")
+        graft_protected_kept_mean = phase.get("graft_protected_kept_count", {}).get("mean")
         graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
         graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
         graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
@@ -2570,8 +2601,10 @@ def _print_summary(summary: dict[str, Any]):
                 )
             if graft_anchor_mean is not None:
                 print(
-                    "  graft anchor/residual-input/budget-div mean: "
-                    f"{graft_anchor_mean:.3f}/{(graft_residual_mean or 0.0):.2f}/{(graft_budget_div_mean or 0.0):.2f}"
+                    "  graft anchor/residual-input/budget-div/score/fix/kept-protect mean: "
+                    f"{graft_anchor_mean:.3f}/{(graft_residual_mean or 0.0):.2f}/{(graft_budget_div_mean or 0.0):.2f}/"
+                    f"{(graft_score_preset_mean or 0.0):.2f}/{(graft_budget_active_mean or 0.0):.2f}/"
+                    f"{(graft_protected_kept_mean or 0.0):.2f}"
                 )
             print(
                 "  graft components avg/max/radius mean: "
@@ -2606,7 +2639,14 @@ def _print_summary(summary: dict[str, Any]):
             vision_reduction_key = next((k for k in comp.keys() if k.startswith("vision_token_reduction_vs_")), None)
             token_red = comp[reduction_key]["mean"] if reduction_key else None
             vision_token_red = comp[vision_reduction_key]["mean"] if vision_reduction_key else None
+            anchor_name, target_name = key.split("_vs_", 1)
             print(f"  [{key}] matched={comp['matched_samples']}")
+            print(
+                "    paired correctness: "
+                f"both_correct={comp.get('both_correct', 0)} both_wrong={comp.get('both_wrong', 0)} "
+                f"anchor_only={comp.get(f'{anchor_name}_only_correct', 0)} "
+                f"target_only={comp.get(f'{target_name}_only_correct', 0)}"
+            )
             if lat_sp is not None:
                 print(f"    latency speedup: {lat_sp:.3f}x")
             if ratio_key and comp[ratio_key]["mean"] is not None:
@@ -2817,7 +2857,7 @@ def run(args: BenchmarkArgs):
             f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
             f"one_frame={args.graft_one_token_per_frame}, scene_thr={args.graft_scene_threshold:.2f}, "
             f"minpf={args.graft_min_tokens_per_frame}, budget_fix={args.graft_budget_correction}, "
-            f"budget_div={args.graft_budget_diversity_weight:.2f}"
+            f"budget_div={args.graft_budget_diversity_weight:.2f}, score={args.graft_score_preset}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
