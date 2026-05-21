@@ -9,6 +9,12 @@ from torch.nn import functional as F
 from .configuration_flashvid import FlashVidConfig
 
 
+_CATS_ADTS_MODE_CODE = {
+    "cats": 0.0,
+    "flashvid": 1.0,
+}
+
+
 def _cfg_float(config: FlashVidConfig, name: str, default: float) -> float:
     value = getattr(config, name, None)
     if value is None:
@@ -157,6 +163,38 @@ def _cats_adts_selection(
     return selected, selected_mask, importance
 
 
+def _flashvid_adts_selection(
+    features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    per_frame_tokens: int,
+    config: FlashVidConfig,
+) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
+    """Use FlashVID's original ADTS path, but keep CATS importance for merging weights."""
+    num_frames, num_visual_tokens, _ = features.shape
+    per_frame_tokens = min(max(0, int(per_frame_tokens)), num_visual_tokens)
+    importance = _cats_importance(features, cls_attention)
+    selected_mask = torch.zeros(
+        features.shape[:2],
+        dtype=torch.bool,
+        device=features.device,
+    )
+    if per_frame_tokens <= 0:
+        return [torch.empty((0,), dtype=torch.long, device=features.device) for _ in range(num_frames)], selected_mask, importance
+
+    from .utils import ALL_TOKEN_SELECTION_METHOD
+
+    additional_kwargs = {"cls_attention": cls_attention} if "attn" in str(config.token_selection_method) else {}
+    _, selected_indices = ALL_TOKEN_SELECTION_METHOD[config.token_selection_method](
+        features=features,
+        num_retained_tokens=per_frame_tokens,
+        **additional_kwargs,
+    )
+    selected_indices = selected_indices.to(device=features.device, dtype=torch.long)
+    selected_mask.scatter_(1, selected_indices, True)
+    selected = [selected_indices[frame_idx].sort().values for frame_idx in range(num_frames)]
+    return selected, selected_mask, importance
+
+
 def _cats_sink_tstm(
     video_features: torch.Tensor,
     selected_mask: torch.Tensor,
@@ -297,6 +335,7 @@ def _reset_cats_metrics(config: FlashVidConfig) -> None:
         "last_cats_spatial_tokens_after": 0.0,
         "last_cats_mean_merge_sim": None,
         "last_cats_mean_margin": None,
+        "last_cats_adts_mode_code": None,
     }
     for key, value in defaults.items():
         setattr(config, key, value)
@@ -353,6 +392,8 @@ def _accumulate_cats_metrics(config: FlashVidConfig, selected_count: int, metric
     margin_count = float(getattr(config, "_cats_margin_value_count", 0.0))
     setattr(config, "last_cats_mean_merge_sim", float(getattr(config, "_cats_merge_sim_sum", 0.0)) / sim_count if sim_count > 0 else None)
     setattr(config, "last_cats_mean_margin", float(getattr(config, "_cats_margin_value_sum", 0.0)) / margin_count if margin_count > 0 else None)
+    adts_mode = str(getattr(config, "cats_adts_mode", "cats") or "cats").strip().lower()
+    setattr(config, "last_cats_adts_mode_code", _CATS_ADTS_MODE_CODE.get(adts_mode, -1.0))
 
 
 def cats_segment_compression(
@@ -372,12 +413,21 @@ def cats_segment_compression(
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     device = segment_features.device
     per_frame_adts = int(flashvid_config.num_attn_div_tokens or 0)
-    selected_indices, selected_mask, importance = _cats_adts_selection(
-        features=segment_features,
-        cls_attention=cls_attention,
-        per_frame_tokens=per_frame_adts,
-        config=flashvid_config,
-    )
+    adts_mode = str(getattr(flashvid_config, "cats_adts_mode", "cats") or "cats").strip().lower()
+    if adts_mode == "flashvid":
+        selected_indices, selected_mask, importance = _flashvid_adts_selection(
+            features=segment_features,
+            cls_attention=cls_attention,
+            per_frame_tokens=per_frame_adts,
+            config=flashvid_config,
+        )
+    else:
+        selected_indices, selected_mask, importance = _cats_adts_selection(
+            features=segment_features,
+            cls_attention=cls_attention,
+            per_frame_tokens=per_frame_adts,
+            config=flashvid_config,
+        )
     updated_features, residual_mask, metrics = _cats_sink_tstm(
         video_features=segment_features,
         selected_mask=selected_mask,

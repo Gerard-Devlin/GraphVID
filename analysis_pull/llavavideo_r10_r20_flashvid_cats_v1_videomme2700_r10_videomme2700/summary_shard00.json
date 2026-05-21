@@ -1,0 +1,3718 @@
+{
+  "comparison": {
+    "flashvid_vs_cats": {
+      "matched_samples": 900,
+      "both_correct": 511,
+      "both_wrong": 305,
+      "flashvid_only_correct": 41,
+      "cats_only_correct": 43,
+      "latency_speedup_ratio": {
+        "count": 900,
+        "mean": 0.9246116935592396,
+        "median": 0.9222942163253207,
+        "std": 0.050091185606488536
+      },
+      "visual_token_ratio_cats_over_flashvid": {
+        "count": 900,
+        "mean": 0.9999897669492726,
+        "median": 1.0,
+        "std": 0.001927887457801826
+      },
+      "visual_token_reduction_vs_flashvid": {
+        "count": 900,
+        "mean": 1.0233050727550048e-05,
+        "median": 0.0,
+        "std": 0.001927887457801826
+      },
+      "vision_token_ratio_cats_over_flashvid": {
+        "count": 900,
+        "mean": 0.9999897669492726,
+        "median": 1.0,
+        "std": 0.001927887457801826
+      },
+      "vision_token_reduction_vs_flashvid": {
+        "count": 900,
+        "mean": 1.0233050727550048e-05,
+        "median": 0.0,
+        "std": 0.001927887457801826
+      }
+    }
+  },
+  "flashvid": {
+    "num_samples": 900,
+    "num_valid": 900,
+    "num_errors": 0,
+    "accuracy": 0.6133333333333333,
+    "latency_ms": {
+      "count": 900,
+      "mean": 1126.5635637749565,
+      "median": 1116.4143676757812,
+      "std": 59.29379470572149
+    },
+    "generated_tokens": {
+      "count": 900,
+      "mean": 2.701111111111111,
+      "median": 3.0,
+      "std": 0.45777103554905507
+    },
+    "tokens_per_second": {
+      "count": 900,
+      "mean": 2.3947805008949308,
+      "median": 2.584825233901797,
+      "std": 0.37906495120408185
+    },
+    "raw_visual_tokens": {
+      "count": 900,
+      "mean": 10880.0,
+      "median": 10880.0,
+      "std": 0.0
+    },
+    "compressed_visual_tokens": {
+      "count": 900,
+      "mean": 1499.0955555555556,
+      "median": 1500.0,
+      "std": 5.450767756546087
+    },
+    "vision_compressed_visual_tokens": {
+      "count": 900,
+      "mean": 1499.0955555555556,
+      "median": 1500.0,
+      "std": 5.450767756546087
+    },
+    "talon_target_tokens_per_frame": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_complexity_score": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_target_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_anchor_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_rank_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_event_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_recall_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_persistence_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_object_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_memory_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_rank_cap": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_chosen_rank": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_duplicate_index_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_question_aware_active": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_mode_code": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_fused_concentration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_residual_concentration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_question_concentration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_frame_entropy": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_target_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_residual_mean": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_semantic_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_innovation_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_duplicate_index_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_question_aware_active": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_budget_min": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_budget_max": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_grid_h": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_grid_w": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_num_nodes": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_target_components": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_protected_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_entries_before_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_entries_after_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_scene_threshold": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_global_topk": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_anchor_ratio": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_input_is_residual": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_budget_diversity_weight": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_score_preset_code": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_duration_aware": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_budget_correction_active": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_protected_kept_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_component_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_avg_component_size": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_max_component_size": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_radius_mean": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_radius_max": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_edges_considered": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_edges_accepted": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_mutual_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_radius_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_capacity_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_same_frame_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_selected_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_sink_merges": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_residual_merges": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_mutual_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_margin_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_threshold_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_retained_residual_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_spatial_tokens_before": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_spatial_tokens_after": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_mean_merge_sim": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_mean_margin": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "visual_token_reduction_ratio": {
+      "count": 900,
+      "mean": 0.8622154820261438,
+      "median": 0.8621323529411764,
+      "std": 0.0005009896835060748
+    },
+    "vision_visual_token_reduction_ratio": {
+      "count": 900,
+      "mean": 0.8622154820261438,
+      "median": 0.8621323529411764,
+      "std": 0.0005009896835060748
+    }
+  },
+  "cats": {
+    "num_samples": 900,
+    "num_valid": 900,
+    "num_errors": 0,
+    "accuracy": 0.6155555555555555,
+    "latency_ms": {
+      "count": 900,
+      "mean": 1219.3594708930123,
+      "median": 1211.76806640625,
+      "std": 45.46503527013174
+    },
+    "generated_tokens": {
+      "count": 900,
+      "mean": 2.687777777777778,
+      "median": 3.0,
+      "std": 0.4633999419214892
+    },
+    "tokens_per_second": {
+      "count": 900,
+      "mean": 2.2009618410146725,
+      "median": 2.4044599916480607,
+      "std": 0.3568647162590182
+    },
+    "raw_visual_tokens": {
+      "count": 900,
+      "mean": 10880.0,
+      "median": 10880.0,
+      "std": 0.0
+    },
+    "compressed_visual_tokens": {
+      "count": 900,
+      "mean": 1499.0777777777778,
+      "median": 1500.0,
+      "std": 5.544822966370979
+    },
+    "vision_compressed_visual_tokens": {
+      "count": 900,
+      "mean": 1499.0777777777778,
+      "median": 1500.0,
+      "std": 5.544822966370979
+    },
+    "talon_target_tokens_per_frame": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_complexity_score": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_target_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_anchor_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_rank_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_event_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_recall_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_persistence_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_object_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_memory_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_rank_cap": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_chosen_rank": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_duplicate_index_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_question_aware_active": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_mode_code": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_fused_concentration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_residual_concentration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_question_concentration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_router_frame_entropy": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_target_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_residual_mean": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_semantic_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_innovation_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_duplicate_index_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_question_aware_active": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_budget_min": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_budget_max": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_grid_h": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "talon_core_grid_w": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_num_nodes": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_target_components": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_protected_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_entries_before_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_entries_after_budget": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_scene_threshold": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_global_topk": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_anchor_ratio": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_input_is_residual": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_budget_diversity_weight": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_score_preset_code": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_duration_aware": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_budget_correction_active": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_protected_kept_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_component_count": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_avg_component_size": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_max_component_size": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_radius_mean": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_radius_max": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_edges_considered": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_edges_accepted": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_mutual_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_radius_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_capacity_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "graft_same_frame_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_selected_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_sink_merges": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_residual_merges": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_mutual_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_margin_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_threshold_rejected": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_retained_residual_tokens": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_spatial_tokens_before": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_spatial_tokens_after": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_mean_merge_sim": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "cats_mean_margin": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "std": null
+    },
+    "visual_token_reduction_ratio": {
+      "count": 900,
+      "mean": 0.8622171160130718,
+      "median": 0.8621323529411764,
+      "std": 0.0005096344638208652
+    },
+    "vision_visual_token_reduction_ratio": {
+      "count": 900,
+      "mean": 0.8622171160130718,
+      "median": 0.8621323529411764,
+      "std": 0.0005096344638208652
+    }
+  },
+  "duration_breakdown": {
+    "short": {
+      "comparison": {
+        "flashvid_vs_cats": {
+          "matched_samples": 300,
+          "both_correct": 206,
+          "both_wrong": 66,
+          "flashvid_only_correct": 17,
+          "cats_only_correct": 11,
+          "latency_speedup_ratio": {
+            "count": 300,
+            "mean": 0.9187182458512219,
+            "median": 0.9180093761310283,
+            "std": 0.06846024305668559
+          },
+          "visual_token_ratio_cats_over_flashvid": {
+            "count": 300,
+            "mean": 0.9999395629293673,
+            "median": 1.0,
+            "std": 0.001963610896110541
+          },
+          "visual_token_reduction_vs_flashvid": {
+            "count": 300,
+            "mean": 6.043707063272915e-05,
+            "median": 0.0,
+            "std": 0.001963610896110541
+          },
+          "vision_token_ratio_cats_over_flashvid": {
+            "count": 300,
+            "mean": 0.9999395629293673,
+            "median": 1.0,
+            "std": 0.001963610896110541
+          },
+          "vision_token_reduction_vs_flashvid": {
+            "count": 300,
+            "mean": 6.043707063272915e-05,
+            "median": 0.0,
+            "std": 0.001963610896110541
+          }
+        }
+      },
+      "flashvid": {
+        "num_samples": 300,
+        "num_valid": 300,
+        "num_errors": 0,
+        "accuracy": 0.7433333333333333,
+        "latency_ms": {
+          "count": 300,
+          "mean": 1106.997089029948,
+          "median": 1095.034912109375,
+          "std": 78.84634611431609
+        },
+        "generated_tokens": {
+          "count": 300,
+          "mean": 2.5533333333333332,
+          "median": 3.0,
+          "std": 0.4971474183333909
+        },
+        "tokens_per_second": {
+          "count": 300,
+          "mean": 2.305295037662546,
+          "median": 2.569822075875294,
+          "std": 0.4236584384011957
+        },
+        "raw_visual_tokens": {
+          "count": 300,
+          "mean": 10880.0,
+          "median": 10880.0,
+          "std": 0.0
+        },
+        "compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1501.0266666666666,
+          "median": 1501.5,
+          "std": 3.476486093105444
+        },
+        "vision_compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1501.0266666666666,
+          "median": 1501.5,
+          "std": 3.476486093105444
+        },
+        "talon_target_tokens_per_frame": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_complexity_score": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_anchor_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_event_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_recall_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_persistence_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_object_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_memory_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_cap": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_chosen_rank": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_mode_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_fused_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_residual_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_question_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_frame_entropy": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_residual_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_semantic_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_innovation_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_min": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_h": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_w": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_num_nodes": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_target_components": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_before_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_after_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_scene_threshold": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_global_topk": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_anchor_ratio": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_input_is_residual": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_diversity_weight": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_score_preset_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_duration_aware": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_correction_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_kept_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_component_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_avg_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_max_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_considered": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_accepted": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_capacity_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_same_frame_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_selected_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_sink_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_residual_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_margin_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_threshold_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_retained_residual_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_before": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_after": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_merge_sim": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_margin": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8620379901960784,
+          "median": 0.8619944852941177,
+          "std": 0.0003195299717927747
+        },
+        "vision_visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8620379901960784,
+          "median": 0.8619944852941177,
+          "std": 0.0003195299717927747
+        }
+      },
+      "cats": {
+        "num_samples": 300,
+        "num_valid": 300,
+        "num_errors": 0,
+        "accuracy": 0.7233333333333334,
+        "latency_ms": {
+          "count": 300,
+          "mean": 1206.0673368326823,
+          "median": 1195.1400756835938,
+          "std": 43.91155917156525
+        },
+        "generated_tokens": {
+          "count": 300,
+          "mean": 2.546666666666667,
+          "median": 3.0,
+          "std": 0.49781745873585254
+        },
+        "tokens_per_second": {
+          "count": 300,
+          "mean": 2.1076105307981554,
+          "median": 2.338463955486609,
+          "std": 0.3867916612601886
+        },
+        "raw_visual_tokens": {
+          "count": 300,
+          "mean": 10880.0,
+          "median": 10880.0,
+          "std": 0.0
+        },
+        "compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1500.9333333333334,
+          "median": 1501.0,
+          "std": 3.592894221778438
+        },
+        "vision_compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1500.9333333333334,
+          "median": 1501.0,
+          "std": 3.592894221778438
+        },
+        "talon_target_tokens_per_frame": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_complexity_score": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_anchor_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_event_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_recall_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_persistence_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_object_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_memory_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_cap": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_chosen_rank": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_mode_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_fused_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_residual_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_question_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_frame_entropy": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_residual_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_semantic_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_innovation_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_min": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_h": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_w": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_num_nodes": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_target_components": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_before_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_after_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_scene_threshold": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_global_topk": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_anchor_ratio": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_input_is_residual": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_diversity_weight": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_score_preset_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_duration_aware": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_correction_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_kept_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_component_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_avg_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_max_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_considered": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_accepted": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_capacity_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_same_frame_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_selected_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_sink_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_residual_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_margin_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_threshold_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_retained_residual_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_before": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_after": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_merge_sim": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_margin": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.862046568627451,
+          "median": 0.8620404411764706,
+          "std": 0.000330229248325218
+        },
+        "vision_visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.862046568627451,
+          "median": 0.8620404411764706,
+          "std": 0.000330229248325218
+        }
+      }
+    },
+    "medium": {
+      "comparison": {
+        "flashvid_vs_cats": {
+          "matched_samples": 300,
+          "both_correct": 164,
+          "both_wrong": 98,
+          "flashvid_only_correct": 16,
+          "cats_only_correct": 22,
+          "latency_speedup_ratio": {
+            "count": 300,
+            "mean": 0.9229054071393858,
+            "median": 0.9236151882357866,
+            "std": 0.035540070888169614
+          },
+          "visual_token_ratio_cats_over_flashvid": {
+            "count": 300,
+            "mean": 0.9999462457557659,
+            "median": 1.0,
+            "std": 0.002058956139978606
+          },
+          "visual_token_reduction_vs_flashvid": {
+            "count": 300,
+            "mean": 5.375424423405291e-05,
+            "median": 0.0,
+            "std": 0.002058956139978606
+          },
+          "vision_token_ratio_cats_over_flashvid": {
+            "count": 300,
+            "mean": 0.9999462457557659,
+            "median": 1.0,
+            "std": 0.002058956139978606
+          },
+          "vision_token_reduction_vs_flashvid": {
+            "count": 300,
+            "mean": 5.375424423405291e-05,
+            "median": 0.0,
+            "std": 0.002058956139978606
+          }
+        }
+      },
+      "flashvid": {
+        "num_samples": 300,
+        "num_valid": 300,
+        "num_errors": 0,
+        "accuracy": 0.6,
+        "latency_ms": {
+          "count": 300,
+          "mean": 1126.4832157389324,
+          "median": 1122.5933227539062,
+          "std": 38.990262810156054
+        },
+        "generated_tokens": {
+          "count": 300,
+          "mean": 2.7266666666666666,
+          "median": 3.0,
+          "std": 0.4456705310228872
+        },
+        "tokens_per_second": {
+          "count": 300,
+          "mean": 2.416941323295683,
+          "median": 2.603921013012344,
+          "std": 0.37063446861136173
+        },
+        "raw_visual_tokens": {
+          "count": 300,
+          "mean": 10880.0,
+          "median": 10880.0,
+          "std": 0.0
+        },
+        "compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1499.08,
+          "median": 1500.0,
+          "std": 5.107536914534571
+        },
+        "vision_compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1499.08,
+          "median": 1500.0,
+          "std": 5.107536914534571
+        },
+        "talon_target_tokens_per_frame": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_complexity_score": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_anchor_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_event_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_recall_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_persistence_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_object_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_memory_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_cap": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_chosen_rank": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_mode_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_fused_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_residual_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_question_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_frame_entropy": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_residual_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_semantic_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_innovation_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_min": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_h": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_w": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_num_nodes": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_target_components": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_before_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_after_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_scene_threshold": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_global_topk": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_anchor_ratio": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_input_is_residual": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_diversity_weight": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_score_preset_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_duration_aware": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_correction_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_kept_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_component_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_avg_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_max_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_considered": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_accepted": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_capacity_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_same_frame_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_selected_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_sink_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_residual_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_margin_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_threshold_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_retained_residual_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_before": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_after": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_merge_sim": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_margin": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8622169117647058,
+          "median": 0.8621323529411764,
+          "std": 0.0004694427311153103
+        },
+        "vision_visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8622169117647058,
+          "median": 0.8621323529411764,
+          "std": 0.0004694427311153103
+        }
+      },
+      "cats": {
+        "num_samples": 300,
+        "num_valid": 300,
+        "num_errors": 0,
+        "accuracy": 0.62,
+        "latency_ms": {
+          "count": 300,
+          "mean": 1221.5972692871094,
+          "median": 1215.1956176757812,
+          "std": 45.64724997892152
+        },
+        "generated_tokens": {
+          "count": 300,
+          "mean": 2.723333333333333,
+          "median": 3.0,
+          "std": 0.44735022322809026
+        },
+        "tokens_per_second": {
+          "count": 300,
+          "mean": 2.22678665303886,
+          "median": 2.4177246096119056,
+          "std": 0.34664500299501855
+        },
+        "raw_visual_tokens": {
+          "count": 300,
+          "mean": 10880.0,
+          "median": 10880.0,
+          "std": 0.0
+        },
+        "compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1498.9966666666667,
+          "median": 1500.0,
+          "std": 5.230359027404864
+        },
+        "vision_compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1498.9966666666667,
+          "median": 1500.0,
+          "std": 5.230359027404864
+        },
+        "talon_target_tokens_per_frame": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_complexity_score": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_anchor_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_event_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_recall_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_persistence_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_object_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_memory_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_cap": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_chosen_rank": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_mode_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_fused_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_residual_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_question_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_frame_entropy": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_residual_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_semantic_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_innovation_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_min": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_h": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_w": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_num_nodes": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_target_components": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_before_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_after_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_scene_threshold": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_global_topk": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_anchor_ratio": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_input_is_residual": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_diversity_weight": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_score_preset_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_duration_aware": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_correction_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_kept_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_component_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_avg_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_max_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_considered": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_accepted": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_capacity_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_same_frame_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_selected_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_sink_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_residual_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_margin_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_threshold_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_retained_residual_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_before": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_after": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_merge_sim": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_margin": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8622245710784314,
+          "median": 0.8621323529411764,
+          "std": 0.0004807315282541273
+        },
+        "vision_visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8622245710784314,
+          "median": 0.8621323529411764,
+          "std": 0.0004807315282541273
+        }
+      }
+    },
+    "long": {
+      "comparison": {
+        "flashvid_vs_cats": {
+          "matched_samples": 300,
+          "both_correct": 141,
+          "both_wrong": 141,
+          "flashvid_only_correct": 8,
+          "cats_only_correct": 10,
+          "latency_speedup_ratio": {
+            "count": 300,
+            "mean": 0.9322114276871112,
+            "median": 0.930582325140795,
+            "std": 0.03849777928954355
+          },
+          "visual_token_ratio_cats_over_flashvid": {
+            "count": 300,
+            "mean": 1.000083492162684,
+            "median": 1.0,
+            "std": 0.001744128165772569
+          },
+          "visual_token_reduction_vs_flashvid": {
+            "count": 300,
+            "mean": -8.349216268413192e-05,
+            "median": 0.0,
+            "std": 0.0017441281657725688
+          },
+          "vision_token_ratio_cats_over_flashvid": {
+            "count": 300,
+            "mean": 1.000083492162684,
+            "median": 1.0,
+            "std": 0.001744128165772569
+          },
+          "vision_token_reduction_vs_flashvid": {
+            "count": 300,
+            "mean": -8.349216268413192e-05,
+            "median": 0.0,
+            "std": 0.0017441281657725688
+          }
+        }
+      },
+      "flashvid": {
+        "num_samples": 300,
+        "num_valid": 300,
+        "num_errors": 0,
+        "accuracy": 0.49666666666666665,
+        "latency_ms": {
+          "count": 300,
+          "mean": 1146.2103865559895,
+          "median": 1141.9890747070312,
+          "std": 45.18212419846925
+        },
+        "generated_tokens": {
+          "count": 300,
+          "mean": 2.8233333333333333,
+          "median": 3.0,
+          "std": 0.38138635994953407
+        },
+        "tokens_per_second": {
+          "count": 300,
+          "mean": 2.4621051417265623,
+          "median": 2.5781278291089986,
+          "std": 0.3180927105423704
+        },
+        "raw_visual_tokens": {
+          "count": 300,
+          "mean": 10880.0,
+          "median": 10880.0,
+          "std": 0.0
+        },
+        "compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1497.18,
+          "median": 1499.0,
+          "std": 6.600070706691962
+        },
+        "vision_compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1497.18,
+          "median": 1499.0,
+          "std": 6.600070706691962
+        },
+        "talon_target_tokens_per_frame": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_complexity_score": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_anchor_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_event_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_recall_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_persistence_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_object_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_memory_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_cap": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_chosen_rank": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_mode_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_fused_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_residual_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_question_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_frame_entropy": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_residual_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_semantic_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_innovation_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_min": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_h": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_w": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_num_nodes": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_target_components": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_before_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_after_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_scene_threshold": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_global_topk": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_anchor_ratio": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_input_is_residual": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_diversity_weight": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_score_preset_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_duration_aware": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_correction_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_kept_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_component_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_avg_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_max_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_considered": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_accepted": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_capacity_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_same_frame_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_selected_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_sink_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_residual_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_margin_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_threshold_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_retained_residual_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_before": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_after": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_merge_sim": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_margin": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8623915441176471,
+          "median": 0.8622242647058823,
+          "std": 0.000606624145835662
+        },
+        "vision_visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8623915441176471,
+          "median": 0.8622242647058823,
+          "std": 0.000606624145835662
+        }
+      },
+      "cats": {
+        "num_samples": 300,
+        "num_valid": 300,
+        "num_errors": 0,
+        "accuracy": 0.5033333333333333,
+        "latency_ms": {
+          "count": 300,
+          "mean": 1230.413806559245,
+          "median": 1222.5094604492188,
+          "std": 43.42148005624399
+        },
+        "generated_tokens": {
+          "count": 300,
+          "mean": 2.7933333333333334,
+          "median": 3.0,
+          "std": 0.4049142570416057
+        },
+        "tokens_per_second": {
+          "count": 300,
+          "mean": 2.2684883392070025,
+          "median": 2.422121015269489,
+          "std": 0.31360088299734107
+        },
+        "raw_visual_tokens": {
+          "count": 300,
+          "mean": 10880.0,
+          "median": 10880.0,
+          "std": 0.0
+        },
+        "compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1497.3033333333333,
+          "median": 1500.0,
+          "std": 6.735823796850852
+        },
+        "vision_compressed_visual_tokens": {
+          "count": 300,
+          "mean": 1497.3033333333333,
+          "median": 1500.0,
+          "std": 6.735823796850852
+        },
+        "talon_target_tokens_per_frame": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_complexity_score": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_anchor_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_event_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_recall_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_persistence_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_object_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_memory_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_rank_cap": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_chosen_rank": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_mode_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_fused_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_residual_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_question_concentration": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_router_frame_entropy": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_target_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_residual_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_semantic_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_innovation_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_duplicate_index_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_question_aware_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_min": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_budget_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_h": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "talon_core_grid_w": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_num_nodes": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_target_components": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_before_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_entries_after_budget": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_scene_threshold": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_global_topk": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_anchor_ratio": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_input_is_residual": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_diversity_weight": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_score_preset_code": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_duration_aware": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_budget_correction_active": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_protected_kept_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_component_count": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_avg_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_max_component_size": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_max": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_considered": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_edges_accepted": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_radius_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_capacity_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "graft_same_frame_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_selected_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_sink_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_residual_merges": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mutual_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_margin_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_threshold_rejected": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_retained_residual_tokens": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_before": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_spatial_tokens_after": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_merge_sim": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "cats_mean_margin": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8623802083333334,
+          "median": 0.8621323529411764,
+          "std": 0.0006191014519164458
+        },
+        "vision_visual_token_reduction_ratio": {
+          "count": 300,
+          "mean": 0.8623802083333334,
+          "median": 0.8621323529411764,
+          "std": 0.0006191014519164458
+        }
+      }
+    }
+  }
+}

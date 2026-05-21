@@ -80,6 +80,7 @@ class FlashVidConfig:
     graft_long_scene_threshold: Optional[float] = field(default=None)
 
     # CATS-FlashVID confidence-aware protected-sink TSTM.
+    cats_adts_mode: str = field(default="cats")  # cats | flashvid
     cats_adts_beta: float = field(default=0.05)
     cats_margin_threshold: float = field(default=0.03)
     cats_high_conf_bonus: float = field(default=0.05)

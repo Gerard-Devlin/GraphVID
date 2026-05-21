@@ -47,6 +47,7 @@ GRAFT_METRIC_KEYS = [
     "graft_same_frame_rejected",
 ]
 CATS_METRIC_KEYS = [
+    "cats_adts_mode_code",
     "cats_selected_tokens",
     "cats_sink_merges",
     "cats_residual_merges",
@@ -158,6 +159,7 @@ class BenchmarkArgs:
     graft_long_split_radius_eps: Optional[float] = field(default=None)
     graft_long_spatial_penalty: Optional[float] = field(default=None)
     graft_long_scene_threshold: Optional[float] = field(default=None)
+    cats_adts_mode: str = field(default="cats")
     cats_adts_beta: float = field(default=0.05)
     cats_margin_threshold: float = field(default=0.03)
     cats_high_conf_bonus: float = field(default=0.05)
@@ -1018,22 +1020,34 @@ def _get_graft_debug_metrics(model) -> dict[str, float | None]:
 
 def _get_cats_debug_metrics(model) -> dict[str, float | None]:
     empty = {key: None for key in CATS_METRIC_KEYS}
-    cfg = getattr(model, "flashvid_config", None)
-    if cfg is None and hasattr(model, "model"):
-        cfg = getattr(model.model, "flashvid_config", None)
-    if cfg is None and hasattr(model, "language_model"):
-        cfg = getattr(model.language_model, "flashvid_config", None)
-    if cfg is None and hasattr(model, "module"):
-        cfg = getattr(model.module, "flashvid_config", None)
-        if cfg is None and hasattr(model.module, "model"):
-            cfg = getattr(model.module.model, "flashvid_config", None)
-    if cfg is None:
+    candidates = []
+    for obj in (
+        model,
+        getattr(model, "model", None),
+        getattr(model, "language_model", None),
+        getattr(model, "module", None),
+        getattr(getattr(model, "module", None), "model", None),
+    ):
+        if obj is None:
+            continue
+        cfg = getattr(obj, "flashvid_config", None)
+        if cfg is not None and cfg not in candidates:
+            candidates.append(cfg)
+    if not candidates:
         return empty
-    values: dict[str, float | None] = {}
-    for key in CATS_METRIC_KEYS:
-        value = getattr(cfg, f"last_{key}", None)
-        values[key] = float(value) if value is not None else None
-    return values
+    best_values = empty
+    best_score = -1
+    for cfg in candidates:
+        values: dict[str, float | None] = {}
+        present = 0
+        for key in CATS_METRIC_KEYS:
+            value = getattr(cfg, f"last_{key}", None)
+            values[key] = float(value) if value is not None else None
+            present += int(value is not None)
+        if present > best_score:
+            best_score = present
+            best_values = values
+    return best_values
 
 
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
@@ -2285,6 +2299,7 @@ def _apply_cats(model, args: BenchmarkArgs, backend: str):
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
         cats_adts_beta=args.cats_adts_beta,
+        cats_adts_mode=args.cats_adts_mode,
         cats_margin_threshold=args.cats_margin_threshold,
         cats_high_conf_bonus=args.cats_high_conf_bonus,
         cats_mutual_nn=args.cats_mutual_nn,
@@ -2644,7 +2659,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
     if args.run_cats:
         print(
             "CATS config  : "
-            f"beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
+            f"adts={args.cats_adts_mode}, beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
             f"high_bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
             f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
             f"anchor_w={args.cats_anchor_self_weight:.2f}, "
@@ -3093,7 +3108,7 @@ def run(args: BenchmarkArgs):
         print(f"\nPhase {phase_idx}/{total_phases}: CATS-FlashVID ...")
         print(
             "[cats-active] "
-            f"beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
+            f"adts={args.cats_adts_mode}, beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
             f"bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
             f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
             f"anchor_w={args.cats_anchor_self_weight:.2f}, "

@@ -469,6 +469,8 @@ def _append_cats_args(cmd: list[str], args: argparse.Namespace) -> None:
             "cats",
             "--cats_adts_beta",
             str(args.cats_adts_beta),
+            "--cats_adts_mode",
+            str(args.cats_adts_mode),
             "--cats_margin_threshold",
             str(args.cats_margin_threshold),
             "--cats_high_conf_bonus",
@@ -842,6 +844,7 @@ def main() -> None:
     parser.add_argument("--graft_long_split_radius_eps", type=float, default=None)
     parser.add_argument("--graft_long_spatial_penalty", type=float, default=None)
     parser.add_argument("--graft_long_scene_threshold", type=float, default=None)
+    parser.add_argument("--cats_adts_mode", default="cats", choices=["cats", "flashvid"])
     parser.add_argument("--cats_adts_beta", type=float, default=0.05)
     parser.add_argument("--cats_margin_threshold", type=float, default=0.03)
     parser.add_argument("--cats_high_conf_bonus", type=float, default=0.05)

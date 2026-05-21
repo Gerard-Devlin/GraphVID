@@ -277,6 +277,8 @@ def _build_command(
         [
             "--cats_adts_beta",
             str(args.cats_adts_beta),
+            "--cats_adts_mode",
+            str(args.cats_adts_mode),
             "--cats_margin_threshold",
             str(args.cats_margin_threshold),
             "--cats_high_conf_bonus",
@@ -522,6 +524,7 @@ def main() -> None:
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
+    parser.add_argument("--cats_adts_mode", default="cats", choices=["cats", "flashvid"])
     parser.add_argument("--cats_adts_beta", type=float, default=0.05)
     parser.add_argument("--cats_margin_threshold", type=float, default=0.03)
     parser.add_argument("--cats_high_conf_bonus", type=float, default=0.05)
