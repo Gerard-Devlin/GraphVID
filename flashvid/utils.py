@@ -136,12 +136,16 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant not in ("flashvid", "graphvid", "graftvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|talon")
+    if compression_variant not in ("flashvid", "graphvid", "graftvid", "cats"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|cats|talon")
     if compression_variant == "graftvid":
         from .graftvid import _reset_graft_metrics
 
         _reset_graft_metrics(flashvid_config)
+    if compression_variant == "cats":
+        from .cats import _reset_cats_metrics
+
+        _reset_cats_metrics(flashvid_config)
 
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
@@ -220,6 +224,16 @@ def segment_compression(
         Tuple[torch.Tensor, torch.Tensor]: The final tokens and their global indices after compression.
     """
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
+    compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+    if compression_variant == "cats":
+        from .cats import cats_segment_compression
+
+        return cats_segment_compression(
+            segment_features=segment_features,
+            segment_global_indices=segment_global_indices,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+        )
 
     # 1. Apply Attention and Diversity-based Token Selection (ADTS).
     if flashvid_config.alpha > 0:

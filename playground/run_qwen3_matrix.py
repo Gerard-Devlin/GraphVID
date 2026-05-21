@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon"}
+    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -196,12 +196,13 @@ def _build_command(
     ]
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
-    if method in ("graphvid", "graftvid"):
+    if method in ("graphvid", "graftvid", "cats"):
         graph_cap = _graph_cap_for_rate(args, ratio)
         cmd.extend(
             [
                 "--run_graphvid" if method == "graphvid" else "--no-run_graphvid",
                 "--run_graftvid" if method == "graftvid" else "--no-run_graftvid",
+                "--run_cats" if method == "cats" else "--no-run_cats",
                 "--no-run_flashvid",
                 "--graph_temporal_topk",
                 str(args.graph_temporal_topk),
@@ -281,6 +282,27 @@ def _build_command(
             cmd.append("--graft_adaptive_aggregation" if args.graft_adaptive_aggregation else "--no-graft_adaptive_aggregation")
             cmd.append("--graft_budget_correction" if args.graft_budget_correction else "--no-graft_budget_correction")
             cmd.append("--graft_input_is_residual" if args.graft_input_is_residual else "--no-graft_input_is_residual")
+        elif method == "cats":
+            cmd.extend(
+                [
+                    "--cats_adts_beta",
+                    str(args.cats_adts_beta),
+                    "--cats_margin_threshold",
+                    str(args.cats_margin_threshold),
+                    "--cats_high_conf_bonus",
+                    str(args.cats_high_conf_bonus),
+                    "--cats_confidence_attn_weight",
+                    str(args.cats_confidence_attn_weight),
+                    "--cats_confidence_sim_weight",
+                    str(args.cats_confidence_sim_weight),
+                    "--cats_frame_budget_min",
+                    str(args.cats_frame_budget_min),
+                    "--cats_frame_budget_temperature",
+                    str(args.cats_frame_budget_temperature),
+                ]
+            )
+            cmd.append("--cats_mutual_nn" if args.cats_mutual_nn else "--no-cats_mutual_nn")
+            cmd.append("--cats_adaptive_adts_budget" if args.cats_adaptive_adts_budget else "--no-cats_adaptive_adts_budget")
         if args.graph_skip_spatial_merge_when_capped:
             cmd.append("--graph_skip_spatial_merge_when_capped")
         else:
@@ -416,7 +438,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -489,6 +511,15 @@ def main() -> None:
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
+    parser.add_argument("--cats_adts_beta", type=float, default=0.05)
+    parser.add_argument("--cats_margin_threshold", type=float, default=0.03)
+    parser.add_argument("--cats_high_conf_bonus", type=float, default=0.05)
+    parser.add_argument("--cats_mutual_nn", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--cats_confidence_attn_weight", type=float, default=0.75)
+    parser.add_argument("--cats_confidence_sim_weight", type=float, default=1.0)
+    parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--cats_frame_budget_min", type=int, default=1)
+    parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)
     parser.add_argument("--token_selection_method", default="attn_div_stable")
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_stable")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=22)

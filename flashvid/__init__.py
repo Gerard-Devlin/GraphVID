@@ -143,6 +143,15 @@ def flashvid(
     graft_long_split_radius_eps: Optional[float] = None,
     graft_long_spatial_penalty: Optional[float] = None,
     graft_long_scene_threshold: Optional[float] = None,
+    cats_adts_beta: float = 0.05,
+    cats_margin_threshold: float = 0.03,
+    cats_high_conf_bonus: float = 0.05,
+    cats_mutual_nn: bool = True,
+    cats_confidence_attn_weight: float = 0.75,
+    cats_confidence_sim_weight: float = 1.0,
+    cats_adaptive_adts_budget: bool = False,
+    cats_frame_budget_min: int = 1,
+    cats_frame_budget_temperature: float = 0.7,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -495,12 +504,14 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
         temporal_merge_mode = "graft"
+    elif variant == "cats":
+        temporal_merge_mode = "cats"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -573,6 +584,15 @@ def flashvid(
         graft_long_split_radius_eps=graft_long_split_radius_eps,
         graft_long_spatial_penalty=graft_long_spatial_penalty,
         graft_long_scene_threshold=graft_long_scene_threshold,
+        cats_adts_beta=cats_adts_beta,
+        cats_margin_threshold=cats_margin_threshold,
+        cats_high_conf_bonus=cats_high_conf_bonus,
+        cats_mutual_nn=cats_mutual_nn,
+        cats_confidence_attn_weight=cats_confidence_attn_weight,
+        cats_confidence_sim_weight=cats_confidence_sim_weight,
+        cats_adaptive_adts_budget=cats_adaptive_adts_budget,
+        cats_frame_budget_min=cats_frame_budget_min,
+        cats_frame_budget_temperature=cats_frame_budget_temperature,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

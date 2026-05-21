@@ -46,6 +46,19 @@ GRAFT_METRIC_KEYS = [
     "graft_capacity_rejected",
     "graft_same_frame_rejected",
 ]
+CATS_METRIC_KEYS = [
+    "cats_selected_tokens",
+    "cats_sink_merges",
+    "cats_residual_merges",
+    "cats_mutual_rejected",
+    "cats_margin_rejected",
+    "cats_threshold_rejected",
+    "cats_retained_residual_tokens",
+    "cats_spatial_tokens_before",
+    "cats_spatial_tokens_after",
+    "cats_mean_merge_sim",
+    "cats_mean_margin",
+]
 
 
 @dataclass
@@ -78,6 +91,7 @@ class BenchmarkArgs:
     run_ours: bool = field(default=True)
     run_graphvid: bool = field(default=False)
     run_graftvid: bool = field(default=False)
+    run_cats: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
@@ -144,6 +158,15 @@ class BenchmarkArgs:
     graft_long_split_radius_eps: Optional[float] = field(default=None)
     graft_long_spatial_penalty: Optional[float] = field(default=None)
     graft_long_scene_threshold: Optional[float] = field(default=None)
+    cats_adts_beta: float = field(default=0.05)
+    cats_margin_threshold: float = field(default=0.03)
+    cats_high_conf_bonus: float = field(default=0.05)
+    cats_mutual_nn: bool = field(default=True)
+    cats_confidence_attn_weight: float = field(default=0.75)
+    cats_confidence_sim_weight: float = field(default=1.0)
+    cats_adaptive_adts_budget: bool = field(default=False)
+    cats_frame_budget_min: int = field(default=1)
+    cats_frame_budget_temperature: float = field(default=0.7)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -360,6 +383,7 @@ class BenchmarkArgs:
     ours_output: str = field(default="logs/efficiency/ours_all_metrics.jsonl")
     graphvid_output: str = field(default="logs/efficiency/graphvid_all_metrics.jsonl")
     graftvid_output: str = field(default="logs/efficiency/graftvid_all_metrics.jsonl")
+    cats_output: str = field(default="logs/efficiency/cats_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -991,6 +1015,18 @@ def _get_graft_debug_metrics(model) -> dict[str, float | None]:
     return values
 
 
+def _get_cats_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in CATS_METRIC_KEYS}
+    if not hasattr(model, "flashvid_config"):
+        return empty
+    cfg = getattr(model, "flashvid_config")
+    values: dict[str, float | None] = {}
+    for key in CATS_METRIC_KEYS:
+        value = getattr(cfg, f"last_{key}", None)
+        values[key] = float(value) if value is not None else None
+    return values
+
+
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
@@ -1055,6 +1091,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_grid_h_per_run = []
     talon_core_grid_w_per_run = []
     graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
+    cats_metrics_per_run = {key: [] for key in CATS_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -1091,11 +1128,15 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         debug_metrics = _get_talon_debug_metrics(model)
         talon_core_metrics = _get_talon_core_debug_metrics(model)
         graft_metrics = _get_graft_debug_metrics(model)
+        cats_metrics = _get_cats_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
         for key in GRAFT_METRIC_KEYS:
             if graft_metrics.get(key) is not None:
                 graft_metrics_per_run[key].append(float(graft_metrics[key]))
+        for key in CATS_METRIC_KEYS:
+            if cats_metrics.get(key) is not None:
+                cats_metrics_per_run[key].append(float(cats_metrics[key]))
         if debug_metrics["talon_target_tokens_per_frame"] is not None:
             talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
         if debug_metrics["talon_complexity_score"] is not None:
@@ -1193,6 +1234,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in graft_metrics_per_run.items()
     }
+    cats_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in cats_metrics_per_run.items()
+    }
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1235,6 +1280,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_core_grid_h": talon_core_grid_h,
         "talon_core_grid_w": talon_core_grid_w,
         **graft_metric_means,
+        **cats_metric_means,
     }
 
 
@@ -1289,6 +1335,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "error_traceback": None,
     }
     record.update({key: None for key in GRAFT_METRIC_KEYS})
+    record.update({key: None for key in CATS_METRIC_KEYS})
 
     try:
         if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
@@ -1579,6 +1626,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in GRAFT_METRIC_KEYS
     }
+    cats_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in CATS_METRIC_KEYS
+    }
 
     return {
         "num_samples": len(records),
@@ -1621,6 +1672,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_core_grid_h": _stats(talon_core_grid_h),
         "talon_core_grid_w": _stats(talon_core_grid_w),
         **graft_stats,
+        **cats_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1704,6 +1756,7 @@ def _add_duration_breakdown(
     ours_records: Optional[list[dict[str, Any]]] = None,
     graphvid_records: Optional[list[dict[str, Any]]] = None,
     graftvid_records: Optional[list[dict[str, Any]]] = None,
+    cats_records: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     records_by_phase = {
         "baseline": baseline_records,
@@ -1711,6 +1764,7 @@ def _add_duration_breakdown(
         "ours": ours_records,
         "graphvid": graphvid_records,
         "graftvid": graftvid_records,
+        "cats": cats_records,
     }
     durations = ["short", "medium", "long"]
     breakdown: dict[str, Any] = {}
@@ -1761,6 +1815,13 @@ def _add_duration_breakdown(
                 phase_records["graftvid"],
                 anchor_name="flashvid",
                 target_name="graftvid",
+            )
+        if "flashvid" in phase_records and "cats" in phase_records:
+            bucket["comparison"]["flashvid_vs_cats"] = _summarize_pairwise_comparison(
+                phase_records["flashvid"],
+                phase_records["cats"],
+                anchor_name="flashvid",
+                target_name="cats",
             )
         breakdown[duration] = bucket
     summary["duration_breakdown"] = breakdown
@@ -2196,6 +2257,47 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
     )
 
 
+def _apply_cats(model, args: BenchmarkArgs, backend: str):
+    from flashvid import flashvid
+    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
+
+    return flashvid(
+        model=model,
+        retention_ratio=args.retention_ratio,
+        do_segment=args.do_segment,
+        segment_threshold=args.segment_threshold,
+        min_segment_num=args.min_segment_num,
+        complementary_segment=args.complementary_segment,
+        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
+        alpha=args.alpha,
+        temporal_threshold=args.temporal_threshold,
+        temporal_merge_mode="cats",
+        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
+        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
+        graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
+        cats_adts_beta=args.cats_adts_beta,
+        cats_margin_threshold=args.cats_margin_threshold,
+        cats_high_conf_bonus=args.cats_high_conf_bonus,
+        cats_mutual_nn=args.cats_mutual_nn,
+        cats_confidence_attn_weight=args.cats_confidence_attn_weight,
+        cats_confidence_sim_weight=args.cats_confidence_sim_weight,
+        cats_adaptive_adts_budget=args.cats_adaptive_adts_budget,
+        cats_frame_budget_min=args.cats_frame_budget_min,
+        cats_frame_budget_temperature=args.cats_frame_budget_temperature,
+        expansion=args.expansion,
+        pruning_layer=pruning_layer,
+        llm_retention_ratio=llm_retention_ratio,
+        compression_variant="cats",
+        question_aware_reweighting=False,
+        question_reweight_beta=args.question_reweight_beta,
+        adaptive_token_budget=False,
+        decode_policy=args.decode_policy,
+        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
+        decode_update_interval=args.decode_update_interval,
+        decode_start_layer=args.decode_start_layer,
+    )
+
+
 def _apply_ours(model, args: BenchmarkArgs, backend: str):
     from flashvid import flashvid
     pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
@@ -2480,7 +2582,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
-        f"ours={args.run_ours}, graphvid={args.run_graphvid}, graftvid={args.run_graftvid}"
+        f"ours={args.run_ours}, graphvid={args.run_graphvid}, graftvid={args.run_graftvid}, cats={args.run_cats}"
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
@@ -2529,6 +2631,15 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}, "
             f"score={args.graft_score_preset}, dur_aware={args.graft_duration_aware}"
         )
+    if args.run_cats:
+        print(
+            "CATS config  : "
+            f"beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
+            f"high_bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
+            f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
+            f"adaptive_budget={args.cats_adaptive_adts_budget}, minpf={args.cats_frame_budget_min}, "
+            f"temp={args.cats_frame_budget_temperature:.2f}"
+        )
     print(SEPARATOR)
 
 
@@ -2536,7 +2647,7 @@ def _print_summary(summary: dict[str, Any]):
     print(SEPARATOR)
     print("Summary")
     print(SEPARATOR)
-    for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid"):
+    for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid", "cats"):
         phase = summary.get(phase_name)
         if phase is None:
             continue
@@ -2597,6 +2708,17 @@ def _print_summary(summary: dict[str, Any]):
         graft_radius_rej_mean = phase.get("graft_radius_rejected", {}).get("mean")
         graft_capacity_rej_mean = phase.get("graft_capacity_rejected", {}).get("mean")
         graft_same_frame_rej_mean = phase.get("graft_same_frame_rejected", {}).get("mean")
+        cats_selected_mean = phase.get("cats_selected_tokens", {}).get("mean")
+        cats_sink_mean = phase.get("cats_sink_merges", {}).get("mean")
+        cats_residual_mean = phase.get("cats_residual_merges", {}).get("mean")
+        cats_mutual_rej_mean = phase.get("cats_mutual_rejected", {}).get("mean")
+        cats_margin_rej_mean = phase.get("cats_margin_rejected", {}).get("mean")
+        cats_threshold_rej_mean = phase.get("cats_threshold_rejected", {}).get("mean")
+        cats_retained_mean = phase.get("cats_retained_residual_tokens", {}).get("mean")
+        cats_before_mean = phase.get("cats_spatial_tokens_before", {}).get("mean")
+        cats_after_mean = phase.get("cats_spatial_tokens_after", {}).get("mean")
+        cats_sim_mean = phase.get("cats_mean_merge_sim", {}).get("mean")
+        cats_margin_mean = phase.get("cats_mean_margin", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -2682,6 +2804,20 @@ def _print_summary(summary: dict[str, Any]):
                 f"{(graft_mutual_rej_mean or 0.0):.2f}/{(graft_radius_rej_mean or 0.0):.2f}/"
                 f"{(graft_capacity_rej_mean or 0.0):.2f}/{(graft_same_frame_rej_mean or 0.0):.2f}"
             )
+        if cats_selected_mean is not None:
+            print(
+                "  cats selected/sink/residual/retained mean: "
+                f"{cats_selected_mean:.2f}/{(cats_sink_mean or 0.0):.2f}/"
+                f"{(cats_residual_mean or 0.0):.2f}/{(cats_retained_mean or 0.0):.2f}"
+            )
+            print(
+                "  cats reject thr/mutual/margin and spatial pre-post mean: "
+                f"{(cats_threshold_rej_mean or 0.0):.2f}/{(cats_mutual_rej_mean or 0.0):.2f}/"
+                f"{(cats_margin_rej_mean or 0.0):.2f} "
+                f"{(cats_before_mean or 0.0):.2f}->{(cats_after_mean or 0.0):.2f}"
+            )
+        if cats_sim_mean is not None:
+            print(f"  cats merge sim/margin mean: {cats_sim_mean:.4f}/{(cats_margin_mean or 0.0):.4f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -2690,7 +2826,7 @@ def _print_summary(summary: dict[str, Any]):
     comparison = summary.get("comparison", {})
     if comparison:
         print("[comparison]")
-        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid", "flashvid_vs_graftvid"):
+        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid", "flashvid_vs_graftvid", "flashvid_vs_cats"):
             comp = comparison.get(key)
             if comp is None:
                 continue
@@ -2729,7 +2865,7 @@ def _print_summary(summary: dict[str, Any]):
                 continue
             phase_values = [
                 bucket.get(phase_name)
-                for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid")
+                for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid", "cats")
                 if bucket.get(phase_name) is not None
             ]
             if not phase_values or all(int(phase.get("num_samples", 0) or 0) == 0 for phase in phase_values):
@@ -2738,7 +2874,7 @@ def _print_summary(summary: dict[str, Any]):
                 print("[by duration]")
                 printed_header = True
             print(f"  [{duration}]")
-            for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid"):
+            for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid", "cats"):
                 phase = bucket.get(phase_name)
                 if phase is None:
                     continue
@@ -2770,6 +2906,9 @@ def _print_summary(summary: dict[str, Any]):
             if comp is None:
                 comp_key = "flashvid_vs_graftvid"
                 comp = bucket.get("comparison", {}).get(comp_key)
+            if comp is None:
+                comp_key = "flashvid_vs_cats"
+                comp = bucket.get("comparison", {}).get(comp_key)
             if comp is not None:
                 ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
                 reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
@@ -2788,8 +2927,8 @@ def run(args: BenchmarkArgs):
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
-    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid or args.run_graftvid):
-        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid/run_graftvid")
+    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid or args.run_graftvid or args.run_cats):
+        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid/run_graftvid/run_cats")
 
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
@@ -2817,6 +2956,7 @@ def run(args: BenchmarkArgs):
         + int(args.run_ours)
         + int(args.run_graphvid)
         + int(args.run_graftvid)
+        + int(args.run_cats)
     )
     phase_idx = 1
     def _acquire_phase_bundle():
@@ -2938,6 +3078,31 @@ def run(args: BenchmarkArgs):
             _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
+    if args.run_cats:
+        print(f"\nPhase {phase_idx}/{total_phases}: CATS-FlashVID ...")
+        print(
+            "[cats-active] "
+            f"beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
+            f"bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
+            f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
+            f"adaptive_budget={args.cats_adaptive_adts_budget}"
+        )
+        phase_bundle = _acquire_phase_bundle()
+        phase_backend = phase_bundle["backend"]
+        phase_bundle["model"] = _apply_cats(phase_bundle["model"], args, phase_backend)
+        try:
+            _run_phase(
+                model_bundle=phase_bundle,
+                args=args,
+                samples=samples,
+                phase_name="CATS",
+                use_acceleration=True,
+                output_path=args.cats_output,
+            )
+        finally:
+            _release_phase_bundle(phase_bundle)
+        phase_idx += 1
+
     if args.run_ours:
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
         print(
@@ -2972,6 +3137,7 @@ def run(args: BenchmarkArgs):
     ours_records = None
     graphvid_records = None
     graftvid_records = None
+    cats_records = None
     if args.run_baseline:
         baseline_records = _read_jsonl(args.baseline_output)
         summary["baseline"] = _summarize_phase(baseline_records)
@@ -2987,6 +3153,9 @@ def run(args: BenchmarkArgs):
     if args.run_graftvid:
         graftvid_records = _read_jsonl(args.graftvid_output)
         summary["graftvid"] = _summarize_phase(graftvid_records)
+    if args.run_cats:
+        cats_records = _read_jsonl(args.cats_output)
+        summary["cats"] = _summarize_phase(cats_records)
 
     if baseline_records is not None and flashvid_records is not None:
         summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
@@ -3023,6 +3192,13 @@ def run(args: BenchmarkArgs):
             anchor_name="flashvid",
             target_name="graftvid",
         )
+    if flashvid_records is not None and cats_records is not None:
+        summary["comparison"]["flashvid_vs_cats"] = _summarize_pairwise_comparison(
+            flashvid_records,
+            cats_records,
+            anchor_name="flashvid",
+            target_name="cats",
+        )
     _add_duration_breakdown(
         summary,
         baseline_records=baseline_records,
@@ -3030,6 +3206,7 @@ def run(args: BenchmarkArgs):
         ours_records=ours_records,
         graphvid_records=graphvid_records,
         graftvid_records=graftvid_records,
+        cats_records=cats_records,
     )
 
     summary_path = Path(args.summary_output_json)

@@ -79,6 +79,17 @@ class FlashVidConfig:
     graft_long_spatial_penalty: Optional[float] = field(default=None)
     graft_long_scene_threshold: Optional[float] = field(default=None)
 
+    # CATS-FlashVID confidence-aware protected-sink TSTM.
+    cats_adts_beta: float = field(default=0.05)
+    cats_margin_threshold: float = field(default=0.03)
+    cats_high_conf_bonus: float = field(default=0.05)
+    cats_mutual_nn: bool = field(default=True)
+    cats_confidence_attn_weight: float = field(default=0.75)
+    cats_confidence_sim_weight: float = field(default=1.0)
+    cats_adaptive_adts_budget: bool = field(default=False)
+    cats_frame_budget_min: int = field(default=1)
+    cats_frame_budget_temperature: float = field(default=0.7)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -102,6 +113,7 @@ class FlashVidConfig:
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "graftvid": ADTS + constrained temporal forest path.
+    # "cats": CATS protected-sink ADTS + confidence-aware TSTM path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
