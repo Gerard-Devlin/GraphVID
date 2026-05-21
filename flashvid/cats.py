@@ -225,7 +225,14 @@ def _cats_sink_tstm(
 
     attn_weight = max(0.0, _cfg_float(config, "cats_confidence_attn_weight", 0.75))
     sim_weight = max(0.0, _cfg_float(config, "cats_confidence_sim_weight", 1.0))
+    anchor_self_weight = max(1.0, _cfg_float(config, "cats_anchor_self_weight", 1.0))
     initial_weight = 1.0 + attn_weight * importance.float()
+    if anchor_self_weight > 1.0:
+        initial_weight = torch.where(
+            selected_mask,
+            initial_weight * anchor_self_weight,
+            initial_weight,
+        )
     feature_sums = video_features.float() * initial_weight.unsqueeze(-1)
     token_weights = initial_weight.clone()
 

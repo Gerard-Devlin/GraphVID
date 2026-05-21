@@ -285,6 +285,8 @@ def _build_command(
             str(args.cats_confidence_attn_weight),
             "--cats_confidence_sim_weight",
             str(args.cats_confidence_sim_weight),
+            "--cats_anchor_self_weight",
+            str(args.cats_anchor_self_weight),
             "--cats_frame_budget_min",
             str(args.cats_frame_budget_min),
             "--cats_frame_budget_temperature",
@@ -526,6 +528,7 @@ def main() -> None:
     parser.add_argument("--cats_mutual_nn", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cats_confidence_attn_weight", type=float, default=0.75)
     parser.add_argument("--cats_confidence_sim_weight", type=float, default=1.0)
+    parser.add_argument("--cats_anchor_self_weight", type=float, default=1.0)
     parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--cats_frame_budget_min", type=int, default=1)
     parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)

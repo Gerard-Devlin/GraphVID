@@ -164,6 +164,7 @@ class BenchmarkArgs:
     cats_mutual_nn: bool = field(default=True)
     cats_confidence_attn_weight: float = field(default=0.75)
     cats_confidence_sim_weight: float = field(default=1.0)
+    cats_anchor_self_weight: float = field(default=1.0)
     cats_adaptive_adts_budget: bool = field(default=False)
     cats_frame_budget_min: int = field(default=1)
     cats_frame_budget_temperature: float = field(default=0.7)
@@ -1017,9 +1018,17 @@ def _get_graft_debug_metrics(model) -> dict[str, float | None]:
 
 def _get_cats_debug_metrics(model) -> dict[str, float | None]:
     empty = {key: None for key in CATS_METRIC_KEYS}
-    if not hasattr(model, "flashvid_config"):
+    cfg = getattr(model, "flashvid_config", None)
+    if cfg is None and hasattr(model, "model"):
+        cfg = getattr(model.model, "flashvid_config", None)
+    if cfg is None and hasattr(model, "language_model"):
+        cfg = getattr(model.language_model, "flashvid_config", None)
+    if cfg is None and hasattr(model, "module"):
+        cfg = getattr(model.module, "flashvid_config", None)
+        if cfg is None and hasattr(model.module, "model"):
+            cfg = getattr(model.module.model, "flashvid_config", None)
+    if cfg is None:
         return empty
-    cfg = getattr(model, "flashvid_config")
     values: dict[str, float | None] = {}
     for key in CATS_METRIC_KEYS:
         value = getattr(cfg, f"last_{key}", None)
@@ -2281,6 +2290,7 @@ def _apply_cats(model, args: BenchmarkArgs, backend: str):
         cats_mutual_nn=args.cats_mutual_nn,
         cats_confidence_attn_weight=args.cats_confidence_attn_weight,
         cats_confidence_sim_weight=args.cats_confidence_sim_weight,
+        cats_anchor_self_weight=args.cats_anchor_self_weight,
         cats_adaptive_adts_budget=args.cats_adaptive_adts_budget,
         cats_frame_budget_min=args.cats_frame_budget_min,
         cats_frame_budget_temperature=args.cats_frame_budget_temperature,
@@ -2637,6 +2647,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
             f"high_bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
             f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
+            f"anchor_w={args.cats_anchor_self_weight:.2f}, "
             f"adaptive_budget={args.cats_adaptive_adts_budget}, minpf={args.cats_frame_budget_min}, "
             f"temp={args.cats_frame_budget_temperature:.2f}"
         )
@@ -3085,6 +3096,7 @@ def run(args: BenchmarkArgs):
             f"beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
             f"bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
             f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
+            f"anchor_w={args.cats_anchor_self_weight:.2f}, "
             f"adaptive_budget={args.cats_adaptive_adts_budget}"
         )
         phase_bundle = _acquire_phase_bundle()

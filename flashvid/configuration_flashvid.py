@@ -86,6 +86,7 @@ class FlashVidConfig:
     cats_mutual_nn: bool = field(default=True)
     cats_confidence_attn_weight: float = field(default=0.75)
     cats_confidence_sim_weight: float = field(default=1.0)
+    cats_anchor_self_weight: float = field(default=1.0)
     cats_adaptive_adts_budget: bool = field(default=False)
     cats_frame_budget_min: int = field(default=1)
     cats_frame_budget_temperature: float = field(default=0.7)
