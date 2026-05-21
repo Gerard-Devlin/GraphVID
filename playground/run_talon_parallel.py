@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_GPU_CAP = 4
 
 
 def _str_bool(value: bool) -> str:
@@ -50,6 +51,15 @@ def _query_free_gpus(free_ratio: float, min_free_mb: int) -> list[int]:
         if ok:
             gpus.append(idx)
     return gpus
+
+
+def _apply_gpu_cap(gpu_ids: list[int], gpu_cap: int) -> list[int]:
+    """Keep one benchmark launch from occupying too many GPUs."""
+    if gpu_cap <= 0 or len(gpu_ids) <= gpu_cap:
+        return gpu_ids
+    capped = gpu_ids[:gpu_cap]
+    print(f"[gpu-cap] limiting GPUs from {gpu_ids} to {capped} (cap={gpu_cap})")
+    return capped
 
 
 def _split_ranges(start: int, total: int, parts: int) -> list[tuple[int, int]]:
@@ -769,7 +779,8 @@ def main() -> None:
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
-    parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")
+    parser.add_argument("--max_gpus", type=int, default=0, help="0 means use eligible GPUs up to --gpu_cap.")
+    parser.add_argument("--gpu_cap", type=int, default=DEFAULT_GPU_CAP, help="Hard cap for GPUs per launch. 0 disables the cap.")
     parser.add_argument("--gpu_ids", default="", help="Comma-separated GPU ids. Overrides auto selection.")
     parser.add_argument("--tag", default="talon_recall08_t20_parallel")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=20)
@@ -955,6 +966,7 @@ def main() -> None:
         gpu_ids = _query_free_gpus(args.free_ratio, args.min_free_mb)
     if args.max_gpus > 0:
         gpu_ids = gpu_ids[: args.max_gpus]
+    gpu_ids = _apply_gpu_cap(gpu_ids, args.gpu_cap)
     if not gpu_ids:
         raise SystemExit("No eligible GPU found. Lower --free_ratio/--min_free_mb or pass --gpu_ids.")
     if args.total_limit <= 0:

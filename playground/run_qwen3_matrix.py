@@ -185,6 +185,8 @@ def _build_command(
         str(args.min_free_mb),
         "--max_gpus",
         str(args.max_gpus),
+        "--gpu_cap",
+        str(args.gpu_cap),
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -455,7 +457,8 @@ def main() -> None:
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
-    parser.add_argument("--max_gpus", type=int, default=0)
+    parser.add_argument("--max_gpus", type=int, default=4)
+    parser.add_argument("--gpu_cap", type=int, default=4)
     parser.add_argument("--gpu_ids", default="")
     parser.add_argument("--retention_expansion", dest="expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
