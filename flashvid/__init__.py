@@ -154,6 +154,11 @@ def flashvid(
     cats_adaptive_adts_budget: bool = False,
     cats_frame_budget_min: int = 1,
     cats_frame_budget_temperature: float = 0.7,
+    hedge_stable_floor_ratio: float = 0.85,
+    hedge_diversity_weight: float = 0.04,
+    hedge_stable_bias: float = 0.05,
+    hedge_evidence_bias: float = 0.0,
+    hedge_max_mmr_candidates: int = 2048,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -379,6 +384,7 @@ def flashvid(
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
+            "hedgevid" freezes FlashVID ADTS and selects residuals from stable/evidence pools;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -506,8 +512,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
@@ -597,6 +603,11 @@ def flashvid(
         cats_adaptive_adts_budget=cats_adaptive_adts_budget,
         cats_frame_budget_min=cats_frame_budget_min,
         cats_frame_budget_temperature=cats_frame_budget_temperature,
+        hedge_stable_floor_ratio=hedge_stable_floor_ratio,
+        hedge_diversity_weight=hedge_diversity_weight,
+        hedge_stable_bias=hedge_stable_bias,
+        hedge_evidence_bias=hedge_evidence_bias,
+        hedge_max_mmr_candidates=hedge_max_mmr_candidates,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

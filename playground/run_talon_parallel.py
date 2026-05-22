@@ -76,6 +76,8 @@ def _split_ranges(start: int, total: int, parts: int) -> list[tuple[int, int]]:
 
 
 def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
+    variant = str(getattr(args, "compression_variant", "talon") or "talon").strip().lower()
+    qaware = "True" if variant == "talon" else "False"
     cmd.extend(
         [
             "--llm_retention_ratio",
@@ -85,9 +87,9 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--expansion",
             str(args.expansion),
             "--compression_variant",
-            "talon",
+            variant,
             "--question_aware_reweighting",
-            "True",
+            qaware,
             "--question_reweight_beta",
             "0.25",
             "--adaptive_token_budget",
@@ -330,6 +332,20 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "0.20",
             "--talon_deepstack_mode",
             "keep",
+        ]
+    )
+    cmd.extend(
+        [
+            "--hedge_stable_floor_ratio",
+            str(args.hedge_stable_floor_ratio),
+            "--hedge_diversity_weight",
+            str(args.hedge_diversity_weight),
+            "--hedge_stable_bias",
+            str(args.hedge_stable_bias),
+            "--hedge_evidence_bias",
+            str(args.hedge_evidence_bias),
+            "--hedge_max_mmr_candidates",
+            str(args.hedge_max_mmr_candidates),
         ]
     )
 
@@ -778,6 +794,7 @@ def main() -> None:
     parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--run_graftvid", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--run_cats", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--compression_variant", default="talon")
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
@@ -855,6 +872,11 @@ def main() -> None:
     parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--cats_frame_budget_min", type=int, default=1)
     parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)
+    parser.add_argument("--hedge_stable_floor_ratio", type=float, default=0.85)
+    parser.add_argument("--hedge_diversity_weight", type=float, default=0.04)
+    parser.add_argument("--hedge_stable_bias", type=float, default=0.05)
+    parser.add_argument("--hedge_evidence_bias", type=float, default=0.0)
+    parser.add_argument("--hedge_max_mmr_candidates", type=int, default=2048)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

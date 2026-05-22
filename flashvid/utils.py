@@ -136,8 +136,8 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant not in ("flashvid", "graphvid", "graftvid", "cats"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|cats|talon")
+    if compression_variant not in ("flashvid", "graphvid", "graftvid", "cats", "hedgevid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|cats|hedgevid|talon")
     if compression_variant == "graftvid":
         from .graftvid import _reset_graft_metrics
 
@@ -146,6 +146,10 @@ def flashvid_compression(
         from .cats import _reset_cats_metrics
 
         _reset_cats_metrics(flashvid_config)
+    if compression_variant == "hedgevid":
+        from .hedgevid import _reset_hedge_metrics
+
+        _reset_hedge_metrics(flashvid_config)
 
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
@@ -229,6 +233,15 @@ def segment_compression(
         from .cats import cats_segment_compression
 
         return cats_segment_compression(
+            segment_features=segment_features,
+            segment_global_indices=segment_global_indices,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+        )
+    if compression_variant == "hedgevid":
+        from .hedgevid import hedge_segment_compression
+
+        return hedge_segment_compression(
             segment_features=segment_features,
             segment_global_indices=segment_global_indices,
             cls_attention=cls_attention,

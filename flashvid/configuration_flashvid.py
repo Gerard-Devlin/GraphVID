@@ -92,6 +92,13 @@ class FlashVidConfig:
     cats_frame_budget_min: int = field(default=1)
     cats_frame_budget_temperature: float = field(default=0.7)
 
+    # HEDGE-VID dual-path residual selection.
+    hedge_stable_floor_ratio: float = field(default=0.85)
+    hedge_diversity_weight: float = field(default=0.04)
+    hedge_stable_bias: float = field(default=0.05)
+    hedge_evidence_bias: float = field(default=0.0)
+    hedge_max_mmr_candidates: int = field(default=2048)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -116,6 +123,7 @@ class FlashVidConfig:
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "graftvid": ADTS + constrained temporal forest path.
     # "cats": CATS protected-sink ADTS + confidence-aware TSTM path.
+    # "hedgevid": FlashVID ADTS + stable/evidence residual candidate selection.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

@@ -60,6 +60,17 @@ CATS_METRIC_KEYS = [
     "cats_mean_merge_sim",
     "cats_mean_margin",
 ]
+HEDGE_METRIC_KEYS = [
+    "hedge_selected_adts",
+    "hedge_residual_budget",
+    "hedge_stable_candidates",
+    "hedge_evidence_candidates",
+    "hedge_stable_selected",
+    "hedge_evidence_selected",
+    "hedge_final_tokens",
+    "hedge_stable_floor_ratio",
+    "hedge_diversity_weight",
+]
 
 
 @dataclass
@@ -170,6 +181,11 @@ class BenchmarkArgs:
     cats_adaptive_adts_budget: bool = field(default=False)
     cats_frame_budget_min: int = field(default=1)
     cats_frame_budget_temperature: float = field(default=0.7)
+    hedge_stable_floor_ratio: float = field(default=0.85)
+    hedge_diversity_weight: float = field(default=0.04)
+    hedge_stable_bias: float = field(default=0.05)
+    hedge_evidence_bias: float = field(default=0.0)
+    hedge_max_mmr_candidates: int = field(default=2048)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1052,6 +1068,38 @@ def _get_cats_debug_metrics(model) -> dict[str, float | None]:
     return best_values
 
 
+def _get_hedge_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in HEDGE_METRIC_KEYS}
+    candidates = []
+    for obj in (
+        model,
+        getattr(model, "model", None),
+        getattr(model, "language_model", None),
+        getattr(model, "module", None),
+        getattr(getattr(model, "module", None), "model", None),
+    ):
+        if obj is None:
+            continue
+        cfg = getattr(obj, "flashvid_config", None)
+        if cfg is not None and cfg not in candidates:
+            candidates.append(cfg)
+    if not candidates:
+        return empty
+    best_values = empty
+    best_score = -1
+    for cfg in candidates:
+        values: dict[str, float | None] = {}
+        present = 0
+        for key in HEDGE_METRIC_KEYS:
+            value = getattr(cfg, f"last_{key}", None)
+            values[key] = float(value) if value is not None else None
+            present += int(value is not None)
+        if present > best_score:
+            best_score = present
+            best_values = values
+    return best_values
+
+
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
@@ -1117,6 +1165,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_grid_w_per_run = []
     graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
     cats_metrics_per_run = {key: [] for key in CATS_METRIC_KEYS}
+    hedge_metrics_per_run = {key: [] for key in HEDGE_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -1154,6 +1203,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         talon_core_metrics = _get_talon_core_debug_metrics(model)
         graft_metrics = _get_graft_debug_metrics(model)
         cats_metrics = _get_cats_debug_metrics(model)
+        hedge_metrics = _get_hedge_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
         for key in GRAFT_METRIC_KEYS:
@@ -1162,6 +1212,9 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         for key in CATS_METRIC_KEYS:
             if cats_metrics.get(key) is not None:
                 cats_metrics_per_run[key].append(float(cats_metrics[key]))
+        for key in HEDGE_METRIC_KEYS:
+            if hedge_metrics.get(key) is not None:
+                hedge_metrics_per_run[key].append(float(hedge_metrics[key]))
         if debug_metrics["talon_target_tokens_per_frame"] is not None:
             talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
         if debug_metrics["talon_complexity_score"] is not None:
@@ -1263,6 +1316,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in cats_metrics_per_run.items()
     }
+    hedge_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in hedge_metrics_per_run.items()
+    }
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1306,6 +1363,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_core_grid_w": talon_core_grid_w,
         **graft_metric_means,
         **cats_metric_means,
+        **hedge_metric_means,
     }
 
 
@@ -1361,6 +1419,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     }
     record.update({key: None for key in GRAFT_METRIC_KEYS})
     record.update({key: None for key in CATS_METRIC_KEYS})
+    record.update({key: None for key in HEDGE_METRIC_KEYS})
 
     try:
         if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
@@ -1419,6 +1478,8 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_core_grid_h": result.get("talon_core_grid_h"),
                 "talon_core_grid_w": result.get("talon_core_grid_w"),
                 **{key: result.get(key) for key in GRAFT_METRIC_KEYS},
+                **{key: result.get(key) for key in CATS_METRIC_KEYS},
+                **{key: result.get(key) for key in HEDGE_METRIC_KEYS},
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -1655,6 +1716,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in CATS_METRIC_KEYS
     }
+    hedge_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in HEDGE_METRIC_KEYS
+    }
 
     return {
         "num_samples": len(records),
@@ -1698,6 +1763,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_core_grid_w": _stats(talon_core_grid_w),
         **graft_stats,
         **cats_stats,
+        **hedge_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -1926,7 +1992,13 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_long_edge_threshold=args.graft_long_edge_threshold,
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,
+        hedge_stable_floor_ratio=args.hedge_stable_floor_ratio,
+        hedge_diversity_weight=args.hedge_diversity_weight,
+        hedge_stable_bias=args.hedge_stable_bias,
+        hedge_evidence_bias=args.hedge_evidence_bias,
+        hedge_max_mmr_candidates=args.hedge_max_mmr_candidates,
+        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="flashvid",
@@ -2188,7 +2260,13 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_long_edge_threshold=args.graft_long_edge_threshold,
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,
+        hedge_stable_floor_ratio=args.hedge_stable_floor_ratio,
+        hedge_diversity_weight=args.hedge_diversity_weight,
+        hedge_stable_bias=args.hedge_stable_bias,
+        hedge_evidence_bias=args.hedge_evidence_bias,
+        hedge_max_mmr_candidates=args.hedge_max_mmr_candidates,
+        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="graphvid",
@@ -2747,6 +2825,13 @@ def _print_summary(summary: dict[str, Any]):
         cats_after_mean = phase.get("cats_spatial_tokens_after", {}).get("mean")
         cats_sim_mean = phase.get("cats_mean_merge_sim", {}).get("mean")
         cats_margin_mean = phase.get("cats_mean_margin", {}).get("mean")
+        hedge_budget_mean = phase.get("hedge_residual_budget", {}).get("mean")
+        hedge_stable_cand_mean = phase.get("hedge_stable_candidates", {}).get("mean")
+        hedge_evidence_cand_mean = phase.get("hedge_evidence_candidates", {}).get("mean")
+        hedge_stable_sel_mean = phase.get("hedge_stable_selected", {}).get("mean")
+        hedge_evidence_sel_mean = phase.get("hedge_evidence_selected", {}).get("mean")
+        hedge_floor_mean = phase.get("hedge_stable_floor_ratio", {}).get("mean")
+        hedge_div_mean = phase.get("hedge_diversity_weight", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -2846,6 +2931,17 @@ def _print_summary(summary: dict[str, Any]):
             )
         if cats_sim_mean is not None:
             print(f"  cats merge sim/margin mean: {cats_sim_mean:.4f}/{(cats_margin_mean or 0.0):.4f}")
+        if hedge_budget_mean is not None:
+            print(
+                "  hedge residual budget/candidates stable+evidence/selected stable+evidence mean: "
+                f"{hedge_budget_mean:.2f}/{(hedge_stable_cand_mean or 0.0):.2f}+"
+                f"{(hedge_evidence_cand_mean or 0.0):.2f}/{(hedge_stable_sel_mean or 0.0):.2f}+"
+                f"{(hedge_evidence_sel_mean or 0.0):.2f}"
+            )
+            print(
+                "  hedge floor/diversity mean: "
+                f"{(hedge_floor_mean or 0.0):.2f}/{(hedge_div_mean or 0.0):.2f}"
+            )
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
