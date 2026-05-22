@@ -119,31 +119,98 @@ def resolve_videomme_video_path(video_id: str) -> str:
     raise FileNotFoundError(f"missing video for videoID={video_id} under {base_dir}")
 
 
+_MCQ_CHOICES = ("A", "B", "C", "D")
+_MCQ_ANSWER_PHRASES = [
+    "the answer is",
+    "answer is",
+    "the correct answer is",
+    "correct answer is",
+    "the best answer is",
+    "best answer is",
+    "the correct option is",
+    "correct option is",
+    "the best option is",
+    "best option is",
+    "the choice is",
+    "choice is",
+    "the correct choice is",
+    "correct choice is",
+    "i choose",
+    "i select",
+    "i pick",
+    "my answer is",
+    "my choice is",
+    "答案是",
+    "答案为",
+    "选",
+]
+_MCQ_FORMAT_PRIORITY = {
+    "start": 10,
+    "end": 9,
+    "phrase": 7,
+    "parentheses": 6,
+    "period": 5,
+    "colon": 4,
+    "right_paren": 3,
+    "space": 2,
+    "fallback": 0,
+}
+_VIDEOMME_LEGACY_POST_PROMPT = "Answer with the option's letter from the given choices directly."
+
+
 def extract_choice_letter(text: str) -> str:
-    """Match FlashVID repo bundled lmms-eval VideoMME extract_characters_regex."""
-    s = (text or "").strip()
-    answer_prefixes = [
-        "The best answer is",
-        "The correct answer is",
-        "The answer is",
-        "The answer",
-        "The best option is" "The correct option is",
-        "Best answer:" "Best option:",
-    ]
-    for answer_prefix in answer_prefixes:
-        s = s.replace(answer_prefix, "")
-    if len(s.split()) > 10 and not re.search("[ABCD]", s):
+    """Match current lmms-eval VideoMME extract_mcq_answer priority rules."""
+    if not text or not text.strip():
         return ""
-    matches = re.search(r"[ABCD]", s)
-    if matches is None:
+    stripped = text.strip()
+    for char in [",", ".", "!", "?", ";", ":", "'", '"']:
+        stripped = stripped.strip(char)
+    padded = f" {stripped} "
+    candidates: list[tuple[str, int, str]] = []
+
+    for ch in _MCQ_CHOICES:
+        if f"({ch})" in padded:
+            candidates.append((ch, padded.rfind(f"({ch})"), "parentheses"))
+        if f"{ch}." in padded:
+            candidates.append((ch, padded.rfind(f"{ch}."), "period"))
+        if f"{ch}:" in padded:
+            candidates.append((ch, padded.rfind(f"{ch}:"), "colon"))
+        if f"{ch})" in padded:
+            candidates.append((ch, padded.rfind(f"{ch})"), "right_paren"))
+        if f"{ch} " in padded:
+            candidates.append((ch, padded.rfind(f"{ch} "), "space"))
+
+    padded_lower = padded.lower()
+    for phrase in _MCQ_ANSWER_PHRASES:
+        idx = padded_lower.find(phrase)
+        if idx == -1:
+            continue
+        after = idx + len(phrase)
+        for ch in _MCQ_CHOICES:
+            ch_pos = padded.find(ch, after)
+            if ch_pos != -1:
+                candidates.append((ch, ch_pos, "phrase"))
+
+    compact = padded.strip()
+    for ch in _MCQ_CHOICES:
+        if compact.startswith(ch) and (len(compact) == 1 or not compact[1].isalpha()):
+            candidates.append((ch, 0, "start"))
+        if compact.endswith(ch) and (len(compact) == 1 or not compact[-2].isalpha()):
+            candidates.append((ch, len(padded) - 1, "end"))
+
+    if not candidates:
+        for ch in _MCQ_CHOICES:
+            if ch in padded:
+                candidates.append((ch, padded.rfind(ch), "fallback"))
+    if not candidates:
         return ""
-    return matches[0]
+    candidates.sort(key=lambda x: (_MCQ_FORMAT_PRIORITY.get(x[2], 0), x[1]), reverse=True)
+    return candidates[0][0]
 
 def to_lmms_videomme_prompt(prompt_text: str) -> str:
     prompt = (prompt_text or "").strip()
-    legacy_suffix = "Answer with the option's letter from the given choices directly."
-    if prompt.endswith(legacy_suffix):
-        prompt = prompt[: -len(legacy_suffix)].rstrip()
+    if prompt.endswith(_VIDEOMME_LEGACY_POST_PROMPT):
+        prompt = prompt[: -len(_VIDEOMME_LEGACY_POST_PROMPT)].rstrip()
     if not prompt.endswith("The best answer is:"):
         prompt = f"{prompt}\nThe best answer is:"
     return prompt
