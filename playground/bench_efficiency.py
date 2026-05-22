@@ -119,9 +119,109 @@ def resolve_videomme_video_path(video_id: str) -> str:
     raise FileNotFoundError(f"missing video for videoID={video_id} under {base_dir}")
 
 
+_MCQ_ANSWER_PHRASES = [
+    "the answer is",
+    "answer is",
+    "the correct answer is",
+    "correct answer is",
+    "the best answer is",
+    "best answer is",
+    "the correct option is",
+    "correct option is",
+    "the best option is",
+    "best option is",
+    "the choice is",
+    "choice is",
+    "the correct choice is",
+    "correct choice is",
+    "i choose",
+    "i select",
+    "i pick",
+    "my answer is",
+    "my choice is",
+    "옵션",
+    "정답은",
+    "답은",
+    "답:",
+    "答案是",
+    "答案为",
+    "选",
+    "答えは",
+]
+_MCQ_FORMAT_PRIORITY = {
+    "start": 10,
+    "end": 9,
+    "phrase": 7,
+    "parentheses": 6,
+    "period": 5,
+    "colon": 4,
+    "right_paren": 3,
+    "space": 2,
+    "fallback": 0,
+}
+
+
 def extract_choice_letter(text: str) -> str:
-    match = re.search(r"[ABCD]", text.upper())
-    return match.group(0) if match else ""
+    if not text or not text.strip():
+        return ""
+    choices = ["A", "B", "C", "D"]
+    normalized = text.strip()
+    for char in [",", ".", "!", "?", ";", ":", "'", '"']:
+        normalized = normalized.strip(char)
+    normalized = " " + normalized + " "
+
+    candidates: list[tuple[str, int, str]] = []
+    for ch in choices:
+        if f"({ch})" in normalized:
+            candidates.append((ch, normalized.rfind(f"({ch})"), "parentheses"))
+    for ch in choices:
+        if f"{ch}." in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch}."), "period"))
+    for ch in choices:
+        if f"{ch}:" in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch}:"), "colon"))
+    for ch in choices:
+        if f"{ch})" in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch})"), "right_paren"))
+    for ch in choices:
+        if f"{ch} " in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch} "), "space"))
+
+    text_lower = normalized.lower()
+    for phrase in _MCQ_ANSWER_PHRASES:
+        idx = text_lower.find(phrase)
+        if idx != -1:
+            after = idx + len(phrase)
+            for ch in choices:
+                ch_pos = normalized.find(ch, after)
+                if ch_pos != -1:
+                    candidates.append((ch, ch_pos, "phrase"))
+
+    stripped = normalized.strip()
+    for ch in choices:
+        if stripped.startswith(ch) and (len(stripped) == 1 or not stripped[1].isalpha()):
+            candidates.append((ch, 0, "start"))
+    for ch in choices:
+        if stripped.endswith(ch) and (len(stripped) == 1 or not stripped[-2].isalpha()):
+            candidates.append((ch, len(normalized) - 1, "end"))
+    if not candidates:
+        for ch in choices:
+            if ch in normalized:
+                candidates.append((ch, normalized.rfind(ch), "fallback"))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda x: (_MCQ_FORMAT_PRIORITY.get(x[2], 0), x[1]), reverse=True)
+    return candidates[0][0]
+
+
+def to_lmms_videomme_prompt(prompt_text: str) -> str:
+    prompt = (prompt_text or "").strip()
+    legacy_suffix = "Answer with the option's letter from the given choices directly."
+    if prompt.endswith(legacy_suffix):
+        prompt = prompt[: -len(legacy_suffix)].rstrip()
+    if not prompt.endswith("The best answer is:"):
+        prompt = f"{prompt}\nThe best answer is:"
+    return prompt
 
 
 def decode_generated_output(
@@ -445,7 +545,7 @@ def benchmark_single_sample(
             tokenizer,
             image_processor,
             video_frames,
-            sample["input"],
+            to_lmms_videomme_prompt(sample["input"]),
         )
         result = run_benchmark(
             model,
@@ -460,7 +560,7 @@ def benchmark_single_sample(
             use_flashvid=use_flashvid,
         )
         record["pred_answer"] = result["pred_answer"]
-        record["correct"] = result["pred_answer"] == sample.get("answer")
+        record["correct"] = str(result["pred_answer"]).lower() == str(sample.get("answer")).lower()
         record["prefilling_ms"] = result["prefilling_ms"]
         record["ttft_ms"] = result["ttft_ms"]
     except Exception as exc:  # pragma: no cover - runtime failure path

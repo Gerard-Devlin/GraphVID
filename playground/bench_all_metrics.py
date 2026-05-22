@@ -390,33 +390,112 @@ class BenchmarkArgs:
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
+_MCQ_ANSWER_PHRASES = [
+    "the answer is",
+    "answer is",
+    "the correct answer is",
+    "correct answer is",
+    "the best answer is",
+    "best answer is",
+    "the correct option is",
+    "correct option is",
+    "the best option is",
+    "best option is",
+    "the choice is",
+    "choice is",
+    "the correct choice is",
+    "correct choice is",
+    "i choose",
+    "i select",
+    "i pick",
+    "my answer is",
+    "my choice is",
+    "옵션",
+    "정답은",
+    "답은",
+    "답:",
+    "答案是",
+    "答案为",
+    "选",
+    "答えは",
+]
+_MCQ_FORMAT_PRIORITY = {
+    "start": 10,
+    "end": 9,
+    "phrase": 7,
+    "parentheses": 6,
+    "period": 5,
+    "colon": 4,
+    "right_paren": 3,
+    "space": 2,
+    "fallback": 0,
+}
+
+
 def _extract_choice_letter(text: str) -> str:
-    if not text:
+    """lmms-eval VideoMME-compatible MCQ answer extraction for A/B/C/D."""
+    if not text or not text.strip():
         return ""
-    t = (text or "").strip().upper()
-    if not t:
+    choices = ["A", "B", "C", "D"]
+    normalized = text.strip()
+    for char in [",", ".", "!", "?", ";", ":", "'", '"']:
+        normalized = normalized.strip(char)
+    normalized = " " + normalized + " "
+
+    candidates: list[tuple[str, int, str]] = []
+    for ch in choices:
+        if f"({ch})" in normalized:
+            candidates.append((ch, normalized.rfind(f"({ch})"), "parentheses"))
+    for ch in choices:
+        if f"{ch}." in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch}."), "period"))
+    for ch in choices:
+        if f"{ch}:" in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch}:"), "colon"))
+    for ch in choices:
+        if f"{ch})" in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch})"), "right_paren"))
+    for ch in choices:
+        if f"{ch} " in normalized:
+            candidates.append((ch, normalized.rfind(f"{ch} "), "space"))
+
+    text_lower = normalized.lower()
+    for phrase in _MCQ_ANSWER_PHRASES:
+        idx = text_lower.find(phrase)
+        if idx != -1:
+            after = idx + len(phrase)
+            for ch in choices:
+                ch_pos = normalized.find(ch, after)
+                if ch_pos != -1:
+                    candidates.append((ch, ch_pos, "phrase"))
+
+    stripped = normalized.strip()
+    for ch in choices:
+        if stripped.startswith(ch) and (len(stripped) == 1 or not stripped[1].isalpha()):
+            candidates.append((ch, 0, "start"))
+    for ch in choices:
+        if stripped.endswith(ch) and (len(stripped) == 1 or not stripped[-2].isalpha()):
+            candidates.append((ch, len(normalized) - 1, "end"))
+
+    if not candidates:
+        for ch in choices:
+            if ch in normalized:
+                candidates.append((ch, normalized.rfind(ch), "fallback"))
+    if not candidates:
         return ""
+    candidates.sort(key=lambda x: (_MCQ_FORMAT_PRIORITY.get(x[2], 0), x[1]), reverse=True)
+    return candidates[0][0]
 
-    # 1) Strict single-token answer forms: "A", "(B)", "C.", "[D]".
-    m = re.match(r"^\s*[\(\[]?\s*([ABCD])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?[\s]*$", t)
-    if m:
-        return m.group(1)
 
-    # 2) Common prefixed forms: "Answer: B", "Option C", "Choice is D".
-    prefixed_patterns = [
-        r"\b(?:ANSWER|OPTION|CHOICE)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
-        r"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
-    ]
-    for pat in prefixed_patterns:
-        m = re.search(pat, t)
-        if m:
-            return m.group(1)
-
-    # 3) Fallback: first standalone option token (avoid letters inside words).
-    m = re.search(r"\b([ABCD])\b", t)
-    if m:
-        return m.group(1)
-    return ""
+def _to_lmms_videomme_prompt(prompt_text: str) -> str:
+    """Match lmms-eval VideoMME's default post prompt exactly."""
+    prompt = (prompt_text or "").strip()
+    legacy_suffix = "Answer with the option's letter from the given choices directly."
+    if prompt.endswith(legacy_suffix):
+        prompt = prompt[: -len(legacy_suffix)].rstrip()
+    if not prompt.endswith("The best answer is:"):
+        prompt = f"{prompt}\nThe best answer is:"
+    return prompt
 
 
 def _stats(values: list[float]) -> dict[str, float | int | None]:
@@ -803,7 +882,7 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
 
 def _prepare_inputs(model_bundle, args: BenchmarkArgs, sample: dict[str, Any]):
     video_path = _resolve_sample_video_path(sample, args.hf_home)
-    prompt_text = sample["input"]
+    prompt_text = _to_lmms_videomme_prompt(sample["input"])
     backend = model_bundle["backend"]
     if backend == "llava":
         return _prepare_llava_inputs(model_bundle, args, prompt_text, video_path)
@@ -1380,7 +1459,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         record.update(
             {
                 "pred_answer": result["pred_answer"],
-                "correct": result["pred_answer"] == sample.get("answer"),
+                "correct": str(result["pred_answer"]).lower() == str(sample.get("answer")).lower(),
                 "latency_ms": result["latency_ms"],
                 "generated_tokens": result["generated_tokens"],
                 "tokens_per_second": result["tokens_per_second"],
