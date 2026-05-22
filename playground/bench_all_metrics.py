@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import gc
 import json
 import os
@@ -390,102 +390,25 @@ class BenchmarkArgs:
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
-_MCQ_ANSWER_PHRASES = [
-    "the answer is",
-    "answer is",
-    "the correct answer is",
-    "correct answer is",
-    "the best answer is",
-    "best answer is",
-    "the correct option is",
-    "correct option is",
-    "the best option is",
-    "best option is",
-    "the choice is",
-    "choice is",
-    "the correct choice is",
-    "correct choice is",
-    "i choose",
-    "i select",
-    "i pick",
-    "my answer is",
-    "my choice is",
-    "옵션",
-    "정답은",
-    "답은",
-    "답:",
-    "答案是",
-    "答案为",
-    "选",
-    "答えは",
-]
-_MCQ_FORMAT_PRIORITY = {
-    "start": 10,
-    "end": 9,
-    "phrase": 7,
-    "parentheses": 6,
-    "period": 5,
-    "colon": 4,
-    "right_paren": 3,
-    "space": 2,
-    "fallback": 0,
-}
-
-
 def _extract_choice_letter(text: str) -> str:
-    """lmms-eval VideoMME-compatible MCQ answer extraction for A/B/C/D."""
-    if not text or not text.strip():
+    """Match FlashVID repo bundled lmms-eval VideoMME extract_characters_regex."""
+    s = (text or "").strip()
+    answer_prefixes = [
+        "The best answer is",
+        "The correct answer is",
+        "The answer is",
+        "The answer",
+        "The best option is" "The correct option is",
+        "Best answer:" "Best option:",
+    ]
+    for answer_prefix in answer_prefixes:
+        s = s.replace(answer_prefix, "")
+    if len(s.split()) > 10 and not re.search("[ABCD]", s):
         return ""
-    choices = ["A", "B", "C", "D"]
-    normalized = text.strip()
-    for char in [",", ".", "!", "?", ";", ":", "'", '"']:
-        normalized = normalized.strip(char)
-    normalized = " " + normalized + " "
-
-    candidates: list[tuple[str, int, str]] = []
-    for ch in choices:
-        if f"({ch})" in normalized:
-            candidates.append((ch, normalized.rfind(f"({ch})"), "parentheses"))
-    for ch in choices:
-        if f"{ch}." in normalized:
-            candidates.append((ch, normalized.rfind(f"{ch}."), "period"))
-    for ch in choices:
-        if f"{ch}:" in normalized:
-            candidates.append((ch, normalized.rfind(f"{ch}:"), "colon"))
-    for ch in choices:
-        if f"{ch})" in normalized:
-            candidates.append((ch, normalized.rfind(f"{ch})"), "right_paren"))
-    for ch in choices:
-        if f"{ch} " in normalized:
-            candidates.append((ch, normalized.rfind(f"{ch} "), "space"))
-
-    text_lower = normalized.lower()
-    for phrase in _MCQ_ANSWER_PHRASES:
-        idx = text_lower.find(phrase)
-        if idx != -1:
-            after = idx + len(phrase)
-            for ch in choices:
-                ch_pos = normalized.find(ch, after)
-                if ch_pos != -1:
-                    candidates.append((ch, ch_pos, "phrase"))
-
-    stripped = normalized.strip()
-    for ch in choices:
-        if stripped.startswith(ch) and (len(stripped) == 1 or not stripped[1].isalpha()):
-            candidates.append((ch, 0, "start"))
-    for ch in choices:
-        if stripped.endswith(ch) and (len(stripped) == 1 or not stripped[-2].isalpha()):
-            candidates.append((ch, len(normalized) - 1, "end"))
-
-    if not candidates:
-        for ch in choices:
-            if ch in normalized:
-                candidates.append((ch, normalized.rfind(ch), "fallback"))
-    if not candidates:
+    matches = re.search(r"[ABCD]", s)
+    if matches is None:
         return ""
-    candidates.sort(key=lambda x: (_MCQ_FORMAT_PRIORITY.get(x[2], 0), x[1]), reverse=True)
-    return candidates[0][0]
-
+    return matches[0]
 
 def _to_lmms_videomme_prompt(prompt_text: str) -> str:
     """Match lmms-eval VideoMME's default post prompt exactly."""
@@ -3333,4 +3256,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
