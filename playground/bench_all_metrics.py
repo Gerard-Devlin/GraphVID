@@ -1228,6 +1228,8 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
                 images=inputs["images"],
                 image_sizes=inputs["image_sizes"],
                 do_sample=False,
+                top_p=1.0,
+                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 modalities=["video"],
             )
@@ -1235,6 +1237,8 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             model.generate(
                 **inputs,
                 do_sample=False,
+                top_p=1.0,
+                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 use_cache=True,
             )
@@ -1294,12 +1298,16 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
                     images=inputs["images"],
                     image_sizes=inputs["image_sizes"],
                     do_sample=False,
+                    top_p=1.0,
+                    num_beams=1,
                     max_new_tokens=args.max_new_tokens,
                     modalities=["video"],
                 )
             return model.generate(
                 **inputs,
                 do_sample=False,
+                top_p=1.0,
+                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 use_cache=True,
             )

@@ -457,6 +457,8 @@ def run_benchmark(
 
     gen_kwargs = {
         "do_sample": False,
+        "top_p": 1.0,
+        "num_beams": 1,
         "max_new_tokens": max_new_tokens,
         "modalities": ["video"],
     }
