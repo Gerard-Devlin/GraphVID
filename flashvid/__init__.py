@@ -183,6 +183,13 @@ def flashvid(
     dyn_weighted_merge: bool = False,
     dyn_confidence_attn_weight: float = 0.50,
     dyn_confidence_sim_weight: float = 0.50,
+    learn_selector_ckpt: str = "",
+    learn_qaware: bool = True,
+    learn_stable_floor_ratio: float = 0.50,
+    learn_score_blend: float = 0.50,
+    learn_q_relevance_weight: float = 0.20,
+    learn_density_topk: int = 8,
+    learn_collect_teacher: bool = False,
     hedge_stable_floor_ratio: float = 0.85,
     hedge_diversity_weight: float = 0.04,
     hedge_stable_bias: float = 0.05,
@@ -414,6 +421,7 @@ def flashvid(
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
             "dynflashvid" keeps FlashVID's budget but redistributes ADTS tokens and debiases TSTM;
+            "learnflashvid" keeps FlashVID's merge path but fills part of ADTS with a learned QA-aware selector;
             "hedgevid" freezes FlashVID ADTS and selects residuals from stable/evidence pools;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
@@ -542,8 +550,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
@@ -552,6 +560,8 @@ def flashvid(
         temporal_merge_mode = "cats"
     elif variant == "dynflashvid":
         temporal_merge_mode = "dynflashvid"
+    elif variant == "learnflashvid":
+        temporal_merge_mode = "learnflashvid"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -664,6 +674,13 @@ def flashvid(
         dyn_weighted_merge=dyn_weighted_merge,
         dyn_confidence_attn_weight=dyn_confidence_attn_weight,
         dyn_confidence_sim_weight=dyn_confidence_sim_weight,
+        learn_selector_ckpt=learn_selector_ckpt,
+        learn_qaware=learn_qaware,
+        learn_stable_floor_ratio=learn_stable_floor_ratio,
+        learn_score_blend=learn_score_blend,
+        learn_q_relevance_weight=learn_q_relevance_weight,
+        learn_density_topk=learn_density_topk,
+        learn_collect_teacher=learn_collect_teacher,
         hedge_stable_floor_ratio=hedge_stable_floor_ratio,
         hedge_diversity_weight=hedge_diversity_weight,
         hedge_stable_bias=hedge_stable_bias,

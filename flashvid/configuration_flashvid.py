@@ -123,6 +123,15 @@ class FlashVidConfig:
     dyn_confidence_attn_weight: float = field(default=0.50)
     dyn_confidence_sim_weight: float = field(default=0.50)
 
+    # LearnFlashVID-QA: tiny learned selector distilled from inner-LLM pruning.
+    learn_selector_ckpt: str = field(default="")
+    learn_qaware: bool = field(default=True)
+    learn_stable_floor_ratio: float = field(default=0.50)
+    learn_score_blend: float = field(default=0.50)
+    learn_q_relevance_weight: float = field(default=0.20)
+    learn_density_topk: int = field(default=8)
+    learn_collect_teacher: bool = field(default=False)
+
     # HEDGE-VID dual-path residual selection.
     hedge_stable_floor_ratio: float = field(default=0.85)
     hedge_diversity_weight: float = field(default=0.04)
@@ -156,6 +165,7 @@ class FlashVidConfig:
     # "cats": CATS protected-sink ADTS + confidence-aware TSTM path.
     # "hedgevid": FlashVID ADTS + stable/evidence residual candidate selection.
     # "dynflashvid": FlashVID-style compression with dynamic ADTS budget and debiased TSTM.
+    # "learnflashvid": FlashVID TSTM with learned QA-aware ADTS fill.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

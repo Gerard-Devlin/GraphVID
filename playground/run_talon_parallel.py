@@ -163,6 +163,20 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.dyn_confidence_attn_weight),
             "--dyn_confidence_sim_weight",
             str(args.dyn_confidence_sim_weight),
+            "--learn_selector_ckpt",
+            args.learn_selector_ckpt,
+            "--learn_qaware",
+            _str_bool(args.learn_qaware),
+            "--learn_stable_floor_ratio",
+            str(args.learn_stable_floor_ratio),
+            "--learn_score_blend",
+            str(args.learn_score_blend),
+            "--learn_q_relevance_weight",
+            str(args.learn_q_relevance_weight),
+            "--learn_density_topk",
+            str(args.learn_density_topk),
+            "--learn_collect_teacher",
+            _str_bool(args.learn_collect_teacher),
             "--talon_adaptive_target_enabled",
             _str_bool(args.talon_adaptive_target_enabled),
             "--talon_target_mean_cap",
@@ -976,6 +990,13 @@ def main() -> None:
     parser.add_argument("--dyn_weighted_merge", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--dyn_confidence_attn_weight", type=float, default=0.50)
     parser.add_argument("--dyn_confidence_sim_weight", type=float, default=0.50)
+    parser.add_argument("--learn_selector_ckpt", default="")
+    parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.50)
+    parser.add_argument("--learn_score_blend", type=float, default=0.50)
+    parser.add_argument("--learn_q_relevance_weight", type=float, default=0.20)
+    parser.add_argument("--learn_density_topk", type=int, default=8)
+    parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hedge_stable_floor_ratio", type=float, default=0.85)
     parser.add_argument("--hedge_diversity_weight", type=float, default=0.04)
     parser.add_argument("--hedge_stable_bias", type=float, default=0.05)

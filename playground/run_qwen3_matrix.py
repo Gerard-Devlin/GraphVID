@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid"}
+    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid", "learnflashvid"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -322,7 +322,7 @@ def _build_command(
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
-        variant = "dynflashvid" if method == "dynflashvid" else "talon"
+        variant = method if method in ("dynflashvid", "learnflashvid") else "talon"
         cmd.extend(
             [
                 "--no-run_flashvid",
@@ -338,8 +338,20 @@ def _build_command(
                 args.talon_question_pooling,
                 "--talon_question_pooling_topk",
                 str(args.talon_question_pooling_topk),
+                "--learn_selector_ckpt",
+                str(args.learn_selector_ckpt),
+                "--learn_stable_floor_ratio",
+                str(args.learn_stable_floor_ratio),
+                "--learn_score_blend",
+                str(args.learn_score_blend),
+                "--learn_q_relevance_weight",
+                str(args.learn_q_relevance_weight),
+                "--learn_density_topk",
+                str(args.learn_density_topk),
             ]
         )
+        cmd.append("--learn_qaware" if args.learn_qaware else "--no-learn_qaware")
+        cmd.append("--learn_collect_teacher" if args.learn_collect_teacher else "--no-learn_collect_teacher")
     cmd.extend(args.extra_args)
     return cmd, summary_path
 
@@ -354,7 +366,7 @@ def _load_summary(path: Path) -> dict[str, Any] | None:
 def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: str) -> dict[str, float | None]:
     phase_key = _phase_name(method)
     phase = summary.get(phase_key) if summary else None
-    if phase is None and method in ("talon", "dynflashvid") and summary:
+    if phase is None and method in ("talon", "dynflashvid", "learnflashvid") and summary:
         phase = summary.get("ours")
     result: dict[str, float | None] = {
         "acc": _safe_pct(phase.get("accuracy")) if phase else None,
@@ -365,7 +377,7 @@ def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: st
         for duration in ("short", "medium", "long"):
             bucket = by_duration.get(duration, {})
             sub_phase = bucket.get(phase_key)
-            if sub_phase is None and method in ("talon", "dynflashvid"):
+            if sub_phase is None and method in ("talon", "dynflashvid", "learnflashvid"):
                 sub_phase = bucket.get("ours")
             result[duration] = _safe_pct(sub_phase.get("accuracy")) if sub_phase else None
     return result
@@ -449,7 +461,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,learnflashvid,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -541,6 +553,13 @@ def main() -> None:
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     parser.add_argument("--talon_question_pooling", default="topk")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
+    parser.add_argument("--learn_selector_ckpt", default="")
+    parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.50)
+    parser.add_argument("--learn_score_blend", type=float, default=0.50)
+    parser.add_argument("--learn_q_relevance_weight", type=float, default=0.20)
+    parser.add_argument("--learn_density_topk", type=int, default=8)
+    parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

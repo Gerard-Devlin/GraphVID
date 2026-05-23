@@ -48,13 +48,14 @@ def _phase_display_name(phase_key: str) -> str:
         "talon": "TALON",
         "hedgevid": "HedgeVID",
         "dynflashvid": "DynFlashVID",
+        "learnflashvid": "LearnFlashVID",
         "ours": "Ours",
     }
     return labels.get(phase_key, phase_key)
 
 
 def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "ours", "graphvid", "graftvid", "cats"]
+    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "learnflashvid", "ours", "graphvid", "graftvid", "cats"]
     if not summary:
         return preferred
     extras = [
@@ -133,6 +134,15 @@ HEDGE_METRIC_KEYS = [
     "hedge_final_tokens",
     "hedge_stable_floor_ratio",
     "hedge_diversity_weight",
+]
+LEARN_METRIC_KEYS = [
+    "learn_selected_tokens",
+    "learn_stable_tokens",
+    "learn_selector_tokens",
+    "learn_qaware_active",
+    "learn_score_mean",
+    "learn_score_std",
+    "learn_teacher_keep_ratio",
 ]
 
 
@@ -274,6 +284,13 @@ class BenchmarkArgs:
     dyn_weighted_merge: bool = field(default=False)
     dyn_confidence_attn_weight: float = field(default=0.50)
     dyn_confidence_sim_weight: float = field(default=0.50)
+    learn_selector_ckpt: str = field(default="")
+    learn_qaware: bool = field(default=True)
+    learn_stable_floor_ratio: float = field(default=0.50)
+    learn_score_blend: float = field(default=0.50)
+    learn_q_relevance_weight: float = field(default=0.20)
+    learn_density_topk: int = field(default=8)
+    learn_collect_teacher: bool = field(default=False)
     hedge_stable_floor_ratio: float = field(default=0.85)
     hedge_diversity_weight: float = field(default=0.04)
     hedge_stable_bias: float = field(default=0.05)
@@ -497,6 +514,7 @@ class BenchmarkArgs:
     graftvid_output: str = field(default="logs/efficiency/graftvid_all_metrics.jsonl")
     cats_output: str = field(default="logs/efficiency/cats_all_metrics.jsonl")
     dynflashvid_output: str = field(default="logs/efficiency/dynflashvid_all_metrics.jsonl")
+    learnflashvid_output: str = field(default="logs/efficiency/learnflashvid_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -1338,6 +1356,38 @@ def _get_hedge_debug_metrics(model) -> dict[str, float | None]:
     return best_values
 
 
+def _get_learn_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in LEARN_METRIC_KEYS}
+    candidates = []
+    for obj in (
+        model,
+        getattr(model, "model", None),
+        getattr(model, "language_model", None),
+        getattr(model, "module", None),
+        getattr(getattr(model, "module", None), "model", None),
+    ):
+        if obj is None:
+            continue
+        cfg = getattr(obj, "flashvid_config", None)
+        if cfg is not None and cfg not in candidates:
+            candidates.append(cfg)
+    if not candidates:
+        return empty
+    best_values = empty
+    best_score = -1
+    for cfg in candidates:
+        values: dict[str, float | None] = {}
+        present = 0
+        for key in LEARN_METRIC_KEYS:
+            value = getattr(cfg, f"last_{key}", None)
+            values[key] = float(value) if value is not None else None
+            present += int(value is not None)
+        if present > best_score:
+            best_score = present
+            best_values = values
+    return best_values
+
+
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
@@ -1409,6 +1459,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     cats_metrics_per_run = {key: [] for key in CATS_METRIC_KEYS}
     dyn_metrics_per_run = {key: [] for key in DYN_METRIC_KEYS}
     hedge_metrics_per_run = {key: [] for key in HEDGE_METRIC_KEYS}
+    learn_metrics_per_run = {key: [] for key in LEARN_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -1452,6 +1503,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         cats_metrics = _get_cats_debug_metrics(model)
         dyn_metrics = _get_dyn_debug_metrics(model)
         hedge_metrics = _get_hedge_debug_metrics(model)
+        learn_metrics = _get_learn_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
         for key in GRAFT_METRIC_KEYS:
@@ -1466,6 +1518,9 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         for key in HEDGE_METRIC_KEYS:
             if hedge_metrics.get(key) is not None:
                 hedge_metrics_per_run[key].append(float(hedge_metrics[key]))
+        for key in LEARN_METRIC_KEYS:
+            if learn_metrics.get(key) is not None:
+                learn_metrics_per_run[key].append(float(learn_metrics[key]))
         if debug_metrics["talon_target_tokens_per_frame"] is not None:
             talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
         if debug_metrics["talon_complexity_score"] is not None:
@@ -1575,6 +1630,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in hedge_metrics_per_run.items()
     }
+    learn_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in learn_metrics_per_run.items()
+    }
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1620,6 +1679,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         **cats_metric_means,
         **dyn_metric_means,
         **hedge_metric_means,
+        **learn_metric_means,
     }
 
 
@@ -1677,6 +1737,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     record.update({key: None for key in CATS_METRIC_KEYS})
     record.update({key: None for key in DYN_METRIC_KEYS})
     record.update({key: None for key in HEDGE_METRIC_KEYS})
+    record.update({key: None for key in LEARN_METRIC_KEYS})
 
     try:
         if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
@@ -1738,6 +1799,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 **{key: result.get(key) for key in CATS_METRIC_KEYS},
                 **{key: result.get(key) for key in DYN_METRIC_KEYS},
                 **{key: result.get(key) for key in HEDGE_METRIC_KEYS},
+                **{key: result.get(key) for key in LEARN_METRIC_KEYS},
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -1984,6 +2046,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in HEDGE_METRIC_KEYS
     }
+    learn_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in LEARN_METRIC_KEYS
+    }
 
     return {
         "num_samples": len(records),
@@ -2029,6 +2095,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         **cats_stats,
         **dyn_stats,
         **hedge_stats,
+        **learn_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -2265,6 +2332,13 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         hedge_stable_bias=args.hedge_stable_bias,
         hedge_evidence_bias=args.hedge_evidence_bias,
         hedge_max_mmr_candidates=args.hedge_max_mmr_candidates,
+        learn_selector_ckpt=args.learn_selector_ckpt,
+        learn_qaware=args.learn_qaware,
+        learn_stable_floor_ratio=args.learn_stable_floor_ratio,
+        learn_score_blend=args.learn_score_blend,
+        learn_q_relevance_weight=args.learn_q_relevance_weight,
+        learn_density_topk=args.learn_density_topk,
+        learn_collect_teacher=args.learn_collect_teacher,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2766,7 +2840,44 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_long_edge_threshold=args.graft_long_edge_threshold,
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,
+        dyn_adaptive_adts_budget=args.dyn_adaptive_adts_budget,
+        dyn_budget_strength=args.dyn_budget_strength,
+        dyn_budget_temperature=args.dyn_budget_temperature,
+        dyn_frame_budget_min_ratio=args.dyn_frame_budget_min_ratio,
+        dyn_frame_budget_max_ratio=args.dyn_frame_budget_max_ratio,
+        dyn_boundary_boost=args.dyn_boundary_boost,
+        dyn_adts_beta=args.dyn_adts_beta,
+        dyn_attn_weight=args.dyn_attn_weight,
+        dyn_event_weight=args.dyn_event_weight,
+        dyn_novelty_weight=args.dyn_novelty_weight,
+        dyn_detail_weight=args.dyn_detail_weight,
+        dyn_density_weight=args.dyn_density_weight,
+        dyn_density_topk=args.dyn_density_topk,
+        dyn_event_chunk_radius=args.dyn_event_chunk_radius,
+        dyn_frame_event_weight=args.dyn_frame_event_weight,
+        dyn_frame_novelty_weight=args.dyn_frame_novelty_weight,
+        dyn_frame_attn_weight=args.dyn_frame_attn_weight,
+        dyn_frame_density_weight=args.dyn_frame_density_weight,
+        dyn_frame_detail_weight=args.dyn_frame_detail_weight,
+        dyn_similarity_debias=args.dyn_similarity_debias,
+        dyn_debias_frame_weight=args.dyn_debias_frame_weight,
+        dyn_debias_global_weight=args.dyn_debias_global_weight,
+        dyn_sink_tstm=args.dyn_sink_tstm,
+        dyn_mutual_nn=args.dyn_mutual_nn,
+        dyn_margin_threshold=args.dyn_margin_threshold,
+        dyn_high_conf_bonus=args.dyn_high_conf_bonus,
+        dyn_weighted_merge=args.dyn_weighted_merge,
+        dyn_confidence_attn_weight=args.dyn_confidence_attn_weight,
+        dyn_confidence_sim_weight=args.dyn_confidence_sim_weight,
+        learn_selector_ckpt=args.learn_selector_ckpt,
+        learn_qaware=args.learn_qaware,
+        learn_stable_floor_ratio=args.learn_stable_floor_ratio,
+        learn_score_blend=args.learn_score_blend,
+        learn_q_relevance_weight=args.learn_q_relevance_weight,
+        learn_density_topk=args.learn_density_topk,
+        learn_collect_teacher=args.learn_collect_teacher,
+        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant=args.compression_variant,
@@ -3018,6 +3129,14 @@ def _print_header(args: BenchmarkArgs, backend: str):
                 f"detail{args.dyn_frame_detail_weight:.2f}, "
                 f"density_topk={args.dyn_density_topk}, event_radius={args.dyn_event_chunk_radius}"
             )
+        if ours_phase_name == "learnflashvid":
+            print(
+                "LearnFlash selector: "
+                f"ckpt={args.learn_selector_ckpt or '<heuristic>'}, qaware={args.learn_qaware}, "
+                f"stable_floor={args.learn_stable_floor_ratio:.2f}, blend={args.learn_score_blend:.2f}, "
+                f"q_weight={args.learn_q_relevance_weight:.2f}, density_topk={args.learn_density_topk}, "
+                f"collect_teacher={args.learn_collect_teacher}"
+            )
     if args.run_graphvid:
         print(
             "GraphVID config: "
@@ -3160,6 +3279,13 @@ def _print_summary(summary: dict[str, Any]):
         hedge_evidence_sel_mean = phase.get("hedge_evidence_selected", {}).get("mean")
         hedge_floor_mean = phase.get("hedge_stable_floor_ratio", {}).get("mean")
         hedge_div_mean = phase.get("hedge_diversity_weight", {}).get("mean")
+        learn_selected_mean = phase.get("learn_selected_tokens", {}).get("mean")
+        learn_stable_mean = phase.get("learn_stable_tokens", {}).get("mean")
+        learn_selector_mean = phase.get("learn_selector_tokens", {}).get("mean")
+        learn_qaware_mean = phase.get("learn_qaware_active", {}).get("mean")
+        learn_score_mean = phase.get("learn_score_mean", {}).get("mean")
+        learn_score_std_mean = phase.get("learn_score_std", {}).get("mean")
+        learn_teacher_keep_mean = phase.get("learn_teacher_keep_ratio", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -3293,6 +3419,15 @@ def _print_summary(summary: dict[str, Any]):
                 "  hedge floor/diversity mean: "
                 f"{(hedge_floor_mean or 0.0):.2f}/{(hedge_div_mean or 0.0):.2f}"
             )
+        if learn_selected_mean is not None:
+            print(
+                "  learn selected stable/selector/qaware score mean/std: "
+                f"{learn_selected_mean:.2f}/{(learn_stable_mean or 0.0):.2f}/"
+                f"{(learn_selector_mean or 0.0):.2f}/{(learn_qaware_mean or 0.0):.2f} "
+                f"{(learn_score_mean or 0.0):.4f}/{(learn_score_std_mean or 0.0):.4f}"
+            )
+        if learn_teacher_keep_mean is not None:
+            print(f"  learn teacher keep ratio mean: {learn_teacher_keep_mean:.4f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:

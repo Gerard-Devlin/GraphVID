@@ -43,6 +43,9 @@ def _parse_methods(text: str) -> set[str]:
         "dyn": "dynflashvid",
         "dynflash": "dynflashvid",
         "dynflashvid": "dynflashvid",
+        "learn": "learnflashvid",
+        "learnflash": "learnflashvid",
+        "learnflashvid": "learnflashvid",
         "hedge": "hedgevid",
         "hedgevid": "hedgevid",
     }
@@ -156,7 +159,7 @@ def _build_command(
     total_limit: int,
     methods: set[str],
 ) -> tuple[list[str], Path]:
-    ours_like = sorted(methods & {"hedgevid", "dynflashvid"})
+    ours_like = sorted(methods & {"hedgevid", "dynflashvid", "learnflashvid"})
     if len(ours_like) > 1:
         raise ValueError(f"Only one run_ours-style method can be launched at once; got {ours_like}")
     run_tag = f"{args.tag}_r{rate_label}_videomme{total_limit}"
@@ -195,7 +198,7 @@ def _build_command(
         str(args.gpu_cap),
         "--tag",
         run_tag,
-        "--run_ours" if ("hedgevid" in methods or "dynflashvid" in methods) else "--no-run_ours",
+        "--run_ours" if ("hedgevid" in methods or "dynflashvid" in methods or "learnflashvid" in methods) else "--no-run_ours",
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -247,6 +250,8 @@ def _build_command(
         cmd.extend(["--compression_variant", "hedgevid"])
     if "dynflashvid" in methods:
         cmd.extend(["--compression_variant", "dynflashvid"])
+    if "learnflashvid" in methods:
+        cmd.extend(["--compression_variant", "learnflashvid"])
     cmd.extend(
         [
             "--graft_temporal_topk",
@@ -338,6 +343,22 @@ def _build_command(
             str(args.hedge_max_mmr_candidates),
         ]
     )
+    cmd.extend(
+        [
+            "--learn_selector_ckpt",
+            str(args.learn_selector_ckpt),
+            "--learn_stable_floor_ratio",
+            str(args.learn_stable_floor_ratio),
+            "--learn_score_blend",
+            str(args.learn_score_blend),
+            "--learn_q_relevance_weight",
+            str(args.learn_q_relevance_weight),
+            "--learn_density_topk",
+            str(args.learn_density_topk),
+        ]
+    )
+    cmd.append("--learn_qaware" if args.learn_qaware else "--no-learn_qaware")
+    cmd.append("--learn_collect_teacher" if args.learn_collect_teacher else "--no-learn_collect_teacher")
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
     cmd.extend(args.extra_args)
@@ -358,12 +379,14 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     cats_tokens = _mean(summary, "cats", "compressed_visual_tokens")
     hedge_tokens = _first_not_none(_mean(summary, "hedgevid", "compressed_visual_tokens"), _mean(summary, "ours", "compressed_visual_tokens"))
     dyn_tokens = _mean(summary, "dynflashvid", "compressed_visual_tokens")
+    learn_tokens = _mean(summary, "learnflashvid", "compressed_visual_tokens")
     flash_acc = _acc(summary, "flashvid")
     graph_acc = _acc(summary, "graphvid")
     graft_acc = _acc(summary, "graftvid")
     cats_acc = _acc(summary, "cats")
     hedge_acc = _first_not_none(_acc(summary, "hedgevid"), _acc(summary, "ours"))
     dyn_acc = _acc(summary, "dynflashvid")
+    learn_acc = _acc(summary, "learnflashvid")
     return {
         "retention_ratio": f"{rate_label.replace('p', '.')}%",
         "flashvid_acc": flash_acc,
@@ -372,51 +395,60 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "cats_acc": cats_acc,
         "hedgevid_acc": hedge_acc,
         "dynflashvid_acc": dyn_acc,
+        "learnflashvid_acc": learn_acc,
         "acc_delta": None if flash_acc is None or graph_acc is None else graph_acc - flash_acc,
         "graft_acc_delta": None if flash_acc is None or graft_acc is None else graft_acc - flash_acc,
         "cats_acc_delta": None if flash_acc is None or cats_acc is None else cats_acc - flash_acc,
         "hedge_acc_delta": None if flash_acc is None or hedge_acc is None else hedge_acc - flash_acc,
         "dyn_acc_delta": None if flash_acc is None or dyn_acc is None else dyn_acc - flash_acc,
+        "learn_acc_delta": None if flash_acc is None or learn_acc is None else learn_acc - flash_acc,
         "flashvid_short": _duration_acc(summary, "flashvid", "short"),
         "graphvid_short": _duration_acc(summary, "graphvid", "short"),
         "graftvid_short": _duration_acc(summary, "graftvid", "short"),
         "cats_short": _duration_acc(summary, "cats", "short"),
         "hedgevid_short": _first_not_none(_duration_acc(summary, "hedgevid", "short"), _duration_acc(summary, "ours", "short")),
         "dynflashvid_short": _duration_acc(summary, "dynflashvid", "short"),
+        "learnflashvid_short": _duration_acc(summary, "learnflashvid", "short"),
         "flashvid_medium": _duration_acc(summary, "flashvid", "medium"),
         "graphvid_medium": _duration_acc(summary, "graphvid", "medium"),
         "graftvid_medium": _duration_acc(summary, "graftvid", "medium"),
         "cats_medium": _duration_acc(summary, "cats", "medium"),
         "hedgevid_medium": _first_not_none(_duration_acc(summary, "hedgevid", "medium"), _duration_acc(summary, "ours", "medium")),
         "dynflashvid_medium": _duration_acc(summary, "dynflashvid", "medium"),
+        "learnflashvid_medium": _duration_acc(summary, "learnflashvid", "medium"),
         "flashvid_long": _duration_acc(summary, "flashvid", "long"),
         "graphvid_long": _duration_acc(summary, "graphvid", "long"),
         "graftvid_long": _duration_acc(summary, "graftvid", "long"),
         "cats_long": _duration_acc(summary, "cats", "long"),
         "hedgevid_long": _first_not_none(_duration_acc(summary, "hedgevid", "long"), _duration_acc(summary, "ours", "long")),
         "dynflashvid_long": _duration_acc(summary, "dynflashvid", "long"),
+        "learnflashvid_long": _duration_acc(summary, "learnflashvid", "long"),
         "flashvid_tokens": flash_tokens,
         "graphvid_tokens": graph_tokens,
         "graftvid_tokens": graft_tokens,
         "cats_tokens": cats_tokens,
         "hedgevid_tokens": hedge_tokens,
         "dynflashvid_tokens": dyn_tokens,
+        "learnflashvid_tokens": learn_tokens,
         "token_reduction": _comparison(summary, "visual_token_reduction"),
         "graft_token_reduction": _comparison(summary, "visual_token_reduction", target="graftvid"),
         "cats_token_reduction": _comparison(summary, "visual_token_reduction", target="cats"),
         "hedge_token_reduction": _comparison_any(summary, "visual_token_reduction", "hedgevid", "ours"),
         "dyn_token_reduction": _comparison(summary, "visual_token_reduction", target="dynflashvid"),
+        "learn_token_reduction": _comparison(summary, "visual_token_reduction", target="learnflashvid"),
         "flashvid_latency_ms": _mean(summary, "flashvid", "latency_ms"),
         "graphvid_latency_ms": _mean(summary, "graphvid", "latency_ms"),
         "graftvid_latency_ms": _mean(summary, "graftvid", "latency_ms"),
         "cats_latency_ms": _mean(summary, "cats", "latency_ms"),
         "hedgevid_latency_ms": _first_not_none(_mean(summary, "hedgevid", "latency_ms"), _mean(summary, "ours", "latency_ms")),
         "dynflashvid_latency_ms": _mean(summary, "dynflashvid", "latency_ms"),
+        "learnflashvid_latency_ms": _mean(summary, "learnflashvid", "latency_ms"),
         "latency_speedup": _comparison(summary, "latency_speedup"),
         "graft_latency_speedup": _comparison(summary, "latency_speedup", target="graftvid"),
         "cats_latency_speedup": _comparison(summary, "latency_speedup", target="cats"),
         "hedge_latency_speedup": _comparison_any(summary, "latency_speedup", "hedgevid", "ours"),
         "dyn_latency_speedup": _comparison(summary, "latency_speedup", target="dynflashvid"),
+        "learn_latency_speedup": _comparison(summary, "latency_speedup", target="learnflashvid"),
     }
 
 
@@ -433,51 +465,60 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "cats_acc",
         "hedgevid_acc",
         "dynflashvid_acc",
+        "learnflashvid_acc",
         "acc_delta",
         "graft_acc_delta",
         "cats_acc_delta",
         "hedge_acc_delta",
         "dyn_acc_delta",
+        "learn_acc_delta",
         "flashvid_short",
         "graphvid_short",
         "graftvid_short",
         "cats_short",
         "hedgevid_short",
         "dynflashvid_short",
+        "learnflashvid_short",
         "flashvid_medium",
         "graphvid_medium",
         "graftvid_medium",
         "cats_medium",
         "hedgevid_medium",
         "dynflashvid_medium",
+        "learnflashvid_medium",
         "flashvid_long",
         "graphvid_long",
         "graftvid_long",
         "cats_long",
         "hedgevid_long",
         "dynflashvid_long",
+        "learnflashvid_long",
         "flashvid_tokens",
         "graphvid_tokens",
         "graftvid_tokens",
         "cats_tokens",
         "hedgevid_tokens",
         "dynflashvid_tokens",
+        "learnflashvid_tokens",
         "token_reduction",
         "graft_token_reduction",
         "cats_token_reduction",
         "hedge_token_reduction",
         "dyn_token_reduction",
+        "learn_token_reduction",
         "flashvid_latency_ms",
         "graphvid_latency_ms",
         "graftvid_latency_ms",
         "cats_latency_ms",
         "hedgevid_latency_ms",
         "dynflashvid_latency_ms",
+        "learnflashvid_latency_ms",
         "latency_speedup",
         "graft_latency_speedup",
         "cats_latency_speedup",
         "hedge_latency_speedup",
         "dyn_latency_speedup",
+        "learn_latency_speedup",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -561,7 +602,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
-    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,dynflashvid,hedgevid.")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,dynflashvid,learnflashvid,hedgevid.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")
@@ -639,6 +680,13 @@ def main() -> None:
     parser.add_argument("--hedge_stable_bias", type=float, default=0.05)
     parser.add_argument("--hedge_evidence_bias", type=float, default=0.0)
     parser.add_argument("--hedge_max_mmr_candidates", type=int, default=2048)
+    parser.add_argument("--learn_selector_ckpt", default="")
+    parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.50)
+    parser.add_argument("--learn_score_blend", type=float, default=0.50)
+    parser.add_argument("--learn_q_relevance_weight", type=float, default=0.20)
+    parser.add_argument("--learn_density_topk", type=int, default=8)
+    parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args, extra_args = parser.parse_known_args()
