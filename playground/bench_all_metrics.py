@@ -19,6 +19,51 @@ from transformers.hf_argparser import HfArgumentParser
 warnings.filterwarnings("ignore")
 
 SEPARATOR = "=" * 72
+
+
+def _canonical_method_name(value: str | None, *, default: str = "ours") -> str:
+    """Return a stable lowercase phase key for logs, jsonl names, and summaries."""
+    text = str(value or default).strip().lower()
+    text = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in text)
+    text = text.strip("_-")
+    return text or default
+
+
+def _ours_phase_key(args: "BenchmarkArgs") -> str:
+    return _canonical_method_name(getattr(args, "compression_variant", "ours"), default="ours")
+
+
+def _ours_output_path(args: "BenchmarkArgs", phase_key: str) -> str:
+    attr = f"{phase_key}_output"
+    return str(getattr(args, attr, None) or args.ours_output)
+
+
+def _phase_display_name(phase_key: str) -> str:
+    labels = {
+        "baseline": "Baseline",
+        "flashvid": "FlashVID",
+        "graphvid": "GraphVID",
+        "graftvid": "GraftVID",
+        "cats": "CATS",
+        "talon": "TALON",
+        "hedgevid": "HedgeVID",
+        "dynflashvid": "DynFlashVID",
+        "ours": "Ours",
+    }
+    return labels.get(phase_key, phase_key)
+
+
+def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
+    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "ours", "graphvid", "graftvid", "cats"]
+    if not summary:
+        return preferred
+    extras = [
+        key
+        for key, value in summary.items()
+        if key not in preferred and key not in ("comparison", "duration_breakdown") and isinstance(value, dict)
+    ]
+    return preferred + sorted(extras)
+
 GRAFT_METRIC_KEYS = [
     "graft_num_nodes",
     "graft_target_components",
@@ -119,6 +164,7 @@ class BenchmarkArgs:
     run_graphvid: bool = field(default=False)
     run_graftvid: bool = field(default=False)
     run_cats: bool = field(default=False)
+    run_dynflashvid: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
@@ -439,6 +485,7 @@ class BenchmarkArgs:
     graphvid_output: str = field(default="logs/efficiency/graphvid_all_metrics.jsonl")
     graftvid_output: str = field(default="logs/efficiency/graftvid_all_metrics.jsonl")
     cats_output: str = field(default="logs/efficiency/cats_all_metrics.jsonl")
+    dynflashvid_output: str = field(default="logs/efficiency/dynflashvid_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -1699,6 +1746,7 @@ def _run_phase(
     phase_name: str,
     use_acceleration: bool,
     output_path: str,
+    phase_key: str | None = None,
 ):
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1706,6 +1754,7 @@ def _run_phase(
     with out.open("w", encoding="utf-8") as f:
         for idx, sample in enumerate(samples, 1):
             record = _benchmark_single_sample(model_bundle, args, sample, use_acceleration=use_acceleration)
+            record["method"] = _canonical_method_name(phase_key or phase_name)
 
             # Normalize edge cases so logging/summary is robust:
             # - some exceptions may stringify to empty text;
@@ -2050,14 +2099,16 @@ def _add_duration_breakdown(
     baseline_records: Optional[list[dict[str, Any]]] = None,
     flashvid_records: Optional[list[dict[str, Any]]] = None,
     ours_records: Optional[list[dict[str, Any]]] = None,
+    ours_phase_name: str = "ours",
     graphvid_records: Optional[list[dict[str, Any]]] = None,
     graftvid_records: Optional[list[dict[str, Any]]] = None,
     cats_records: Optional[list[dict[str, Any]]] = None,
 ) -> None:
+    ours_phase_name = _canonical_method_name(ours_phase_name)
     records_by_phase = {
         "baseline": baseline_records,
         "flashvid": flashvid_records,
-        "ours": ours_records,
+        ours_phase_name: ours_records,
         "graphvid": graphvid_records,
         "graftvid": graftvid_records,
         "cats": cats_records,
@@ -2084,19 +2135,19 @@ def _add_duration_breakdown(
                 anchor_name="baseline",
                 target_name="flashvid",
             )
-        if "baseline" in phase_records and "ours" in phase_records:
-            bucket["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
+        if "baseline" in phase_records and ours_phase_name in phase_records:
+            bucket["comparison"][f"baseline_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
                 phase_records["baseline"],
-                phase_records["ours"],
+                phase_records[ours_phase_name],
                 anchor_name="baseline",
-                target_name="ours",
+                target_name=ours_phase_name,
             )
-        if "flashvid" in phase_records and "ours" in phase_records:
-            bucket["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
+        if "flashvid" in phase_records and ours_phase_name in phase_records:
+            bucket["comparison"][f"flashvid_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
                 phase_records["flashvid"],
-                phase_records["ours"],
+                phase_records[ours_phase_name],
                 anchor_name="flashvid",
-                target_name="ours",
+                target_name=ours_phase_name,
             )
         if "flashvid" in phase_records and "graphvid" in phase_records:
             bucket["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
@@ -2897,6 +2948,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
 
 def _print_header(args: BenchmarkArgs, backend: str):
     effective_attn = _resolve_attn_implementation(args.attn_implementation)
+    ours_phase_name = _ours_phase_key(args)
     print(SEPARATOR)
     print("Unified Benchmark: Accuracy + Token + Latency + Speedup")
     print(SEPARATOR)
@@ -2914,7 +2966,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
-        f"ours={args.run_ours}, graphvid={args.run_graphvid}, graftvid={args.run_graftvid}, cats={args.run_cats}"
+        f"{ours_phase_name}={args.run_ours}, graphvid={args.run_graphvid}, "
+        f"graftvid={args.run_graftvid}, cats={args.run_cats}"
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
@@ -2924,7 +2977,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"{args.talon_long_target_tokens_per_frame}"
         )
         print(
-            "Ours config   : "
+            f"{_phase_display_name(ours_phase_name)} config: "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"temporal_merge={args.temporal_merge_mode}, "
             f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
@@ -2980,7 +3033,7 @@ def _print_summary(summary: dict[str, Any]):
     print(SEPARATOR)
     print("Summary")
     print(SEPARATOR)
-    for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid", "cats"):
+    for phase_name in _phase_order(summary):
         phase = summary.get(phase_name)
         if phase is None:
             continue
@@ -3207,7 +3260,13 @@ def _print_summary(summary: dict[str, Any]):
     comparison = summary.get("comparison", {})
     if comparison:
         print("[comparison]")
-        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid", "flashvid_vs_graftvid", "flashvid_vs_cats"):
+        preferred_comparisons = [
+            "baseline_vs_flashvid",
+            *[f"baseline_vs_{phase}" for phase in _phase_order(summary) if phase not in ("baseline", "flashvid")],
+            *[f"flashvid_vs_{phase}" for phase in _phase_order(summary) if phase not in ("baseline", "flashvid")],
+        ]
+        ordered_comparisons = preferred_comparisons + sorted(k for k in comparison if k not in preferred_comparisons)
+        for key in ordered_comparisons:
             comp = comparison.get(key)
             if comp is None:
                 continue
@@ -3246,7 +3305,7 @@ def _print_summary(summary: dict[str, Any]):
                 continue
             phase_values = [
                 bucket.get(phase_name)
-                for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid", "cats")
+                for phase_name in _phase_order(summary)
                 if bucket.get(phase_name) is not None
             ]
             if not phase_values or all(int(phase.get("num_samples", 0) or 0) == 0 for phase in phase_values):
@@ -3255,7 +3314,7 @@ def _print_summary(summary: dict[str, Any]):
                 print("[by duration]")
                 printed_header = True
             print(f"  [{duration}]")
-            for phase_name in ("baseline", "flashvid", "ours", "graphvid", "graftvid", "cats"):
+            for phase_name in _phase_order(summary):
                 phase = bucket.get(phase_name)
                 if phase is None:
                     continue
@@ -3279,17 +3338,13 @@ def _print_summary(summary: dict[str, Any]):
                 if channel[0] is not None:
                     line += f" a/e/r={channel[0]:.1f}/{(channel[1] or 0.0):.1f}/{(channel[2] or 0.0):.1f}"
                 print(line)
-            comp_key = "flashvid_vs_ours"
-            comp = bucket.get("comparison", {}).get(comp_key)
-            if comp is None:
-                comp_key = "flashvid_vs_graphvid"
-                comp = bucket.get("comparison", {}).get(comp_key)
-            if comp is None:
-                comp_key = "flashvid_vs_graftvid"
-                comp = bucket.get("comparison", {}).get(comp_key)
-            if comp is None:
-                comp_key = "flashvid_vs_cats"
-                comp = bucket.get("comparison", {}).get(comp_key)
+            comp_key = ""
+            comp = None
+            for candidate in [f"flashvid_vs_{phase}" for phase in _phase_order(summary) if phase not in ("baseline", "flashvid")]:
+                comp = bucket.get("comparison", {}).get(candidate)
+                if comp is not None:
+                    comp_key = candidate
+                    break
             if comp is not None:
                 ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
                 reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
@@ -3305,6 +3360,11 @@ def _print_summary(summary: dict[str, Any]):
 
 
 def run(args: BenchmarkArgs):
+    if args.run_dynflashvid:
+        args.run_ours = True
+        args.compression_variant = "dynflashvid"
+    ours_phase_name = _ours_phase_key(args)
+    ours_output_path = _ours_output_path(args, ours_phase_name)
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
@@ -3486,9 +3546,10 @@ def run(args: BenchmarkArgs):
         phase_idx += 1
 
     if args.run_ours:
-        print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
+        ours_display_name = _phase_display_name(ours_phase_name)
+        print(f"\nPhase {phase_idx}/{total_phases}: {ours_display_name} ...")
         print(
-            "[talon-active][ours] "
+            f"[talon-active][{ours_phase_name}] "
             f"path=clean, qaware={args.question_aware_reweighting}, "
             f"variant={args.compression_variant}, merge={args.temporal_merge_mode}, "
             f"target/frame={args.talon_target_tokens_per_frame}, "
@@ -3506,9 +3567,10 @@ def run(args: BenchmarkArgs):
                 model_bundle=phase_bundle,
                 args=args,
                 samples=samples,
-                phase_name="Ours",
+                phase_name=ours_display_name,
                 use_acceleration=True,
-                output_path=args.ours_output,
+                output_path=ours_output_path,
+                phase_key=ours_phase_name,
             )
         finally:
             _release_phase_bundle(phase_bundle)
@@ -3527,8 +3589,8 @@ def run(args: BenchmarkArgs):
         flashvid_records = _read_jsonl(args.flashvid_output)
         summary["flashvid"] = _summarize_phase(flashvid_records)
     if args.run_ours:
-        ours_records = _read_jsonl(args.ours_output)
-        summary["ours"] = _summarize_phase(ours_records)
+        ours_records = _read_jsonl(ours_output_path)
+        summary[ours_phase_name] = _summarize_phase(ours_records)
     if args.run_graphvid:
         graphvid_records = _read_jsonl(args.graphvid_output)
         summary["graphvid"] = _summarize_phase(graphvid_records)
@@ -3547,18 +3609,18 @@ def run(args: BenchmarkArgs):
             target_name="flashvid",
         )
     if baseline_records is not None and ours_records is not None:
-        summary["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
+        summary["comparison"][f"baseline_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
             baseline_records,
             ours_records,
             anchor_name="baseline",
-            target_name="ours",
+            target_name=ours_phase_name,
         )
     if flashvid_records is not None and ours_records is not None:
-        summary["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
+        summary["comparison"][f"flashvid_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
             flashvid_records,
             ours_records,
             anchor_name="flashvid",
-            target_name="ours",
+            target_name=ours_phase_name,
         )
     if flashvid_records is not None and graphvid_records is not None:
         summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
@@ -3586,6 +3648,7 @@ def run(args: BenchmarkArgs):
         baseline_records=baseline_records,
         flashvid_records=flashvid_records,
         ours_records=ours_records,
+        ours_phase_name=ours_phase_name,
         graphvid_records=graphvid_records,
         graftvid_records=graftvid_records,
         cats_records=cats_records,

@@ -17,6 +17,17 @@ def _str_bool(value: bool) -> str:
     return "True" if value else "False"
 
 
+def _phase_name(value: str | None, *, default: str = "talon") -> str:
+    text = str(value or default).strip().lower()
+    text = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in text)
+    text = text.strip("_-")
+    return text or default
+
+
+def _ours_phase_name(args: argparse.Namespace) -> str:
+    return _phase_name(getattr(args, "compression_variant", "talon"), default="talon")
+
+
 def _parse_bool(value) -> bool:
     if isinstance(value, bool):
         return value
@@ -556,10 +567,11 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
     shard_dir = work_dir / "logs" / "efficiency" / "parallel" / args.tag
     shard_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
+    ours_phase = _ours_phase_name(args)
 
     for shard_idx, ((start, limit), gpu_id) in enumerate(zip(ranges, gpu_ids)):
         flashvid_out = shard_dir / f"flashvid_shard{shard_idx:02d}.jsonl"
-        ours_out = shard_dir / f"ours_shard{shard_idx:02d}.jsonl"
+        ours_out = shard_dir / f"{ours_phase}_shard{shard_idx:02d}.jsonl"
         graphvid_out = shard_dir / f"graphvid_shard{shard_idx:02d}.jsonl"
         graftvid_out = shard_dir / f"graftvid_shard{shard_idx:02d}.jsonl"
         cats_out = shard_dir / f"cats_shard{shard_idx:02d}.jsonl"
@@ -620,6 +632,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             str(flashvid_out),
             "--ours_output",
             str(ours_out),
+            "--dynflashvid_output",
+            str(ours_out if ours_phase == "dynflashvid" else shard_dir / f"dynflashvid_shard{shard_idx:02d}.jsonl"),
             "--graphvid_output",
             str(graphvid_out),
             "--graftvid_output",
@@ -663,6 +677,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
                 "limit": limit,
                 "flashvid_out": flashvid_out,
                 "ours_out": ours_out,
+                "ours_phase": ours_phase,
                 "graphvid_out": graphvid_out,
                 "graftvid_out": graftvid_out,
                 "cats_out": cats_out,
@@ -726,7 +741,8 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     )
 
     combined_flashvid = shard_dir / f"{args.tag}_flashvid.jsonl"
-    combined_ours = shard_dir / f"{args.tag}_ours.jsonl"
+    ours_phase = _ours_phase_name(args)
+    combined_ours = shard_dir / f"{args.tag}_{ours_phase}.jsonl"
     combined_graphvid = shard_dir / f"{args.tag}_graphvid.jsonl"
     combined_graftvid = shard_dir / f"{args.tag}_graftvid.jsonl"
     combined_cats = shard_dir / f"{args.tag}_cats.jsonl"
@@ -758,7 +774,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     if args.run_cats:
         summary["cats"] = _summarize_phase(cats_records)
     if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
-        summary["ours"] = _summarize_phase(ours_records)
+        summary[ours_phase] = _summarize_phase(ours_records)
     if args.run_flashvid and args.run_graphvid:
         summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
             flashvid_records,
@@ -781,16 +797,17 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
             target_name="cats",
         )
     if args.run_flashvid and args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
-        summary["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
+        summary["comparison"][f"flashvid_vs_{ours_phase}"] = _summarize_pairwise_comparison(
             flashvid_records,
             ours_records,
             anchor_name="flashvid",
-            target_name="ours",
+            target_name=ours_phase,
         )
     _add_duration_breakdown(
         summary,
         flashvid_records=flashvid_records if args.run_flashvid else None,
         ours_records=ours_records if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats else None,
+        ours_phase_name=ours_phase,
         graphvid_records=graphvid_records if args.run_graphvid else None,
         graftvid_records=graftvid_records if args.run_graftvid else None,
         cats_records=cats_records if args.run_cats else None,
@@ -804,7 +821,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     if args.run_cats:
         print(f"[combined] cats={combined_cats}")
     if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
-        print(f"[combined] ours={combined_ours}")
+        print(f"[combined] {ours_phase}={combined_ours}")
     if args.run_flashvid:
         print(f"[combined] flashvid={combined_flashvid}")
     print(f"[combined] summary={combined_summary}")

@@ -128,6 +128,21 @@ def _comparison(summary: dict[str, Any] | None, key: str, target: str = "graphvi
     return None
 
 
+def _first_not_none(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _comparison_any(summary: dict[str, Any] | None, key: str, *targets: str) -> float | None:
+    for target in targets:
+        value = _comparison(summary, key, target=target)
+        if value is not None:
+            return value
+    return None
+
+
 def _fmt(value: float | None, digits: int = 2) -> str:
     if value is None:
         return "-"
@@ -141,6 +156,9 @@ def _build_command(
     total_limit: int,
     methods: set[str],
 ) -> tuple[list[str], Path]:
+    ours_like = sorted(methods & {"hedgevid", "dynflashvid"})
+    if len(ours_like) > 1:
+        raise ValueError(f"Only one run_ours-style method can be launched at once; got {ours_like}")
     run_tag = f"{args.tag}_r{rate_label}_videomme{total_limit}"
     summary_path = REPO_ROOT / "logs" / "efficiency" / "parallel" / run_tag / f"{run_tag}_summary.json"
     cmd = [
@@ -338,12 +356,14 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     graph_tokens = _mean(summary, "graphvid", "compressed_visual_tokens")
     graft_tokens = _mean(summary, "graftvid", "compressed_visual_tokens")
     cats_tokens = _mean(summary, "cats", "compressed_visual_tokens")
-    hedge_tokens = _mean(summary, "ours", "compressed_visual_tokens")
+    hedge_tokens = _first_not_none(_mean(summary, "hedgevid", "compressed_visual_tokens"), _mean(summary, "ours", "compressed_visual_tokens"))
+    dyn_tokens = _mean(summary, "dynflashvid", "compressed_visual_tokens")
     flash_acc = _acc(summary, "flashvid")
     graph_acc = _acc(summary, "graphvid")
     graft_acc = _acc(summary, "graftvid")
     cats_acc = _acc(summary, "cats")
-    hedge_acc = _acc(summary, "ours")
+    hedge_acc = _first_not_none(_acc(summary, "hedgevid"), _acc(summary, "ours"))
+    dyn_acc = _acc(summary, "dynflashvid")
     return {
         "retention_ratio": f"{rate_label.replace('p', '.')}%",
         "flashvid_acc": flash_acc,
@@ -351,43 +371,52 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "graftvid_acc": graft_acc,
         "cats_acc": cats_acc,
         "hedgevid_acc": hedge_acc,
+        "dynflashvid_acc": dyn_acc,
         "acc_delta": None if flash_acc is None or graph_acc is None else graph_acc - flash_acc,
         "graft_acc_delta": None if flash_acc is None or graft_acc is None else graft_acc - flash_acc,
         "cats_acc_delta": None if flash_acc is None or cats_acc is None else cats_acc - flash_acc,
         "hedge_acc_delta": None if flash_acc is None or hedge_acc is None else hedge_acc - flash_acc,
+        "dyn_acc_delta": None if flash_acc is None or dyn_acc is None else dyn_acc - flash_acc,
         "flashvid_short": _duration_acc(summary, "flashvid", "short"),
         "graphvid_short": _duration_acc(summary, "graphvid", "short"),
         "graftvid_short": _duration_acc(summary, "graftvid", "short"),
         "cats_short": _duration_acc(summary, "cats", "short"),
-        "hedgevid_short": _duration_acc(summary, "ours", "short"),
+        "hedgevid_short": _first_not_none(_duration_acc(summary, "hedgevid", "short"), _duration_acc(summary, "ours", "short")),
+        "dynflashvid_short": _duration_acc(summary, "dynflashvid", "short"),
         "flashvid_medium": _duration_acc(summary, "flashvid", "medium"),
         "graphvid_medium": _duration_acc(summary, "graphvid", "medium"),
         "graftvid_medium": _duration_acc(summary, "graftvid", "medium"),
         "cats_medium": _duration_acc(summary, "cats", "medium"),
-        "hedgevid_medium": _duration_acc(summary, "ours", "medium"),
+        "hedgevid_medium": _first_not_none(_duration_acc(summary, "hedgevid", "medium"), _duration_acc(summary, "ours", "medium")),
+        "dynflashvid_medium": _duration_acc(summary, "dynflashvid", "medium"),
         "flashvid_long": _duration_acc(summary, "flashvid", "long"),
         "graphvid_long": _duration_acc(summary, "graphvid", "long"),
         "graftvid_long": _duration_acc(summary, "graftvid", "long"),
         "cats_long": _duration_acc(summary, "cats", "long"),
-        "hedgevid_long": _duration_acc(summary, "ours", "long"),
+        "hedgevid_long": _first_not_none(_duration_acc(summary, "hedgevid", "long"), _duration_acc(summary, "ours", "long")),
+        "dynflashvid_long": _duration_acc(summary, "dynflashvid", "long"),
         "flashvid_tokens": flash_tokens,
         "graphvid_tokens": graph_tokens,
         "graftvid_tokens": graft_tokens,
         "cats_tokens": cats_tokens,
         "hedgevid_tokens": hedge_tokens,
+        "dynflashvid_tokens": dyn_tokens,
         "token_reduction": _comparison(summary, "visual_token_reduction"),
         "graft_token_reduction": _comparison(summary, "visual_token_reduction", target="graftvid"),
         "cats_token_reduction": _comparison(summary, "visual_token_reduction", target="cats"),
-        "hedge_token_reduction": _comparison(summary, "visual_token_reduction", target="ours"),
+        "hedge_token_reduction": _comparison_any(summary, "visual_token_reduction", "hedgevid", "ours"),
+        "dyn_token_reduction": _comparison(summary, "visual_token_reduction", target="dynflashvid"),
         "flashvid_latency_ms": _mean(summary, "flashvid", "latency_ms"),
         "graphvid_latency_ms": _mean(summary, "graphvid", "latency_ms"),
         "graftvid_latency_ms": _mean(summary, "graftvid", "latency_ms"),
         "cats_latency_ms": _mean(summary, "cats", "latency_ms"),
-        "hedgevid_latency_ms": _mean(summary, "ours", "latency_ms"),
+        "hedgevid_latency_ms": _first_not_none(_mean(summary, "hedgevid", "latency_ms"), _mean(summary, "ours", "latency_ms")),
+        "dynflashvid_latency_ms": _mean(summary, "dynflashvid", "latency_ms"),
         "latency_speedup": _comparison(summary, "latency_speedup"),
         "graft_latency_speedup": _comparison(summary, "latency_speedup", target="graftvid"),
         "cats_latency_speedup": _comparison(summary, "latency_speedup", target="cats"),
-        "hedge_latency_speedup": _comparison(summary, "latency_speedup", target="ours"),
+        "hedge_latency_speedup": _comparison_any(summary, "latency_speedup", "hedgevid", "ours"),
+        "dyn_latency_speedup": _comparison(summary, "latency_speedup", target="dynflashvid"),
     }
 
 
@@ -403,43 +432,52 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "graftvid_acc",
         "cats_acc",
         "hedgevid_acc",
+        "dynflashvid_acc",
         "acc_delta",
         "graft_acc_delta",
         "cats_acc_delta",
         "hedge_acc_delta",
+        "dyn_acc_delta",
         "flashvid_short",
         "graphvid_short",
         "graftvid_short",
         "cats_short",
         "hedgevid_short",
+        "dynflashvid_short",
         "flashvid_medium",
         "graphvid_medium",
         "graftvid_medium",
         "cats_medium",
         "hedgevid_medium",
+        "dynflashvid_medium",
         "flashvid_long",
         "graphvid_long",
         "graftvid_long",
         "cats_long",
         "hedgevid_long",
+        "dynflashvid_long",
         "flashvid_tokens",
         "graphvid_tokens",
         "graftvid_tokens",
         "cats_tokens",
         "hedgevid_tokens",
+        "dynflashvid_tokens",
         "token_reduction",
         "graft_token_reduction",
         "cats_token_reduction",
         "hedge_token_reduction",
+        "dyn_token_reduction",
         "flashvid_latency_ms",
         "graphvid_latency_ms",
         "graftvid_latency_ms",
         "cats_latency_ms",
         "hedgevid_latency_ms",
+        "dynflashvid_latency_ms",
         "latency_speedup",
         "graft_latency_speedup",
         "cats_latency_speedup",
         "hedge_latency_speedup",
+        "dyn_latency_speedup",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -450,55 +488,64 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
     lines = [
-        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | CATS Acc | HEDGE Acc | G Delta | GRAFT Delta | CATS Delta | HEDGE Delta | F Short | G Short | GRAFT Short | CATS Short | HEDGE Short | F Medium | G Medium | GRAFT Medium | CATS Medium | HEDGE Medium | F Long | G Long | GRAFT Long | CATS Long | HEDGE Long | F Tokens | G Tokens | GRAFT Tokens | CATS Tokens | HEDGE Tokens | G Token Red. | GRAFT Token Red. | CATS Token Red. | HEDGE Token Red. | F Lat. | G Lat. | GRAFT Lat. | CATS Lat. | HEDGE Lat. | G Speedup | GRAFT Speedup | CATS Speedup | HEDGE Speedup |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | CATS Acc | HEDGE Acc | DYN Acc | G Delta | GRAFT Delta | CATS Delta | HEDGE Delta | DYN Delta | F Short | G Short | GRAFT Short | CATS Short | HEDGE Short | DYN Short | F Medium | G Medium | GRAFT Medium | CATS Medium | HEDGE Medium | DYN Medium | F Long | G Long | GRAFT Long | CATS Long | HEDGE Long | DYN Long | F Tokens | G Tokens | GRAFT Tokens | CATS Tokens | HEDGE Tokens | DYN Tokens | G Token Red. | GRAFT Token Red. | CATS Token Red. | HEDGE Token Red. | DYN Token Red. | F Lat. | G Lat. | GRAFT Lat. | CATS Lat. | HEDGE Lat. | DYN Lat. | G Speedup | GRAFT Speedup | CATS Speedup | HEDGE Speedup | DYN Speedup |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {r} | {fa} | {ga} | {gfa} | {ca} | {ha} | {d} | {gd} | {cd} | {hd} | {fs} | {gs} | {gfs} | {cs} | {hs} | {fm} | {gm} | {gfm} | {cm} | {hm} | {fl} | {gl} | {gfl} | {cl} | {hl} | {ft} | {gt} | {gft} | {ct} | {ht} | {tr} | {gtr} | {ctr} | {htr} | {flat} | {glat} | {gflat} | {clat} | {hlat} | {sp} | {gsp} | {csp} | {hsp} |".format(
+            "| {r} | {fa} | {ga} | {gfa} | {ca} | {ha} | {da} | {d} | {gd} | {cd} | {hd} | {dd} | {fs} | {gs} | {gfs} | {cs} | {hs} | {ds} | {fm} | {gm} | {gfm} | {cm} | {hm} | {dm} | {fl} | {gl} | {gfl} | {cl} | {hl} | {dl} | {ft} | {gt} | {gft} | {ct} | {ht} | {dt} | {tr} | {gtr} | {ctr} | {htr} | {dtr} | {flat} | {glat} | {gflat} | {clat} | {hlat} | {dlat} | {sp} | {gsp} | {csp} | {hsp} | {dsp} |".format(
                 r=row["retention_ratio"],
                 fa=_fmt(row.get("flashvid_acc")),
                 ga=_fmt(row.get("graphvid_acc")),
                 gfa=_fmt(row.get("graftvid_acc")),
                 ca=_fmt(row.get("cats_acc")),
                 ha=_fmt(row.get("hedgevid_acc")),
+                da=_fmt(row.get("dynflashvid_acc")),
                 d=_fmt(row.get("acc_delta")),
                 gd=_fmt(row.get("graft_acc_delta")),
                 cd=_fmt(row.get("cats_acc_delta")),
                 hd=_fmt(row.get("hedge_acc_delta")),
+                dd=_fmt(row.get("dyn_acc_delta")),
                 fs=_fmt(row.get("flashvid_short")),
                 gs=_fmt(row.get("graphvid_short")),
                 gfs=_fmt(row.get("graftvid_short")),
                 cs=_fmt(row.get("cats_short")),
                 hs=_fmt(row.get("hedgevid_short")),
+                ds=_fmt(row.get("dynflashvid_short")),
                 fm=_fmt(row.get("flashvid_medium")),
                 gm=_fmt(row.get("graphvid_medium")),
                 gfm=_fmt(row.get("graftvid_medium")),
                 cm=_fmt(row.get("cats_medium")),
                 hm=_fmt(row.get("hedgevid_medium")),
+                dm=_fmt(row.get("dynflashvid_medium")),
                 fl=_fmt(row.get("flashvid_long")),
                 gl=_fmt(row.get("graphvid_long")),
                 gfl=_fmt(row.get("graftvid_long")),
                 cl=_fmt(row.get("cats_long")),
                 hl=_fmt(row.get("hedgevid_long")),
+                dl=_fmt(row.get("dynflashvid_long")),
                 ft=_fmt(row.get("flashvid_tokens")),
                 gt=_fmt(row.get("graphvid_tokens")),
                 gft=_fmt(row.get("graftvid_tokens")),
                 ct=_fmt(row.get("cats_tokens")),
                 ht=_fmt(row.get("hedgevid_tokens")),
+                dt=_fmt(row.get("dynflashvid_tokens")),
                 tr=_fmt(row.get("token_reduction")),
                 gtr=_fmt(row.get("graft_token_reduction")),
                 ctr=_fmt(row.get("cats_token_reduction")),
                 htr=_fmt(row.get("hedge_token_reduction")),
+                dtr=_fmt(row.get("dyn_token_reduction")),
                 flat=_fmt(row.get("flashvid_latency_ms")),
                 glat=_fmt(row.get("graphvid_latency_ms")),
                 gflat=_fmt(row.get("graftvid_latency_ms")),
                 clat=_fmt(row.get("cats_latency_ms")),
                 hlat=_fmt(row.get("hedgevid_latency_ms")),
+                dlat=_fmt(row.get("dynflashvid_latency_ms")),
                 sp=_fmt(row.get("latency_speedup"), 3),
                 gsp=_fmt(row.get("graft_latency_speedup"), 3),
                 csp=_fmt(row.get("cats_latency_speedup"), 3),
                 hsp=_fmt(row.get("hedge_latency_speedup"), 3),
+                dsp=_fmt(row.get("dyn_latency_speedup"), 3),
             )
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

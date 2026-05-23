@@ -97,8 +97,6 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "dynflashvid"):
-        return "ours"
     return method
 
 
@@ -356,6 +354,8 @@ def _load_summary(path: Path) -> dict[str, Any] | None:
 def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: str) -> dict[str, float | None]:
     phase_key = _phase_name(method)
     phase = summary.get(phase_key) if summary else None
+    if phase is None and method in ("talon", "dynflashvid") and summary:
+        phase = summary.get("ours")
     result: dict[str, float | None] = {
         "acc": _safe_pct(phase.get("accuracy")) if phase else None,
         "tokens": _stat_mean(phase, "compressed_visual_tokens"),
@@ -365,6 +365,8 @@ def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: st
         for duration in ("short", "medium", "long"):
             bucket = by_duration.get(duration, {})
             sub_phase = bucket.get(phase_key)
+            if sub_phase is None and method in ("talon", "dynflashvid"):
+                sub_phase = bucket.get("ours")
             result[duration] = _safe_pct(sub_phase.get("accuracy")) if sub_phase else None
     return result
 
