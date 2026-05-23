@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,57 @@ from playground.bench_all_metrics import (
     _load_backend_model,
     _load_dataset,
 )
+
+
+DEFAULT_GPU_CAP = 4
+
+
+def _query_free_gpus(free_ratio: float, min_free_mb: int) -> list[int]:
+    cmd = [
+        "nvidia-smi",
+        "--query-gpu=index,memory.free,memory.total,utilization.gpu",
+        "--format=csv,noheader,nounits",
+    ]
+    proc = subprocess.run(cmd, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    gpus: list[int] = []
+    print("[gpu-scan] index free/total util eligible")
+    for raw in proc.stdout.strip().splitlines():
+        if not raw.strip():
+            continue
+        parts = [p.strip() for p in raw.split(",")]
+        idx = int(parts[0])
+        free_mb = int(parts[1])
+        total_mb = int(parts[2])
+        util = int(parts[3])
+        ratio = free_mb / max(1, total_mb)
+        ok = ratio >= free_ratio and free_mb >= min_free_mb
+        print(f"[gpu-scan] {idx} {free_mb}/{total_mb} {util}% {'yes' if ok else 'no'}")
+        if ok:
+            gpus.append(idx)
+    return gpus
+
+
+def _apply_gpu_cap(gpu_ids: list[int], gpu_cap: int) -> list[int]:
+    if gpu_cap <= 0 or len(gpu_ids) <= gpu_cap:
+        return gpu_ids
+    capped = gpu_ids[:gpu_cap]
+    print(f"[gpu-cap] limiting GPUs from {gpu_ids} to {capped} (cap={gpu_cap})")
+    return capped
+
+
+def _select_visible_gpus(args: argparse.Namespace) -> list[int]:
+    if args.gpu_ids.strip():
+        gpu_ids = [int(x) for x in args.gpu_ids.split(",") if x.strip()]
+        print(f"[gpu-select] using explicit --gpu_ids={gpu_ids}")
+    else:
+        gpu_ids = _query_free_gpus(args.free_ratio, args.min_free_mb)
+
+    if args.max_gpus > 0:
+        gpu_ids = gpu_ids[: args.max_gpus]
+    gpu_ids = _apply_gpu_cap(gpu_ids, args.gpu_cap)
+    if not gpu_ids:
+        raise SystemExit("No eligible GPU found. Lower --free_ratio/--min_free_mb or pass --gpu_ids.")
+    return gpu_ids
 
 
 def _flashvid_configs(model) -> list[Any]:
@@ -69,6 +122,10 @@ def _clear_teacher_state(model) -> None:
 
 
 def collect(args: argparse.Namespace) -> None:
+    gpu_ids = _select_visible_gpus(args)
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(x) for x in gpu_ids)
+    print(f"[gpu-select] CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
+
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = out_dir / "manifest.jsonl"
@@ -203,6 +260,11 @@ def main() -> None:
     parser.add_argument("--token_selection_method", default="attn_div_v2")
     parser.add_argument("--flashvid_token_selection_method", default="attn_div_v2")
     parser.add_argument("--learn_density_topk", type=int, default=8)
+    parser.add_argument("--free_ratio", type=float, default=0.90)
+    parser.add_argument("--min_free_mb", type=int, default=22000)
+    parser.add_argument("--max_gpus", type=int, default=1, help="0 means use eligible GPUs up to --gpu_cap.")
+    parser.add_argument("--gpu_cap", type=int, default=DEFAULT_GPU_CAP, help="Hard cap for GPUs per launch. 0 disables the cap.")
+    parser.add_argument("--gpu_ids", default="", help="Comma-separated GPU ids. Overrides auto selection.")
     collect(parser.parse_args())
 
 
