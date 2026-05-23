@@ -119,6 +119,9 @@ DYN_METRIC_KEYS = [
     "dyn_similarity_debias_active",
     "dyn_sink_active",
     "dyn_weighted_active",
+    "dyn_density_frame_mean",
+    "dyn_event_chunk_mean",
+    "dyn_motion_frame_mean",
 ]
 HEDGE_METRIC_KEYS = [
     "hedge_selected_adts",
@@ -253,6 +256,14 @@ class BenchmarkArgs:
     dyn_event_weight: float = field(default=0.30)
     dyn_novelty_weight: float = field(default=0.15)
     dyn_detail_weight: float = field(default=0.05)
+    dyn_density_weight: float = field(default=0.15)
+    dyn_density_topk: int = field(default=8)
+    dyn_event_chunk_radius: int = field(default=2)
+    dyn_frame_event_weight: float = field(default=0.30)
+    dyn_frame_novelty_weight: float = field(default=0.25)
+    dyn_frame_attn_weight: float = field(default=0.20)
+    dyn_frame_density_weight: float = field(default=0.20)
+    dyn_frame_detail_weight: float = field(default=0.05)
     dyn_similarity_debias: bool = field(default=True)
     dyn_debias_frame_weight: float = field(default=0.35)
     dyn_debias_global_weight: float = field(default=0.20)
@@ -2614,6 +2625,14 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         dyn_event_weight=args.dyn_event_weight,
         dyn_novelty_weight=args.dyn_novelty_weight,
         dyn_detail_weight=args.dyn_detail_weight,
+        dyn_density_weight=args.dyn_density_weight,
+        dyn_density_topk=args.dyn_density_topk,
+        dyn_event_chunk_radius=args.dyn_event_chunk_radius,
+        dyn_frame_event_weight=args.dyn_frame_event_weight,
+        dyn_frame_novelty_weight=args.dyn_frame_novelty_weight,
+        dyn_frame_attn_weight=args.dyn_frame_attn_weight,
+        dyn_frame_density_weight=args.dyn_frame_density_weight,
+        dyn_frame_detail_weight=args.dyn_frame_detail_weight,
         dyn_similarity_debias=args.dyn_similarity_debias,
         dyn_debias_frame_weight=args.dyn_debias_frame_weight,
         dyn_debias_global_weight=args.dyn_debias_global_weight,
@@ -2986,6 +3005,19 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"event_cap={args.talon_event_budget_ratio:.2f}, "
             f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
+        if ours_phase_name == "dynflashvid":
+            print(
+                "DynFlash allocator: "
+                f"strength={args.dyn_budget_strength:.2f}, temp={args.dyn_budget_temperature:.2f}, "
+                f"minmax={args.dyn_frame_budget_min_ratio:.2f}/{args.dyn_frame_budget_max_ratio:.2f}, "
+                f"token_w=a{args.dyn_attn_weight:.2f}/e{args.dyn_event_weight:.2f}/"
+                f"n{args.dyn_novelty_weight:.2f}/d{args.dyn_detail_weight:.2f}/"
+                f"rho{args.dyn_density_weight:.2f}, "
+                f"frame_w=event{args.dyn_frame_event_weight:.2f}/nov{args.dyn_frame_novelty_weight:.2f}/"
+                f"attn{args.dyn_frame_attn_weight:.2f}/rho{args.dyn_frame_density_weight:.2f}/"
+                f"detail{args.dyn_frame_detail_weight:.2f}, "
+                f"density_topk={args.dyn_density_topk}, event_radius={args.dyn_event_chunk_radius}"
+            )
     if args.run_graphvid:
         print(
             "GraphVID config: "
@@ -3118,6 +3150,9 @@ def _print_summary(summary: dict[str, Any]):
         dyn_debias_mean = phase.get("dyn_similarity_debias_active", {}).get("mean")
         dyn_sink_active_mean = phase.get("dyn_sink_active", {}).get("mean")
         dyn_weighted_mean = phase.get("dyn_weighted_active", {}).get("mean")
+        dyn_density_frame_mean = phase.get("dyn_density_frame_mean", {}).get("mean")
+        dyn_event_chunk_mean = phase.get("dyn_event_chunk_mean", {}).get("mean")
+        dyn_motion_frame_mean = phase.get("dyn_motion_frame_mean", {}).get("mean")
         hedge_budget_mean = phase.get("hedge_residual_budget", {}).get("mean")
         hedge_stable_cand_mean = phase.get("hedge_stable_candidates", {}).get("mean")
         hedge_evidence_cand_mean = phase.get("hedge_evidence_candidates", {}).get("mean")
@@ -3230,6 +3265,12 @@ def _print_summary(summary: dict[str, Any]):
                 f"{dyn_selected_mean:.2f}/{(dyn_budget_min_mean or 0.0):.2f}-"
                 f"{(dyn_budget_max_mean or 0.0):.2f}-{(dyn_budget_std_mean or 0.0):.2f}"
             )
+            if dyn_density_frame_mean is not None:
+                print(
+                    "  dyn density/event/motion frame score mean: "
+                    f"{dyn_density_frame_mean:.3f}/{(dyn_event_chunk_mean or 0.0):.3f}/"
+                    f"{(dyn_motion_frame_mean or 0.0):.3f}"
+                )
             print(
                 "  dyn sink/residual/retained and spatial pre-post mean: "
                 f"{(dyn_sink_mean or 0.0):.2f}/{(dyn_residual_mean or 0.0):.2f}/"

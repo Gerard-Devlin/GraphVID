@@ -38,11 +38,45 @@ def _minmax(x: torch.Tensor, dim: int = -1, eps: float = 1.0e-6) -> torch.Tensor
     return ((x - lo) / (hi - lo + eps)).clamp(0.0, 1.0)
 
 
+def _density_sparsity_score(normed: torch.Tensor, topk: int) -> torch.Tensor:
+    """FastVID-style DPC density cue for selecting context/detail tokens."""
+    num_frames, num_visual_tokens, _ = normed.shape
+    if num_visual_tokens <= 1:
+        return torch.ones((num_frames, num_visual_tokens), dtype=torch.float32, device=normed.device)
+    k = max(1, min(int(topk), num_visual_tokens))
+    dist_matrix = torch.cdist(normed.float(), normed.float()) / math.sqrt(max(1, normed.shape[-1]))
+    dist_nearest = torch.topk(dist_matrix, k=k, dim=-1, largest=False).values
+    density = (-(dist_nearest ** 2).mean(dim=-1)).exp()
+    high_density_mask = (density[:, None, :] > density[:, :, None]).to(dist_matrix.dtype)
+    dist_max = dist_matrix.flatten(1).max(dim=-1).values[:, None, None]
+    dist_to_parent = (dist_matrix * high_density_mask + dist_max * (1.0 - high_density_mask)).min(dim=-1).values
+    score = dist_to_parent * density
+    return _minmax(score, dim=-1)
+
+
+def _temporal_peak_score(base: torch.Tensor, radius: int) -> torch.Tensor:
+    """METok-style event support: preserve a small neighborhood around peaks."""
+    if base.numel() <= 1 or radius <= 0:
+        return base
+    radius = min(int(radius), int(base.numel()) - 1)
+    peak = base.clone()
+    smooth = base.clone()
+    count = torch.ones_like(base)
+    for shift in range(1, radius + 1):
+        left = torch.cat([base[:1].expand(shift), base[:-shift]], dim=0)
+        right = torch.cat([base[shift:], base[-1:].expand(shift)], dim=0)
+        peak = torch.maximum(peak, torch.maximum(left, right))
+        smooth = smooth + left + right
+        count = count + 2.0
+    smooth = smooth / count.clamp_min(1.0)
+    return _minmax(0.65 * peak + 0.35 * smooth, dim=0)
+
+
 def _importance_maps(
     features: torch.Tensor,
     cls_attention: torch.Tensor,
     config: FlashVidConfig,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
     num_frames, num_visual_tokens, _ = features.shape
     normed = F.normalize(features.float(), p=2, dim=-1, eps=1.0e-6)
 
@@ -63,17 +97,21 @@ def _importance_maps(
     h, w = _grid_hw(num_visual_tokens, config)
     neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius=1, device=features.device)
     detail = _minmax(_spatial_detail_score(normed, neighbor_idx, neighbor_valid), dim=-1)
+    density_topk = _cfg_int(config, "dyn_density_topk", 8)
+    density = _density_sparsity_score(normed, density_topk)
 
     attn_w = _cfg_float(config, "dyn_attn_weight", 0.50)
     event_w = _cfg_float(config, "dyn_event_weight", 0.30)
     novelty_w = _cfg_float(config, "dyn_novelty_weight", 0.15)
     detail_w = _cfg_float(config, "dyn_detail_weight", 0.05)
-    denom = max(1.0e-6, attn_w + event_w + novelty_w + detail_w)
+    density_w = _cfg_float(config, "dyn_density_weight", 0.15)
+    denom = max(1.0e-6, attn_w + event_w + novelty_w + detail_w + density_w)
     token_importance = (
         attn_w * attn
         + event_w * event
         + novelty_w * novelty
         + detail_w * detail
+        + density_w * density
     ) / denom
 
     motion = torch.zeros(num_frames, dtype=torch.float32, device=features.device)
@@ -82,17 +120,38 @@ def _importance_maps(
     attn_mass = attn.topk(k=min(16, num_visual_tokens), dim=-1).values.mean(dim=-1)
     event_mass = event.topk(k=min(16, num_visual_tokens), dim=-1).values.mean(dim=-1)
     detail_mass = detail.topk(k=min(16, num_visual_tokens), dim=-1).values.mean(dim=-1)
+    density_mass = density.topk(k=min(16, num_visual_tokens), dim=-1).values.mean(dim=-1)
+    motion_norm = _minmax(motion.unsqueeze(0), dim=-1).squeeze(0)
+    event_norm = _minmax(event_mass.unsqueeze(0), dim=-1).squeeze(0)
+    event_chunk_radius = _cfg_int(config, "dyn_event_chunk_radius", 2)
+    event_chunk = _temporal_peak_score(0.60 * event_norm + 0.40 * motion_norm, event_chunk_radius)
+    attn_norm = _minmax(attn_mass.unsqueeze(0), dim=-1).squeeze(0)
+    density_norm = _minmax(density_mass.unsqueeze(0), dim=-1).squeeze(0)
+    detail_norm = _minmax(detail_mass.unsqueeze(0), dim=-1).squeeze(0)
+    frame_event_w = _cfg_float(config, "dyn_frame_event_weight", 0.30)
+    frame_novelty_w = _cfg_float(config, "dyn_frame_novelty_weight", 0.25)
+    frame_attn_w = _cfg_float(config, "dyn_frame_attn_weight", 0.20)
+    frame_density_w = _cfg_float(config, "dyn_frame_density_weight", 0.20)
+    frame_detail_w = _cfg_float(config, "dyn_frame_detail_weight", 0.05)
+    frame_denom = max(1.0e-6, frame_event_w + frame_novelty_w + frame_attn_w + frame_density_w + frame_detail_w)
     frame_score = (
-        0.35 * _minmax(motion.unsqueeze(0), dim=-1).squeeze(0)
-        + 0.30 * _minmax(event_mass.unsqueeze(0), dim=-1).squeeze(0)
-        + 0.20 * _minmax(attn_mass.unsqueeze(0), dim=-1).squeeze(0)
-        + 0.15 * _minmax(detail_mass.unsqueeze(0), dim=-1).squeeze(0)
-    )
+        frame_event_w * event_chunk
+        + frame_novelty_w * motion_norm
+        + frame_attn_w * attn_norm
+        + frame_density_w * density_norm
+        + frame_detail_w * detail_norm
+    ) / frame_denom
     boundary_boost = _cfg_float(config, "dyn_boundary_boost", 0.08)
     if boundary_boost > 0 and num_frames > 0:
         frame_score[0] += boundary_boost
         frame_score[-1] += boundary_boost
-    return token_importance.clamp(0.0, 1.0), frame_score.clamp_min(0.0)
+    aux = {
+        "density": density,
+        "density_frame": density_norm,
+        "event_chunk": event_chunk,
+        "motion_frame": motion_norm,
+    }
+    return token_importance.clamp(0.0, 1.0), frame_score.clamp_min(0.0), aux
 
 
 def _frame_budgets(
@@ -180,8 +239,8 @@ def _dyn_adts_selection(
     cls_attention: torch.Tensor,
     per_frame_tokens: int,
     config: FlashVidConfig,
-) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor, List[int], torch.Tensor]:
-    importance, frame_score = _importance_maps(features, cls_attention, config)
+) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor, List[int], torch.Tensor, dict[str, torch.Tensor]]:
+    importance, frame_score, aux = _importance_maps(features, cls_attention, config)
     budgets = _frame_budgets(frame_score, per_frame_tokens, features.shape[1], config)
     beta = _cfg_float(config, "dyn_adts_beta", 0.05)
 
@@ -192,7 +251,7 @@ def _dyn_adts_selection(
         selected.append(indices)
         if indices.numel() > 0:
             selected_mask[frame_idx, indices] = True
-    return selected, selected_mask, importance, budgets, frame_score
+    return selected, selected_mask, importance, budgets, frame_score, aux
 
 
 def _similarity_features(features: torch.Tensor, config: FlashVidConfig) -> torch.Tensor:
@@ -398,6 +457,9 @@ def _reset_dyn_metrics(config: FlashVidConfig) -> None:
         "last_dyn_similarity_debias_active": 0.0,
         "last_dyn_sink_active": 0.0,
         "last_dyn_weighted_active": 0.0,
+        "last_dyn_density_frame_mean": 0.0,
+        "last_dyn_event_chunk_mean": 0.0,
+        "last_dyn_motion_frame_mean": 0.0,
     }
     for key, value in defaults.items():
         setattr(config, key, value)
@@ -415,6 +477,7 @@ def _accumulate_dyn_metrics(
     merge_metrics: dict[str, float | None],
     spatial_before: int,
     spatial_after: int,
+    aux: dict[str, torch.Tensor] | None = None,
 ) -> None:
     if not hasattr(config, "_dyn_segments"):
         _reset_dyn_metrics(config)
@@ -436,6 +499,14 @@ def _accumulate_dyn_metrics(
         "dyn_sink_active": float(_cfg_bool(config, "dyn_sink_tstm", False)),
         "dyn_weighted_active": float(_cfg_bool(config, "dyn_weighted_merge", False)),
     }
+    if aux:
+        values.update(
+            {
+                "dyn_density_frame_mean": float(aux["density_frame"].float().mean().item()) if "density_frame" in aux else 0.0,
+                "dyn_event_chunk_mean": float(aux["event_chunk"].float().mean().item()) if "event_chunk" in aux else 0.0,
+                "dyn_motion_frame_mean": float(aux["motion_frame"].float().mean().item()) if "motion_frame" in aux else 0.0,
+            }
+        )
     for key, value in values.items():
         sum_key = f"_{key}_sum"
         setattr(config, sum_key, float(getattr(config, sum_key, 0.0)) + value)
@@ -467,7 +538,7 @@ def dyn_segment_compression(
     device = segment_features.device
     per_frame_adts = int(flashvid_config.num_attn_div_tokens or 0)
 
-    selected_indices, selected_mask, importance, budgets, _ = _dyn_adts_selection(
+    selected_indices, selected_mask, importance, budgets, _, aux = _dyn_adts_selection(
         segment_features,
         cls_attention,
         per_frame_adts,
@@ -523,5 +594,6 @@ def dyn_segment_compression(
         merge_metrics=merge_metrics,
         spatial_before=spatial_before,
         spatial_after=spatial_after,
+        aux=aux,
     )
     return final_tokens, final_indices

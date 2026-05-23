@@ -127,6 +127,22 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.dyn_novelty_weight),
             "--dyn_detail_weight",
             str(args.dyn_detail_weight),
+            "--dyn_density_weight",
+            str(args.dyn_density_weight),
+            "--dyn_density_topk",
+            str(args.dyn_density_topk),
+            "--dyn_event_chunk_radius",
+            str(args.dyn_event_chunk_radius),
+            "--dyn_frame_event_weight",
+            str(args.dyn_frame_event_weight),
+            "--dyn_frame_novelty_weight",
+            str(args.dyn_frame_novelty_weight),
+            "--dyn_frame_attn_weight",
+            str(args.dyn_frame_attn_weight),
+            "--dyn_frame_density_weight",
+            str(args.dyn_frame_density_weight),
+            "--dyn_frame_detail_weight",
+            str(args.dyn_frame_detail_weight),
             "--dyn_similarity_debias",
             _str_bool(args.dyn_similarity_debias),
             "--dyn_debias_frame_weight",
@@ -942,6 +958,14 @@ def main() -> None:
     parser.add_argument("--dyn_event_weight", type=float, default=0.30)
     parser.add_argument("--dyn_novelty_weight", type=float, default=0.15)
     parser.add_argument("--dyn_detail_weight", type=float, default=0.05)
+    parser.add_argument("--dyn_density_weight", type=float, default=0.15)
+    parser.add_argument("--dyn_density_topk", type=int, default=8)
+    parser.add_argument("--dyn_event_chunk_radius", type=int, default=2)
+    parser.add_argument("--dyn_frame_event_weight", type=float, default=0.30)
+    parser.add_argument("--dyn_frame_novelty_weight", type=float, default=0.25)
+    parser.add_argument("--dyn_frame_attn_weight", type=float, default=0.20)
+    parser.add_argument("--dyn_frame_density_weight", type=float, default=0.20)
+    parser.add_argument("--dyn_frame_detail_weight", type=float, default=0.05)
     parser.add_argument("--dyn_similarity_debias", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dyn_debias_frame_weight", type=float, default=0.35)
     parser.add_argument("--dyn_debias_global_weight", type=float, default=0.20)
