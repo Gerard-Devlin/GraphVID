@@ -94,6 +94,48 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "0.25",
             "--adaptive_token_budget",
             "False",
+            "--dyn_adaptive_adts_budget",
+            _str_bool(args.dyn_adaptive_adts_budget),
+            "--dyn_budget_strength",
+            str(args.dyn_budget_strength),
+            "--dyn_budget_temperature",
+            str(args.dyn_budget_temperature),
+            "--dyn_frame_budget_min_ratio",
+            str(args.dyn_frame_budget_min_ratio),
+            "--dyn_frame_budget_max_ratio",
+            str(args.dyn_frame_budget_max_ratio),
+            "--dyn_boundary_boost",
+            str(args.dyn_boundary_boost),
+            "--dyn_adts_beta",
+            str(args.dyn_adts_beta),
+            "--dyn_attn_weight",
+            str(args.dyn_attn_weight),
+            "--dyn_event_weight",
+            str(args.dyn_event_weight),
+            "--dyn_novelty_weight",
+            str(args.dyn_novelty_weight),
+            "--dyn_detail_weight",
+            str(args.dyn_detail_weight),
+            "--dyn_similarity_debias",
+            _str_bool(args.dyn_similarity_debias),
+            "--dyn_debias_frame_weight",
+            str(args.dyn_debias_frame_weight),
+            "--dyn_debias_global_weight",
+            str(args.dyn_debias_global_weight),
+            "--dyn_sink_tstm",
+            _str_bool(args.dyn_sink_tstm),
+            "--dyn_mutual_nn",
+            _str_bool(args.dyn_mutual_nn),
+            "--dyn_margin_threshold",
+            str(args.dyn_margin_threshold),
+            "--dyn_high_conf_bonus",
+            str(args.dyn_high_conf_bonus),
+            "--dyn_weighted_merge",
+            _str_bool(args.dyn_weighted_merge),
+            "--dyn_confidence_attn_weight",
+            str(args.dyn_confidence_attn_weight),
+            "--dyn_confidence_sim_weight",
+            str(args.dyn_confidence_sim_weight),
             "--talon_adaptive_target_enabled",
             _str_bool(args.talon_adaptive_target_enabled),
             "--talon_target_mean_cap",
@@ -872,6 +914,27 @@ def main() -> None:
     parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--cats_frame_budget_min", type=int, default=1)
     parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)
+    parser.add_argument("--dyn_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dyn_budget_strength", type=float, default=0.45)
+    parser.add_argument("--dyn_budget_temperature", type=float, default=0.75)
+    parser.add_argument("--dyn_frame_budget_min_ratio", type=float, default=0.50)
+    parser.add_argument("--dyn_frame_budget_max_ratio", type=float, default=1.75)
+    parser.add_argument("--dyn_boundary_boost", type=float, default=0.08)
+    parser.add_argument("--dyn_adts_beta", type=float, default=0.05)
+    parser.add_argument("--dyn_attn_weight", type=float, default=0.50)
+    parser.add_argument("--dyn_event_weight", type=float, default=0.30)
+    parser.add_argument("--dyn_novelty_weight", type=float, default=0.15)
+    parser.add_argument("--dyn_detail_weight", type=float, default=0.05)
+    parser.add_argument("--dyn_similarity_debias", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dyn_debias_frame_weight", type=float, default=0.35)
+    parser.add_argument("--dyn_debias_global_weight", type=float, default=0.20)
+    parser.add_argument("--dyn_sink_tstm", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--dyn_mutual_nn", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--dyn_margin_threshold", type=float, default=0.0)
+    parser.add_argument("--dyn_high_conf_bonus", type=float, default=0.05)
+    parser.add_argument("--dyn_weighted_merge", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--dyn_confidence_attn_weight", type=float, default=0.50)
+    parser.add_argument("--dyn_confidence_sim_weight", type=float, default=0.50)
     parser.add_argument("--hedge_stable_floor_ratio", type=float, default=0.85)
     parser.add_argument("--hedge_diversity_weight", type=float, default=0.04)
     parser.add_argument("--hedge_stable_bias", type=float, default=0.05)

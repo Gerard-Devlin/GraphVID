@@ -40,6 +40,9 @@ def _parse_methods(text: str) -> set[str]:
         "graftvid": "graftvid",
         "cats": "cats",
         "catsvid": "cats",
+        "dyn": "dynflashvid",
+        "dynflash": "dynflashvid",
+        "dynflashvid": "dynflashvid",
         "hedge": "hedgevid",
         "hedgevid": "hedgevid",
     }
@@ -174,7 +177,7 @@ def _build_command(
         str(args.gpu_cap),
         "--tag",
         run_tag,
-        "--run_ours" if "hedgevid" in methods else "--no-run_ours",
+        "--run_ours" if ("hedgevid" in methods or "dynflashvid" in methods) else "--no-run_ours",
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -224,6 +227,8 @@ def _build_command(
     cmd.append("--run_cats" if "cats" in methods else "--no-run_cats")
     if "hedgevid" in methods:
         cmd.extend(["--compression_variant", "hedgevid"])
+    if "dynflashvid" in methods:
+        cmd.extend(["--compression_variant", "dynflashvid"])
     cmd.extend(
         [
             "--graft_temporal_topk",
@@ -509,7 +514,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
-    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,hedgevid.")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,dynflashvid,hedgevid.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")

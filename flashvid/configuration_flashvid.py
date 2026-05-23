@@ -92,6 +92,29 @@ class FlashVidConfig:
     cats_frame_budget_min: int = field(default=1)
     cats_frame_budget_temperature: float = field(default=0.7)
 
+    # DynFlashVID: dynamic ADTS budget + debiased residual TSTM.
+    dyn_adaptive_adts_budget: bool = field(default=True)
+    dyn_budget_strength: float = field(default=0.45)
+    dyn_budget_temperature: float = field(default=0.75)
+    dyn_frame_budget_min_ratio: float = field(default=0.50)
+    dyn_frame_budget_max_ratio: float = field(default=1.75)
+    dyn_boundary_boost: float = field(default=0.08)
+    dyn_adts_beta: float = field(default=0.05)
+    dyn_attn_weight: float = field(default=0.50)
+    dyn_event_weight: float = field(default=0.30)
+    dyn_novelty_weight: float = field(default=0.15)
+    dyn_detail_weight: float = field(default=0.05)
+    dyn_similarity_debias: bool = field(default=True)
+    dyn_debias_frame_weight: float = field(default=0.35)
+    dyn_debias_global_weight: float = field(default=0.20)
+    dyn_sink_tstm: bool = field(default=False)
+    dyn_mutual_nn: bool = field(default=False)
+    dyn_margin_threshold: float = field(default=0.0)
+    dyn_high_conf_bonus: float = field(default=0.05)
+    dyn_weighted_merge: bool = field(default=False)
+    dyn_confidence_attn_weight: float = field(default=0.50)
+    dyn_confidence_sim_weight: float = field(default=0.50)
+
     # HEDGE-VID dual-path residual selection.
     hedge_stable_floor_ratio: float = field(default=0.85)
     hedge_diversity_weight: float = field(default=0.04)
@@ -124,6 +147,7 @@ class FlashVidConfig:
     # "graftvid": ADTS + constrained temporal forest path.
     # "cats": CATS protected-sink ADTS + confidence-aware TSTM path.
     # "hedgevid": FlashVID ADTS + stable/evidence residual candidate selection.
+    # "dynflashvid": FlashVID-style compression with dynamic ADTS budget and debiased TSTM.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

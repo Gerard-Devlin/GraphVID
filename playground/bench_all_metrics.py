@@ -60,6 +60,21 @@ CATS_METRIC_KEYS = [
     "cats_mean_merge_sim",
     "cats_mean_margin",
 ]
+DYN_METRIC_KEYS = [
+    "dyn_selected_tokens",
+    "dyn_budget_min",
+    "dyn_budget_max",
+    "dyn_budget_std",
+    "dyn_sink_merges",
+    "dyn_residual_merges",
+    "dyn_retained_residual_tokens",
+    "dyn_spatial_tokens_before",
+    "dyn_spatial_tokens_after",
+    "dyn_mean_merge_sim",
+    "dyn_similarity_debias_active",
+    "dyn_sink_active",
+    "dyn_weighted_active",
+]
 HEDGE_METRIC_KEYS = [
     "hedge_selected_adts",
     "hedge_residual_budget",
@@ -181,6 +196,27 @@ class BenchmarkArgs:
     cats_adaptive_adts_budget: bool = field(default=False)
     cats_frame_budget_min: int = field(default=1)
     cats_frame_budget_temperature: float = field(default=0.7)
+    dyn_adaptive_adts_budget: bool = field(default=True)
+    dyn_budget_strength: float = field(default=0.45)
+    dyn_budget_temperature: float = field(default=0.75)
+    dyn_frame_budget_min_ratio: float = field(default=0.50)
+    dyn_frame_budget_max_ratio: float = field(default=1.75)
+    dyn_boundary_boost: float = field(default=0.08)
+    dyn_adts_beta: float = field(default=0.05)
+    dyn_attn_weight: float = field(default=0.50)
+    dyn_event_weight: float = field(default=0.30)
+    dyn_novelty_weight: float = field(default=0.15)
+    dyn_detail_weight: float = field(default=0.05)
+    dyn_similarity_debias: bool = field(default=True)
+    dyn_debias_frame_weight: float = field(default=0.35)
+    dyn_debias_global_weight: float = field(default=0.20)
+    dyn_sink_tstm: bool = field(default=False)
+    dyn_mutual_nn: bool = field(default=False)
+    dyn_margin_threshold: float = field(default=0.0)
+    dyn_high_conf_bonus: float = field(default=0.05)
+    dyn_weighted_merge: bool = field(default=False)
+    dyn_confidence_attn_weight: float = field(default=0.50)
+    dyn_confidence_sim_weight: float = field(default=0.50)
     hedge_stable_floor_ratio: float = field(default=0.85)
     hedge_diversity_weight: float = field(default=0.04)
     hedge_stable_bias: float = field(default=0.05)
@@ -1180,6 +1216,38 @@ def _get_cats_debug_metrics(model) -> dict[str, float | None]:
     return best_values
 
 
+def _get_dyn_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in DYN_METRIC_KEYS}
+    candidates = []
+    for obj in (
+        model,
+        getattr(model, "model", None),
+        getattr(model, "language_model", None),
+        getattr(model, "module", None),
+        getattr(getattr(model, "module", None), "model", None),
+    ):
+        if obj is None:
+            continue
+        cfg = getattr(obj, "flashvid_config", None)
+        if cfg is not None and cfg not in candidates:
+            candidates.append(cfg)
+    if not candidates:
+        return empty
+    best_values = empty
+    best_score = -1
+    for cfg in candidates:
+        values: dict[str, float | None] = {}
+        present = 0
+        for key in DYN_METRIC_KEYS:
+            value = getattr(cfg, f"last_{key}", None)
+            values[key] = float(value) if value is not None else None
+            present += int(value is not None)
+        if present > best_score:
+            best_score = present
+            best_values = values
+    return best_values
+
+
 def _get_hedge_debug_metrics(model) -> dict[str, float | None]:
     empty = {key: None for key in HEDGE_METRIC_KEYS}
     candidates = []
@@ -1281,6 +1349,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_grid_w_per_run = []
     graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
     cats_metrics_per_run = {key: [] for key in CATS_METRIC_KEYS}
+    dyn_metrics_per_run = {key: [] for key in DYN_METRIC_KEYS}
     hedge_metrics_per_run = {key: [] for key in HEDGE_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
@@ -1323,6 +1392,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         talon_core_metrics = _get_talon_core_debug_metrics(model)
         graft_metrics = _get_graft_debug_metrics(model)
         cats_metrics = _get_cats_debug_metrics(model)
+        dyn_metrics = _get_dyn_debug_metrics(model)
         hedge_metrics = _get_hedge_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
@@ -1332,6 +1402,9 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         for key in CATS_METRIC_KEYS:
             if cats_metrics.get(key) is not None:
                 cats_metrics_per_run[key].append(float(cats_metrics[key]))
+        for key in DYN_METRIC_KEYS:
+            if dyn_metrics.get(key) is not None:
+                dyn_metrics_per_run[key].append(float(dyn_metrics[key]))
         for key in HEDGE_METRIC_KEYS:
             if hedge_metrics.get(key) is not None:
                 hedge_metrics_per_run[key].append(float(hedge_metrics[key]))
@@ -1436,6 +1509,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in cats_metrics_per_run.items()
     }
+    dyn_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in dyn_metrics_per_run.items()
+    }
     hedge_metric_means = {
         key: float(np.mean(values)) if values else None
         for key, values in hedge_metrics_per_run.items()
@@ -1483,6 +1560,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_core_grid_w": talon_core_grid_w,
         **graft_metric_means,
         **cats_metric_means,
+        **dyn_metric_means,
         **hedge_metric_means,
     }
 
@@ -1539,6 +1617,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
     }
     record.update({key: None for key in GRAFT_METRIC_KEYS})
     record.update({key: None for key in CATS_METRIC_KEYS})
+    record.update({key: None for key in DYN_METRIC_KEYS})
     record.update({key: None for key in HEDGE_METRIC_KEYS})
 
     try:
@@ -1599,6 +1678,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_core_grid_w": result.get("talon_core_grid_w"),
                 **{key: result.get(key) for key in GRAFT_METRIC_KEYS},
                 **{key: result.get(key) for key in CATS_METRIC_KEYS},
+                **{key: result.get(key) for key in DYN_METRIC_KEYS},
                 **{key: result.get(key) for key in HEDGE_METRIC_KEYS},
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
@@ -1836,6 +1916,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in CATS_METRIC_KEYS
     }
+    dyn_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in DYN_METRIC_KEYS
+    }
     hedge_stats = {
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in HEDGE_METRIC_KEYS
@@ -1883,6 +1967,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_core_grid_w": _stats(talon_core_grid_w),
         **graft_stats,
         **cats_stats,
+        **dyn_stats,
         **hedge_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
@@ -2466,7 +2551,29 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_long_edge_threshold=args.graft_long_edge_threshold,
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,        expansion=args.expansion,
+        graft_long_scene_threshold=args.graft_long_scene_threshold,
+        dyn_adaptive_adts_budget=args.dyn_adaptive_adts_budget,
+        dyn_budget_strength=args.dyn_budget_strength,
+        dyn_budget_temperature=args.dyn_budget_temperature,
+        dyn_frame_budget_min_ratio=args.dyn_frame_budget_min_ratio,
+        dyn_frame_budget_max_ratio=args.dyn_frame_budget_max_ratio,
+        dyn_boundary_boost=args.dyn_boundary_boost,
+        dyn_adts_beta=args.dyn_adts_beta,
+        dyn_attn_weight=args.dyn_attn_weight,
+        dyn_event_weight=args.dyn_event_weight,
+        dyn_novelty_weight=args.dyn_novelty_weight,
+        dyn_detail_weight=args.dyn_detail_weight,
+        dyn_similarity_debias=args.dyn_similarity_debias,
+        dyn_debias_frame_weight=args.dyn_debias_frame_weight,
+        dyn_debias_global_weight=args.dyn_debias_global_weight,
+        dyn_sink_tstm=args.dyn_sink_tstm,
+        dyn_mutual_nn=args.dyn_mutual_nn,
+        dyn_margin_threshold=args.dyn_margin_threshold,
+        dyn_high_conf_bonus=args.dyn_high_conf_bonus,
+        dyn_weighted_merge=args.dyn_weighted_merge,
+        dyn_confidence_attn_weight=args.dyn_confidence_attn_weight,
+        dyn_confidence_sim_weight=args.dyn_confidence_sim_weight,
+        expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="graftvid",
@@ -2945,6 +3052,19 @@ def _print_summary(summary: dict[str, Any]):
         cats_after_mean = phase.get("cats_spatial_tokens_after", {}).get("mean")
         cats_sim_mean = phase.get("cats_mean_merge_sim", {}).get("mean")
         cats_margin_mean = phase.get("cats_mean_margin", {}).get("mean")
+        dyn_selected_mean = phase.get("dyn_selected_tokens", {}).get("mean")
+        dyn_budget_min_mean = phase.get("dyn_budget_min", {}).get("mean")
+        dyn_budget_max_mean = phase.get("dyn_budget_max", {}).get("mean")
+        dyn_budget_std_mean = phase.get("dyn_budget_std", {}).get("mean")
+        dyn_sink_mean = phase.get("dyn_sink_merges", {}).get("mean")
+        dyn_residual_mean = phase.get("dyn_residual_merges", {}).get("mean")
+        dyn_retained_mean = phase.get("dyn_retained_residual_tokens", {}).get("mean")
+        dyn_before_mean = phase.get("dyn_spatial_tokens_before", {}).get("mean")
+        dyn_after_mean = phase.get("dyn_spatial_tokens_after", {}).get("mean")
+        dyn_sim_mean = phase.get("dyn_mean_merge_sim", {}).get("mean")
+        dyn_debias_mean = phase.get("dyn_similarity_debias_active", {}).get("mean")
+        dyn_sink_active_mean = phase.get("dyn_sink_active", {}).get("mean")
+        dyn_weighted_mean = phase.get("dyn_weighted_active", {}).get("mean")
         hedge_budget_mean = phase.get("hedge_residual_budget", {}).get("mean")
         hedge_stable_cand_mean = phase.get("hedge_stable_candidates", {}).get("mean")
         hedge_evidence_cand_mean = phase.get("hedge_evidence_candidates", {}).get("mean")
@@ -3051,6 +3171,23 @@ def _print_summary(summary: dict[str, Any]):
             )
         if cats_sim_mean is not None:
             print(f"  cats merge sim/margin mean: {cats_sim_mean:.4f}/{(cats_margin_mean or 0.0):.4f}")
+        if dyn_selected_mean is not None:
+            print(
+                "  dyn selected/budget min-max-std mean: "
+                f"{dyn_selected_mean:.2f}/{(dyn_budget_min_mean or 0.0):.2f}-"
+                f"{(dyn_budget_max_mean or 0.0):.2f}-{(dyn_budget_std_mean or 0.0):.2f}"
+            )
+            print(
+                "  dyn sink/residual/retained and spatial pre-post mean: "
+                f"{(dyn_sink_mean or 0.0):.2f}/{(dyn_residual_mean or 0.0):.2f}/"
+                f"{(dyn_retained_mean or 0.0):.2f} "
+                f"{(dyn_before_mean or 0.0):.2f}->{(dyn_after_mean or 0.0):.2f}"
+            )
+            print(
+                "  dyn debias/sink/weighted active and merge sim mean: "
+                f"{(dyn_debias_mean or 0.0):.2f}/{(dyn_sink_active_mean or 0.0):.2f}/"
+                f"{(dyn_weighted_mean or 0.0):.2f}/{(dyn_sim_mean or 0.0):.4f}"
+            )
         if hedge_budget_mean is not None:
             print(
                 "  hedge residual budget/candidates stable+evidence/selected stable+evidence mean: "

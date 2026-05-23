@@ -154,6 +154,27 @@ def flashvid(
     cats_adaptive_adts_budget: bool = False,
     cats_frame_budget_min: int = 1,
     cats_frame_budget_temperature: float = 0.7,
+    dyn_adaptive_adts_budget: bool = True,
+    dyn_budget_strength: float = 0.45,
+    dyn_budget_temperature: float = 0.75,
+    dyn_frame_budget_min_ratio: float = 0.50,
+    dyn_frame_budget_max_ratio: float = 1.75,
+    dyn_boundary_boost: float = 0.08,
+    dyn_adts_beta: float = 0.05,
+    dyn_attn_weight: float = 0.50,
+    dyn_event_weight: float = 0.30,
+    dyn_novelty_weight: float = 0.15,
+    dyn_detail_weight: float = 0.05,
+    dyn_similarity_debias: bool = True,
+    dyn_debias_frame_weight: float = 0.35,
+    dyn_debias_global_weight: float = 0.20,
+    dyn_sink_tstm: bool = False,
+    dyn_mutual_nn: bool = False,
+    dyn_margin_threshold: float = 0.0,
+    dyn_high_conf_bonus: float = 0.05,
+    dyn_weighted_merge: bool = False,
+    dyn_confidence_attn_weight: float = 0.50,
+    dyn_confidence_sim_weight: float = 0.50,
     hedge_stable_floor_ratio: float = 0.85,
     hedge_diversity_weight: float = 0.04,
     hedge_stable_bias: float = 0.05,
@@ -384,6 +405,7 @@ def flashvid(
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
+            "dynflashvid" keeps FlashVID's budget but redistributes ADTS tokens and debiases TSTM;
             "hedgevid" freezes FlashVID ADTS and selects residuals from stable/evidence pools;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
@@ -512,14 +534,16 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
         temporal_merge_mode = "graft"
     elif variant == "cats":
         temporal_merge_mode = "cats"
+    elif variant == "dynflashvid":
+        temporal_merge_mode = "dynflashvid"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -603,6 +627,27 @@ def flashvid(
         cats_adaptive_adts_budget=cats_adaptive_adts_budget,
         cats_frame_budget_min=cats_frame_budget_min,
         cats_frame_budget_temperature=cats_frame_budget_temperature,
+        dyn_adaptive_adts_budget=dyn_adaptive_adts_budget,
+        dyn_budget_strength=dyn_budget_strength,
+        dyn_budget_temperature=dyn_budget_temperature,
+        dyn_frame_budget_min_ratio=dyn_frame_budget_min_ratio,
+        dyn_frame_budget_max_ratio=dyn_frame_budget_max_ratio,
+        dyn_boundary_boost=dyn_boundary_boost,
+        dyn_adts_beta=dyn_adts_beta,
+        dyn_attn_weight=dyn_attn_weight,
+        dyn_event_weight=dyn_event_weight,
+        dyn_novelty_weight=dyn_novelty_weight,
+        dyn_detail_weight=dyn_detail_weight,
+        dyn_similarity_debias=dyn_similarity_debias,
+        dyn_debias_frame_weight=dyn_debias_frame_weight,
+        dyn_debias_global_weight=dyn_debias_global_weight,
+        dyn_sink_tstm=dyn_sink_tstm,
+        dyn_mutual_nn=dyn_mutual_nn,
+        dyn_margin_threshold=dyn_margin_threshold,
+        dyn_high_conf_bonus=dyn_high_conf_bonus,
+        dyn_weighted_merge=dyn_weighted_merge,
+        dyn_confidence_attn_weight=dyn_confidence_attn_weight,
+        dyn_confidence_sim_weight=dyn_confidence_sim_weight,
         hedge_stable_floor_ratio=hedge_stable_floor_ratio,
         hedge_diversity_weight=hedge_diversity_weight,
         hedge_stable_bias=hedge_stable_bias,

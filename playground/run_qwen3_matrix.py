@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats"}
+    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -97,7 +97,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method == "talon":
+    if method in ("talon", "dynflashvid"):
         return "ours"
     return method
 
@@ -324,9 +324,12 @@ def _build_command(
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
+        variant = "dynflashvid" if method == "dynflashvid" else "talon"
         cmd.extend(
             [
                 "--no-run_flashvid",
+                "--compression_variant",
+                variant,
                 "--talon_target_tokens_per_frame",
                 str(args.talon_target_tokens_per_frame),
                 "--talon_question_recall_ratio",
@@ -444,7 +447,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
