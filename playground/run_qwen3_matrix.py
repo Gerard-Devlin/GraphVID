@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid", "learnflashvid", "pivotfuse"}
+    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -322,7 +322,7 @@ def _build_command(
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
-        variant = method if method in ("dynflashvid", "learnflashvid", "pivotfuse") else "talon"
+        variant = method if method in ("dynflashvid", "learnflashvid", "pivotfuse", "wavevault") else "talon"
         cmd.extend(
             [
                 "--no-run_flashvid",
@@ -372,6 +372,16 @@ def _build_command(
                 str(args.pivot_surprise_topk),
                 "--pivot_min_keep_per_frame",
                 str(args.pivot_min_keep_per_frame),
+                "--wave_anchor_ratio",
+                str(args.wave_anchor_ratio),
+                "--wave_sim_threshold",
+                str(args.wave_sim_threshold),
+                "--wave_budget_scale",
+                str(args.wave_budget_scale),
+                "--wave_candidate_factor",
+                str(args.wave_candidate_factor),
+                "--wave_max_candidates",
+                str(args.wave_max_candidates),
             ]
         )
         cmd.append("--learn_qaware" if args.learn_qaware else "--no-learn_qaware")
@@ -486,7 +496,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,learnflashvid,pivotfuse,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,learnflashvid,pivotfuse,wavevault,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -598,6 +608,11 @@ def main() -> None:
     parser.add_argument("--pivot_surprise_topk", type=int, default=8)
     parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
     parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
+    parser.add_argument("--wave_sim_threshold", type=float, default=0.60)
+    parser.add_argument("--wave_budget_scale", type=float, default=1.0)
+    parser.add_argument("--wave_candidate_factor", type=float, default=4.0)
+    parser.add_argument("--wave_max_candidates", type=int, default=2048)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

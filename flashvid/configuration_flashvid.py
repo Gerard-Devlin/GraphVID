@@ -154,6 +154,13 @@ class FlashVidConfig:
     pivot_min_keep_per_frame: int = field(default=0)
     pivot_use_fuse: bool = field(default=True)
 
+    # WAVE-VAULT drift-free Wasserstein token vaulting.
+    wave_anchor_ratio: float = field(default=0.80)
+    wave_sim_threshold: float = field(default=0.60)
+    wave_budget_scale: float = field(default=1.0)
+    wave_candidate_factor: float = field(default=4.0)
+    wave_max_candidates: int = field(default=2048)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -182,6 +189,7 @@ class FlashVidConfig:
     # "dynflashvid": FlashVID-style compression with dynamic ADTS budget and debiased TSTM.
     # "learnflashvid": FlashVID TSTM with learned QA-aware ADTS fill.
     # "pivotfuse": evidence-pivot selection with residual-preserving fusion.
+    # "wavevault": drift-free WAVE anchors plus residual vault medoids.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

@@ -208,6 +208,11 @@ def flashvid(
     pivot_surprise_topk: int = 8,
     pivot_min_keep_per_frame: int = 0,
     pivot_use_fuse: bool = True,
+    wave_anchor_ratio: float = 0.80,
+    wave_sim_threshold: float = 0.60,
+    wave_budget_scale: float = 1.0,
+    wave_candidate_factor: float = 4.0,
+    wave_max_candidates: int = 2048,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -437,6 +442,7 @@ def flashvid(
             "learnflashvid" keeps FlashVID's merge path but fills part of ADTS with a learned QA-aware selector;
             "hedgevid" freezes FlashVID ADTS and selects residuals from stable/evidence pools;
             "pivotfuse" selects evidence pivots and fuses residual evidence into them;
+            "wavevault" selects invariant anchors and residual vault tokens without drift;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -564,8 +570,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse|wavevault")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
@@ -578,6 +584,8 @@ def flashvid(
         temporal_merge_mode = "learnflashvid"
     elif variant == "pivotfuse":
         temporal_merge_mode = "pivotfuse"
+    elif variant == "wavevault":
+        temporal_merge_mode = "wavevault"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -715,6 +723,11 @@ def flashvid(
         pivot_surprise_topk=pivot_surprise_topk,
         pivot_min_keep_per_frame=pivot_min_keep_per_frame,
         pivot_use_fuse=pivot_use_fuse,
+        wave_anchor_ratio=wave_anchor_ratio,
+        wave_sim_threshold=wave_sim_threshold,
+        wave_budget_scale=wave_budget_scale,
+        wave_candidate_factor=wave_candidate_factor,
+        wave_max_candidates=wave_max_candidates,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

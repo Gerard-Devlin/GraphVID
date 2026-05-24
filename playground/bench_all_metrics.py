@@ -60,13 +60,14 @@ def _phase_display_name(phase_key: str) -> str:
         "dynflashvid": "DynFlashVID",
         "learnflashvid": "LearnFlashVID",
         "pivotfuse": "PIVOT-FUSE",
+        "wavevault": "WAVE-VAULT",
         "ours": "Ours",
     }
     return labels.get(phase_key, phase_key)
 
 
 def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "ours", "graphvid", "graftvid", "cats"]
+    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault", "ours", "graphvid", "graftvid", "cats"]
     if not summary:
         return preferred
     extras = [
@@ -188,6 +189,20 @@ PIVOT_METRIC_KEYS = [
     "pivot_bridge_mean",
     "pivot_surprise_mean",
     "pivot_background_mean",
+]
+WAVE_METRIC_KEYS = [
+    "wave_target_tokens",
+    "wave_anchor_tokens",
+    "wave_vault_tokens",
+    "wave_candidate_count",
+    "wave_anchor_ratio",
+    "wave_sim_threshold",
+    "wave_budget_scale",
+    "wave_coverage_mean",
+    "wave_residual_mean",
+    "wave_anchor_utility_mean",
+    "wave_vault_residual_mean",
+    "wave_anchor_drift",
 ]
 LEARN_METRIC_KEYS = [
     "learn_selected_tokens",
@@ -366,6 +381,11 @@ class BenchmarkArgs:
     pivot_surprise_topk: int = field(default=8)
     pivot_min_keep_per_frame: int = field(default=0)
     pivot_use_fuse: bool = field(default=True)
+    wave_anchor_ratio: float = field(default=0.80)
+    wave_sim_threshold: float = field(default=0.60)
+    wave_budget_scale: float = field(default=1.0)
+    wave_candidate_factor: float = field(default=4.0)
+    wave_max_candidates: int = field(default=2048)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1458,6 +1478,38 @@ def _get_pivot_debug_metrics(model) -> dict[str, float | None]:
     return best_values
 
 
+def _get_wave_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in WAVE_METRIC_KEYS}
+    candidates = []
+    for obj in (
+        model,
+        getattr(model, "model", None),
+        getattr(model, "language_model", None),
+        getattr(model, "module", None),
+        getattr(getattr(model, "module", None), "model", None),
+    ):
+        if obj is None:
+            continue
+        cfg = getattr(obj, "flashvid_config", None)
+        if cfg is not None and cfg not in candidates:
+            candidates.append(cfg)
+    if not candidates:
+        return empty
+    best_values = empty
+    best_score = -1
+    for cfg in candidates:
+        values: dict[str, float | None] = {}
+        present = 0
+        for key in WAVE_METRIC_KEYS:
+            value = getattr(cfg, f"last_{key}", None)
+            values[key] = float(value) if value is not None else None
+            present += int(value is not None)
+        if present > best_score:
+            best_score = present
+            best_values = values
+    return best_values
+
+
 def _get_learn_debug_metrics(model) -> dict[str, float | None]:
     empty = {key: None for key in LEARN_METRIC_KEYS}
     candidates = []
@@ -1562,6 +1614,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     dyn_metrics_per_run = {key: [] for key in DYN_METRIC_KEYS}
     hedge_metrics_per_run = {key: [] for key in HEDGE_METRIC_KEYS}
     pivot_metrics_per_run = {key: [] for key in PIVOT_METRIC_KEYS}
+    wave_metrics_per_run = {key: [] for key in WAVE_METRIC_KEYS}
     learn_metrics_per_run = {key: [] for key in LEARN_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
@@ -1607,6 +1660,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         dyn_metrics = _get_dyn_debug_metrics(model)
         hedge_metrics = _get_hedge_debug_metrics(model)
         pivot_metrics = _get_pivot_debug_metrics(model)
+        wave_metrics = _get_wave_debug_metrics(model)
         learn_metrics = _get_learn_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
@@ -1625,6 +1679,9 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         for key in PIVOT_METRIC_KEYS:
             if pivot_metrics.get(key) is not None:
                 pivot_metrics_per_run[key].append(float(pivot_metrics[key]))
+        for key in WAVE_METRIC_KEYS:
+            if wave_metrics.get(key) is not None:
+                wave_metrics_per_run[key].append(float(wave_metrics[key]))
         for key in LEARN_METRIC_KEYS:
             if learn_metrics.get(key) is not None:
                 learn_metrics_per_run[key].append(float(learn_metrics[key]))
@@ -1741,6 +1798,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in pivot_metrics_per_run.items()
     }
+    wave_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in wave_metrics_per_run.items()
+    }
     learn_metric_means = {
         key: float(np.mean(values)) if values else None
         for key, values in learn_metrics_per_run.items()
@@ -1791,6 +1852,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         **dyn_metric_means,
         **hedge_metric_means,
         **pivot_metric_means,
+        **wave_metric_means,
         **learn_metric_means,
     }
 
@@ -2216,6 +2278,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in PIVOT_METRIC_KEYS
     }
+    wave_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in WAVE_METRIC_KEYS
+    }
     learn_stats = {
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in LEARN_METRIC_KEYS
@@ -2266,6 +2332,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         **dyn_stats,
         **hedge_stats,
         **pivot_stats,
+        **wave_stats,
         **learn_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
@@ -2523,6 +2590,11 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         pivot_surprise_topk=args.pivot_surprise_topk,
         pivot_min_keep_per_frame=args.pivot_min_keep_per_frame,
         pivot_use_fuse=args.pivot_use_fuse,
+        wave_anchor_ratio=args.wave_anchor_ratio,
+        wave_sim_threshold=args.wave_sim_threshold,
+        wave_budget_scale=args.wave_budget_scale,
+        wave_candidate_factor=args.wave_candidate_factor,
+        wave_max_candidates=args.wave_max_candidates,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3061,6 +3133,24 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         learn_q_relevance_weight=args.learn_q_relevance_weight,
         learn_density_topk=args.learn_density_topk,
         learn_collect_teacher=args.learn_collect_teacher,
+        pivot_alpha=args.pivot_alpha,
+        pivot_beta=args.pivot_beta,
+        pivot_gamma=args.pivot_gamma,
+        pivot_delta=args.pivot_delta,
+        pivot_lambda=args.pivot_lambda,
+        pivot_mu0=args.pivot_mu0,
+        pivot_tau=args.pivot_tau,
+        pivot_budget_scale=args.pivot_budget_scale,
+        pivot_candidate_factor=args.pivot_candidate_factor,
+        pivot_max_candidates=args.pivot_max_candidates,
+        pivot_surprise_topk=args.pivot_surprise_topk,
+        pivot_min_keep_per_frame=args.pivot_min_keep_per_frame,
+        pivot_use_fuse=args.pivot_use_fuse,
+        wave_anchor_ratio=args.wave_anchor_ratio,
+        wave_sim_threshold=args.wave_sim_threshold,
+        wave_budget_scale=args.wave_budget_scale,
+        wave_candidate_factor=args.wave_candidate_factor,
+        wave_max_candidates=args.wave_max_candidates,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3330,6 +3420,13 @@ def _print_header(args: BenchmarkArgs, backend: str):
                 f"{args.pivot_max_candidates}, surprise_topk={args.pivot_surprise_topk}, "
                 f"minpf={args.pivot_min_keep_per_frame}, fuse={args.pivot_use_fuse}"
             )
+        if ours_phase_name == "wavevault":
+            print(
+                "WAVE-VAULT config: "
+                f"anchor={args.wave_anchor_ratio:.2f}, sim_thr={args.wave_sim_threshold:.2f}, "
+                f"budget_scale={args.wave_budget_scale:.3f}, cand={args.wave_candidate_factor:.1f}x/"
+                f"{args.wave_max_candidates}, drift=0"
+            )
     if args.run_graphvid:
         print(
             "GraphVID config: "
@@ -3484,6 +3581,18 @@ def _print_summary(summary: dict[str, Any]):
         pivot_bridge_mean = phase.get("pivot_bridge_mean", {}).get("mean")
         pivot_surprise_mean = phase.get("pivot_surprise_mean", {}).get("mean")
         pivot_background_mean = phase.get("pivot_background_mean", {}).get("mean")
+        wave_target_mean = phase.get("wave_target_tokens", {}).get("mean")
+        wave_anchor_mean = phase.get("wave_anchor_tokens", {}).get("mean")
+        wave_vault_mean = phase.get("wave_vault_tokens", {}).get("mean")
+        wave_candidate_mean = phase.get("wave_candidate_count", {}).get("mean")
+        wave_anchor_ratio_mean = phase.get("wave_anchor_ratio", {}).get("mean")
+        wave_thr_mean = phase.get("wave_sim_threshold", {}).get("mean")
+        wave_scale_mean = phase.get("wave_budget_scale", {}).get("mean")
+        wave_coverage_mean = phase.get("wave_coverage_mean", {}).get("mean")
+        wave_residual_mean = phase.get("wave_residual_mean", {}).get("mean")
+        wave_anchor_utility_mean = phase.get("wave_anchor_utility_mean", {}).get("mean")
+        wave_vault_residual_mean = phase.get("wave_vault_residual_mean", {}).get("mean")
+        wave_drift_mean = phase.get("wave_anchor_drift", {}).get("mean")
         learn_selected_mean = phase.get("learn_selected_tokens", {}).get("mean")
         learn_stable_mean = phase.get("learn_stable_tokens", {}).get("mean")
         learn_selector_mean = phase.get("learn_selector_tokens", {}).get("mean")
@@ -3640,6 +3749,22 @@ def _print_summary(summary: dict[str, Any]):
                 f"{(pivot_coverage_mean or 0.0):.4f}/{(pivot_utility_mean or 0.0):.4f}/"
                 f"{(pivot_bridge_mean or 0.0):.4f}-{(pivot_surprise_mean or 0.0):.4f}-"
                 f"{(pivot_background_mean or 0.0):.4f}"
+            )
+        if wave_target_mean is not None:
+            print(
+                "  wave target/anchors/vault/candidates mean: "
+                f"{wave_target_mean:.2f}/{(wave_anchor_mean or 0.0):.2f}/"
+                f"{(wave_vault_mean or 0.0):.2f}/{(wave_candidate_mean or 0.0):.2f}"
+            )
+            print(
+                "  wave ratio/thr/scale/coverage/residual/drift mean: "
+                f"{(wave_anchor_ratio_mean or 0.0):.2f}/{(wave_thr_mean or 0.0):.2f}/"
+                f"{(wave_scale_mean or 0.0):.3f}/{(wave_coverage_mean or 0.0):.4f}/"
+                f"{(wave_residual_mean or 0.0):.4f}/{(wave_drift_mean or 0.0):.4f}"
+            )
+            print(
+                "  wave anchor utility/vault residual mean: "
+                f"{(wave_anchor_utility_mean or 0.0):.4f}/{(wave_vault_residual_mean or 0.0):.6f}"
             )
         if learn_selected_mean is not None:
             print(

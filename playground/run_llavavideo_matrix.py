@@ -51,6 +51,9 @@ def _parse_methods(text: str) -> set[str]:
         "pivot": "pivotfuse",
         "pivotfuse": "pivotfuse",
         "pivot-fuse": "pivotfuse",
+        "wave": "wavevault",
+        "wavevault": "wavevault",
+        "wave-vault": "wavevault",
     }
     methods: set[str] = set()
     for part in str(text).split(","):
@@ -162,7 +165,7 @@ def _build_command(
     total_limit: int,
     methods: set[str],
 ) -> tuple[list[str], Path]:
-    ours_like = sorted(methods & {"hedgevid", "dynflashvid", "learnflashvid", "pivotfuse"})
+    ours_like = sorted(methods & {"hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"})
     if len(ours_like) > 1:
         raise ValueError(f"Only one run_ours-style method can be launched at once; got {ours_like}")
     run_tag = f"{args.tag}_r{rate_label}_videomme{total_limit}"
@@ -201,7 +204,7 @@ def _build_command(
         str(args.gpu_cap),
         "--tag",
         run_tag,
-        "--run_ours" if ("hedgevid" in methods or "dynflashvid" in methods or "learnflashvid" in methods or "pivotfuse" in methods) else "--no-run_ours",
+        "--run_ours" if ("hedgevid" in methods or "dynflashvid" in methods or "learnflashvid" in methods or "pivotfuse" in methods or "wavevault" in methods) else "--no-run_ours",
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -257,6 +260,8 @@ def _build_command(
         cmd.extend(["--compression_variant", "learnflashvid"])
     if "pivotfuse" in methods:
         cmd.extend(["--compression_variant", "pivotfuse"])
+    if "wavevault" in methods:
+        cmd.extend(["--compression_variant", "wavevault"])
     cmd.extend(
         [
             "--graft_temporal_topk",
@@ -370,6 +375,16 @@ def _build_command(
             str(args.pivot_surprise_topk),
             "--pivot_min_keep_per_frame",
             str(args.pivot_min_keep_per_frame),
+            "--wave_anchor_ratio",
+            str(args.wave_anchor_ratio),
+            "--wave_sim_threshold",
+            str(args.wave_sim_threshold),
+            "--wave_budget_scale",
+            str(args.wave_budget_scale),
+            "--wave_candidate_factor",
+            str(args.wave_candidate_factor),
+            "--wave_max_candidates",
+            str(args.wave_max_candidates),
         ]
     )
     cmd.append("--pivot_use_fuse" if args.pivot_use_fuse else "--no-pivot_use_fuse")
@@ -411,6 +426,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     dyn_tokens = _mean(summary, "dynflashvid", "compressed_visual_tokens")
     learn_tokens = _mean(summary, "learnflashvid", "compressed_visual_tokens")
     pivot_tokens = _mean(summary, "pivotfuse", "compressed_visual_tokens")
+    wave_tokens = _mean(summary, "wavevault", "compressed_visual_tokens")
     flash_acc = _acc(summary, "flashvid")
     graph_acc = _acc(summary, "graphvid")
     graft_acc = _acc(summary, "graftvid")
@@ -419,6 +435,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     dyn_acc = _acc(summary, "dynflashvid")
     learn_acc = _acc(summary, "learnflashvid")
     pivot_acc = _acc(summary, "pivotfuse")
+    wave_acc = _acc(summary, "wavevault")
     return {
         "retention_ratio": f"{rate_label.replace('p', '.')}%",
         "flashvid_acc": flash_acc,
@@ -429,6 +446,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dynflashvid_acc": dyn_acc,
         "learnflashvid_acc": learn_acc,
         "pivotfuse_acc": pivot_acc,
+        "wavevault_acc": wave_acc,
         "acc_delta": None if flash_acc is None or graph_acc is None else graph_acc - flash_acc,
         "graft_acc_delta": None if flash_acc is None or graft_acc is None else graft_acc - flash_acc,
         "cats_acc_delta": None if flash_acc is None or cats_acc is None else cats_acc - flash_acc,
@@ -436,6 +454,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dyn_acc_delta": None if flash_acc is None or dyn_acc is None else dyn_acc - flash_acc,
         "learn_acc_delta": None if flash_acc is None or learn_acc is None else learn_acc - flash_acc,
         "pivot_acc_delta": None if flash_acc is None or pivot_acc is None else pivot_acc - flash_acc,
+        "wave_acc_delta": None if flash_acc is None or wave_acc is None else wave_acc - flash_acc,
         "flashvid_short": _duration_acc(summary, "flashvid", "short"),
         "graphvid_short": _duration_acc(summary, "graphvid", "short"),
         "graftvid_short": _duration_acc(summary, "graftvid", "short"),
@@ -444,6 +463,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dynflashvid_short": _duration_acc(summary, "dynflashvid", "short"),
         "learnflashvid_short": _duration_acc(summary, "learnflashvid", "short"),
         "pivotfuse_short": _duration_acc(summary, "pivotfuse", "short"),
+        "wavevault_short": _duration_acc(summary, "wavevault", "short"),
         "flashvid_medium": _duration_acc(summary, "flashvid", "medium"),
         "graphvid_medium": _duration_acc(summary, "graphvid", "medium"),
         "graftvid_medium": _duration_acc(summary, "graftvid", "medium"),
@@ -452,6 +472,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dynflashvid_medium": _duration_acc(summary, "dynflashvid", "medium"),
         "learnflashvid_medium": _duration_acc(summary, "learnflashvid", "medium"),
         "pivotfuse_medium": _duration_acc(summary, "pivotfuse", "medium"),
+        "wavevault_medium": _duration_acc(summary, "wavevault", "medium"),
         "flashvid_long": _duration_acc(summary, "flashvid", "long"),
         "graphvid_long": _duration_acc(summary, "graphvid", "long"),
         "graftvid_long": _duration_acc(summary, "graftvid", "long"),
@@ -460,6 +481,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dynflashvid_long": _duration_acc(summary, "dynflashvid", "long"),
         "learnflashvid_long": _duration_acc(summary, "learnflashvid", "long"),
         "pivotfuse_long": _duration_acc(summary, "pivotfuse", "long"),
+        "wavevault_long": _duration_acc(summary, "wavevault", "long"),
         "flashvid_tokens": flash_tokens,
         "graphvid_tokens": graph_tokens,
         "graftvid_tokens": graft_tokens,
@@ -468,6 +490,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dynflashvid_tokens": dyn_tokens,
         "learnflashvid_tokens": learn_tokens,
         "pivotfuse_tokens": pivot_tokens,
+        "wavevault_tokens": wave_tokens,
         "token_reduction": _comparison(summary, "visual_token_reduction"),
         "graft_token_reduction": _comparison(summary, "visual_token_reduction", target="graftvid"),
         "cats_token_reduction": _comparison(summary, "visual_token_reduction", target="cats"),
@@ -475,6 +498,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dyn_token_reduction": _comparison(summary, "visual_token_reduction", target="dynflashvid"),
         "learn_token_reduction": _comparison(summary, "visual_token_reduction", target="learnflashvid"),
         "pivot_token_reduction": _comparison(summary, "visual_token_reduction", target="pivotfuse"),
+        "wave_token_reduction": _comparison(summary, "visual_token_reduction", target="wavevault"),
         "flashvid_latency_ms": _mean(summary, "flashvid", "latency_ms"),
         "graphvid_latency_ms": _mean(summary, "graphvid", "latency_ms"),
         "graftvid_latency_ms": _mean(summary, "graftvid", "latency_ms"),
@@ -483,6 +507,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dynflashvid_latency_ms": _mean(summary, "dynflashvid", "latency_ms"),
         "learnflashvid_latency_ms": _mean(summary, "learnflashvid", "latency_ms"),
         "pivotfuse_latency_ms": _mean(summary, "pivotfuse", "latency_ms"),
+        "wavevault_latency_ms": _mean(summary, "wavevault", "latency_ms"),
         "latency_speedup": _comparison(summary, "latency_speedup"),
         "graft_latency_speedup": _comparison(summary, "latency_speedup", target="graftvid"),
         "cats_latency_speedup": _comparison(summary, "latency_speedup", target="cats"),
@@ -490,6 +515,7 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
         "dyn_latency_speedup": _comparison(summary, "latency_speedup", target="dynflashvid"),
         "learn_latency_speedup": _comparison(summary, "latency_speedup", target="learnflashvid"),
         "pivot_latency_speedup": _comparison(summary, "latency_speedup", target="pivotfuse"),
+        "wave_latency_speedup": _comparison(summary, "latency_speedup", target="wavevault"),
     }
 
 
@@ -508,6 +534,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dynflashvid_acc",
         "learnflashvid_acc",
         "pivotfuse_acc",
+        "wavevault_acc",
         "acc_delta",
         "graft_acc_delta",
         "cats_acc_delta",
@@ -515,6 +542,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dyn_acc_delta",
         "learn_acc_delta",
         "pivot_acc_delta",
+        "wave_acc_delta",
         "flashvid_short",
         "graphvid_short",
         "graftvid_short",
@@ -523,6 +551,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dynflashvid_short",
         "learnflashvid_short",
         "pivotfuse_short",
+        "wavevault_short",
         "flashvid_medium",
         "graphvid_medium",
         "graftvid_medium",
@@ -531,6 +560,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dynflashvid_medium",
         "learnflashvid_medium",
         "pivotfuse_medium",
+        "wavevault_medium",
         "flashvid_long",
         "graphvid_long",
         "graftvid_long",
@@ -539,6 +569,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dynflashvid_long",
         "learnflashvid_long",
         "pivotfuse_long",
+        "wavevault_long",
         "flashvid_tokens",
         "graphvid_tokens",
         "graftvid_tokens",
@@ -547,6 +578,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dynflashvid_tokens",
         "learnflashvid_tokens",
         "pivotfuse_tokens",
+        "wavevault_tokens",
         "token_reduction",
         "graft_token_reduction",
         "cats_token_reduction",
@@ -554,6 +586,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dyn_token_reduction",
         "learn_token_reduction",
         "pivot_token_reduction",
+        "wave_token_reduction",
         "flashvid_latency_ms",
         "graphvid_latency_ms",
         "graftvid_latency_ms",
@@ -562,6 +595,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dynflashvid_latency_ms",
         "learnflashvid_latency_ms",
         "pivotfuse_latency_ms",
+        "wavevault_latency_ms",
         "latency_speedup",
         "graft_latency_speedup",
         "cats_latency_speedup",
@@ -569,6 +603,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "dyn_latency_speedup",
         "learn_latency_speedup",
         "pivot_latency_speedup",
+        "wave_latency_speedup",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -579,12 +614,12 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
     lines = [
-        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | CATS Acc | HEDGE Acc | DYN Acc | G Delta | GRAFT Delta | CATS Delta | HEDGE Delta | DYN Delta | F Short | G Short | GRAFT Short | CATS Short | HEDGE Short | DYN Short | F Medium | G Medium | GRAFT Medium | CATS Medium | HEDGE Medium | DYN Medium | F Long | G Long | GRAFT Long | CATS Long | HEDGE Long | DYN Long | F Tokens | G Tokens | GRAFT Tokens | CATS Tokens | HEDGE Tokens | DYN Tokens | G Token Red. | GRAFT Token Red. | CATS Token Red. | HEDGE Token Red. | DYN Token Red. | F Lat. | G Lat. | GRAFT Lat. | CATS Lat. | HEDGE Lat. | DYN Lat. | G Speedup | GRAFT Speedup | CATS Speedup | HEDGE Speedup | DYN Speedup |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | CATS Acc | HEDGE Acc | DYN Acc | WAVE Acc | G Delta | GRAFT Delta | CATS Delta | HEDGE Delta | DYN Delta | WAVE Delta | F Short | G Short | GRAFT Short | CATS Short | HEDGE Short | DYN Short | F Medium | G Medium | GRAFT Medium | CATS Medium | HEDGE Medium | DYN Medium | F Long | G Long | GRAFT Long | CATS Long | HEDGE Long | DYN Long | F Tokens | G Tokens | GRAFT Tokens | CATS Tokens | HEDGE Tokens | DYN Tokens | WAVE Tokens | G Token Red. | GRAFT Token Red. | CATS Token Red. | HEDGE Token Red. | DYN Token Red. | WAVE Token Red. | F Lat. | G Lat. | GRAFT Lat. | CATS Lat. | HEDGE Lat. | DYN Lat. | WAVE Lat. | G Speedup | GRAFT Speedup | CATS Speedup | HEDGE Speedup | DYN Speedup | WAVE Speedup |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {r} | {fa} | {ga} | {gfa} | {ca} | {ha} | {da} | {d} | {gd} | {cd} | {hd} | {dd} | {fs} | {gs} | {gfs} | {cs} | {hs} | {ds} | {fm} | {gm} | {gfm} | {cm} | {hm} | {dm} | {fl} | {gl} | {gfl} | {cl} | {hl} | {dl} | {ft} | {gt} | {gft} | {ct} | {ht} | {dt} | {tr} | {gtr} | {ctr} | {htr} | {dtr} | {flat} | {glat} | {gflat} | {clat} | {hlat} | {dlat} | {sp} | {gsp} | {csp} | {hsp} | {dsp} |".format(
+            "| {r} | {fa} | {ga} | {gfa} | {ca} | {ha} | {da} | {wa} | {d} | {gd} | {cd} | {hd} | {dd} | {wd} | {fs} | {gs} | {gfs} | {cs} | {hs} | {ds} | {fm} | {gm} | {gfm} | {cm} | {hm} | {dm} | {fl} | {gl} | {gfl} | {cl} | {hl} | {dl} | {ft} | {gt} | {gft} | {ct} | {ht} | {dt} | {wt} | {tr} | {gtr} | {ctr} | {htr} | {dtr} | {wtr} | {flat} | {glat} | {gflat} | {clat} | {hlat} | {dlat} | {wlat} | {sp} | {gsp} | {csp} | {hsp} | {dsp} | {wsp} |".format(
                 r=row["retention_ratio"],
                 fa=_fmt(row.get("flashvid_acc")),
                 ga=_fmt(row.get("graphvid_acc")),
@@ -592,11 +627,13 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
                 ca=_fmt(row.get("cats_acc")),
                 ha=_fmt(row.get("hedgevid_acc")),
                 da=_fmt(row.get("dynflashvid_acc")),
+                wa=_fmt(row.get("wavevault_acc")),
                 d=_fmt(row.get("acc_delta")),
                 gd=_fmt(row.get("graft_acc_delta")),
                 cd=_fmt(row.get("cats_acc_delta")),
                 hd=_fmt(row.get("hedge_acc_delta")),
                 dd=_fmt(row.get("dyn_acc_delta")),
+                wd=_fmt(row.get("wave_acc_delta")),
                 fs=_fmt(row.get("flashvid_short")),
                 gs=_fmt(row.get("graphvid_short")),
                 gfs=_fmt(row.get("graftvid_short")),
@@ -621,22 +658,26 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
                 ct=_fmt(row.get("cats_tokens")),
                 ht=_fmt(row.get("hedgevid_tokens")),
                 dt=_fmt(row.get("dynflashvid_tokens")),
+                wt=_fmt(row.get("wavevault_tokens")),
                 tr=_fmt(row.get("token_reduction")),
                 gtr=_fmt(row.get("graft_token_reduction")),
                 ctr=_fmt(row.get("cats_token_reduction")),
                 htr=_fmt(row.get("hedge_token_reduction")),
                 dtr=_fmt(row.get("dyn_token_reduction")),
+                wtr=_fmt(row.get("wave_token_reduction")),
                 flat=_fmt(row.get("flashvid_latency_ms")),
                 glat=_fmt(row.get("graphvid_latency_ms")),
                 gflat=_fmt(row.get("graftvid_latency_ms")),
                 clat=_fmt(row.get("cats_latency_ms")),
                 hlat=_fmt(row.get("hedgevid_latency_ms")),
                 dlat=_fmt(row.get("dynflashvid_latency_ms")),
+                wlat=_fmt(row.get("wavevault_latency_ms")),
                 sp=_fmt(row.get("latency_speedup"), 3),
                 gsp=_fmt(row.get("graft_latency_speedup"), 3),
                 csp=_fmt(row.get("cats_latency_speedup"), 3),
                 hsp=_fmt(row.get("hedge_latency_speedup"), 3),
                 dsp=_fmt(row.get("dyn_latency_speedup"), 3),
+                wsp=_fmt(row.get("wave_latency_speedup"), 3),
             )
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -652,7 +693,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
-    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,dynflashvid,learnflashvid,hedgevid,pivotfuse.")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,dynflashvid,learnflashvid,hedgevid,pivotfuse,wavevault.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")
@@ -743,6 +784,11 @@ def main() -> None:
     parser.add_argument("--pivot_surprise_topk", type=int, default=8)
     parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
     parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
+    parser.add_argument("--wave_sim_threshold", type=float, default=0.60)
+    parser.add_argument("--wave_budget_scale", type=float, default=1.0)
+    parser.add_argument("--wave_candidate_factor", type=float, default=4.0)
+    parser.add_argument("--wave_max_candidates", type=int, default=2048)
     parser.add_argument("--learn_selector_ckpt", default="")
     parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.75)

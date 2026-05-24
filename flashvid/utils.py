@@ -136,8 +136,8 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant not in ("flashvid", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse|talon")
+    if compression_variant not in ("flashvid", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse|wavevault|talon")
     if compression_variant == "graftvid":
         from .graftvid import _reset_graft_metrics
 
@@ -162,6 +162,10 @@ def flashvid_compression(
         from .pivotfuse import _reset_pivot_metrics
 
         _reset_pivot_metrics(flashvid_config)
+    if compression_variant == "wavevault":
+        from .wavevault import _reset_wave_metrics
+
+        _reset_wave_metrics(flashvid_config)
 
     if bool(getattr(flashvid_config, "learn_collect_teacher", False)):
         from .learned_selector import LEARN_FEATURE_NAMES, build_scalar_token_features
@@ -305,6 +309,15 @@ def segment_compression(
         from .pivotfuse import pivotfuse_segment_compression
 
         return pivotfuse_segment_compression(
+            segment_features=segment_features,
+            segment_global_indices=segment_global_indices,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+        )
+    if compression_variant == "wavevault":
+        from .wavevault import wavevault_segment_compression
+
+        return wavevault_segment_compression(
             segment_features=segment_features,
             segment_global_indices=segment_global_indices,
             cls_attention=cls_attention,
