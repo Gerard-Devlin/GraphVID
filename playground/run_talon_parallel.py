@@ -664,6 +664,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             str(ours_out),
             "--dynflashvid_output",
             str(ours_out if ours_phase == "dynflashvid" else shard_dir / f"dynflashvid_shard{shard_idx:02d}.jsonl"),
+            "--learnflashvid_output",
+            str(ours_out if ours_phase == "learnflashvid" else shard_dir / f"learnflashvid_shard{shard_idx:02d}.jsonl"),
             "--graphvid_output",
             str(graphvid_out),
             "--graftvid_output",

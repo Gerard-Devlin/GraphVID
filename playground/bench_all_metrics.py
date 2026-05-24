@@ -35,7 +35,16 @@ def _ours_phase_key(args: "BenchmarkArgs") -> str:
 
 def _ours_output_path(args: "BenchmarkArgs", phase_key: str) -> str:
     attr = f"{phase_key}_output"
-    return str(getattr(args, attr, None) or args.ours_output)
+    phase_output = getattr(args, attr, None)
+    try:
+        ours_default = BenchmarkArgs.__dataclass_fields__["ours_output"].default
+        phase_default = BenchmarkArgs.__dataclass_fields__[attr].default
+    except Exception:
+        ours_default = "logs/efficiency/ours_all_metrics.jsonl"
+        phase_default = None
+    if str(getattr(args, "ours_output", ours_default)) != str(ours_default) and str(phase_output or "") == str(phase_default):
+        return str(args.ours_output)
+    return str(phase_output or args.ours_output)
 
 
 def _phase_display_name(phase_key: str) -> str:
