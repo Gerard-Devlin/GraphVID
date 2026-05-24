@@ -181,6 +181,9 @@ LEARN_METRIC_KEYS = [
     "learn_qaware_active",
     "learn_score_mean",
     "learn_score_std",
+    "learn_question_mean",
+    "learn_question_topk_mean",
+    "learn_question_contrast_mean",
     "learn_teacher_keep_ratio",
 ]
 
@@ -325,9 +328,9 @@ class BenchmarkArgs:
     dyn_confidence_sim_weight: float = field(default=0.50)
     learn_selector_ckpt: str = field(default="")
     learn_qaware: bool = field(default=True)
-    learn_stable_floor_ratio: float = field(default=0.50)
-    learn_score_blend: float = field(default=0.50)
-    learn_q_relevance_weight: float = field(default=0.20)
+    learn_stable_floor_ratio: float = field(default=0.75)
+    learn_score_blend: float = field(default=0.35)
+    learn_q_relevance_weight: float = field(default=0.35)
     learn_density_topk: int = field(default=8)
     learn_collect_teacher: bool = field(default=False)
     hedge_stable_floor_ratio: float = field(default=0.85)
@@ -3378,6 +3381,9 @@ def _print_summary(summary: dict[str, Any]):
         learn_qaware_mean = phase.get("learn_qaware_active", {}).get("mean")
         learn_score_mean = phase.get("learn_score_mean", {}).get("mean")
         learn_score_std_mean = phase.get("learn_score_std", {}).get("mean")
+        learn_question_mean = phase.get("learn_question_mean", {}).get("mean")
+        learn_question_topk_mean = phase.get("learn_question_topk_mean", {}).get("mean")
+        learn_question_contrast_mean = phase.get("learn_question_contrast_mean", {}).get("mean")
         learn_teacher_keep_mean = phase.get("learn_teacher_keep_ratio", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
@@ -3519,6 +3525,12 @@ def _print_summary(summary: dict[str, Any]):
                 f"{(learn_selector_mean or 0.0):.2f}/{(learn_qaware_mean or 0.0):.2f} "
                 f"{(learn_score_mean or 0.0):.4f}/{(learn_score_std_mean or 0.0):.4f}"
             )
+            if learn_question_mean is not None:
+                print(
+                    "  learn question/topk/contrast mean: "
+                    f"{learn_question_mean:.4f}/{(learn_question_topk_mean or 0.0):.4f}/"
+                    f"{(learn_question_contrast_mean or 0.0):.4f}"
+                )
         if learn_teacher_keep_mean is not None:
             print(f"  learn teacher keep ratio mean: {learn_teacher_keep_mean:.4f}")
         if red_mean is not None:

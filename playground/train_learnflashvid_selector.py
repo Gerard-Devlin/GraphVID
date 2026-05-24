@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from flashvid.learned_selector import LEARN_FEATURE_NAMES, LearnedTokenSelector
+from flashvid.learned_selector import LEARN_FEATURE_NAMES, LEGACY_LEARN_FEATURE_NAMES_9, LearnedTokenSelector
 
 
 def _progress(iterable, *, enabled: bool, **kwargs):
@@ -40,6 +40,8 @@ class TeacherTokenDataset(Dataset):
 
         features = []
         labels = []
+        feature_names = None
+        feature_dim = None
         for path in _progress(files, enabled=progress, desc="load-teacher", unit="file", colour="green"):
             payload = torch.load(str(path), map_location="cpu")
             x = payload.get("features")
@@ -50,6 +52,15 @@ class TeacherTokenDataset(Dataset):
             y = torch.as_tensor(y, dtype=torch.float32).view(-1)
             if x.ndim != 2 or x.shape[0] != y.shape[0]:
                 continue
+            if feature_dim is None:
+                feature_dim = int(x.shape[-1])
+                names = payload.get("feature_names")
+                if isinstance(names, (list, tuple)) and len(names) == feature_dim:
+                    feature_names = [str(name) for name in names]
+                else:
+                    feature_names = LEGACY_LEARN_FEATURE_NAMES_9 if feature_dim == 9 else LEARN_FEATURE_NAMES[:feature_dim]
+            elif int(x.shape[-1]) != feature_dim:
+                continue
             features.append(x)
             labels.append(y)
         if not features:
@@ -57,6 +68,7 @@ class TeacherTokenDataset(Dataset):
 
         self.features = torch.cat(features, dim=0).float()
         self.labels = torch.cat(labels, dim=0).float()
+        self.feature_names = list(feature_names or LEARN_FEATURE_NAMES[: self.features.shape[-1]])
         self.num_files = len(files)
 
     def __len__(self) -> int:
@@ -113,7 +125,7 @@ def train(args: argparse.Namespace) -> None:
                 "num_tokens": len(dataset),
                 "positive_ratio": positives / max(1.0, positives + negatives),
                 "pos_weight": float(pos_weight.item()),
-                "feature_names": LEARN_FEATURE_NAMES,
+                "feature_names": dataset.feature_names,
             },
             ensure_ascii=False,
         )
@@ -177,7 +189,7 @@ def train(args: argparse.Namespace) -> None:
             "model": model.cpu().state_dict(),
             "input_dim": int(dataset.features.shape[-1]),
             "hidden_dim": int(args.hidden_dim),
-            "feature_names": list(LEARN_FEATURE_NAMES),
+            "feature_names": list(dataset.feature_names),
             "positive_ratio": positives / max(1.0, positives + negatives),
             "num_tokens": int(len(dataset)),
             "num_files": int(dataset.num_files),

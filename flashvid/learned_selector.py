@@ -16,6 +16,20 @@ LEARN_FEATURE_NAMES = [
     "density",
     "detail",
     "question",
+    "question_topk",
+    "question_contrast",
+    "frame_pos",
+    "y_pos",
+    "x_pos",
+]
+
+LEGACY_LEARN_FEATURE_NAMES_9 = [
+    "attn",
+    "event",
+    "novelty",
+    "density",
+    "detail",
+    "question",
     "frame_pos",
     "y_pos",
     "x_pos",
@@ -106,14 +120,26 @@ def build_scalar_token_features(
     detail = _minmax_per_frame(detail)
 
     if question_features is not None and question_features.numel() > 0 and question_features.shape[-1] == video_features.shape[-1]:
-        q = _safe_normalize(question_features.reshape(-1, question_features.shape[-1]).mean(dim=0))
-        q_rel = torch.einsum("fnd,d->fn", normed.float(), q.float()).clamp(-1.0, 1.0)
-        q_rel = _minmax_per_frame(q_rel)
+        q_tokens = _safe_normalize(question_features.reshape(-1, question_features.shape[-1]))
+        q = _safe_normalize(q_tokens.mean(dim=0))
+        q_rel_raw = torch.einsum("fnd,d->fn", normed.float(), q.float()).clamp(-1.0, 1.0)
+        q_rel = _minmax_per_frame(q_rel_raw)
+
+        # GlimpsePrune-style prompt conditioning: keep tokens that are close to
+        # any strong question token, not only the mean question embedding.
+        sim_q = torch.einsum("fnd,td->fnt", normed.float(), q_tokens.float()).clamp(-1.0, 1.0)
+        kq = max(1, min(8, sim_q.shape[-1]))
+        q_topk_raw = sim_q.topk(k=kq, dim=-1).values.mean(dim=-1)
+        q_topk = _minmax_per_frame(q_topk_raw)
+        q_bg = q_topk_raw.mean(dim=1, keepdim=True)
+        q_contrast = _minmax_per_frame(q_topk_raw - q_bg)
     else:
         q_rel = torch.zeros((num_frames, num_tokens), dtype=torch.float32, device=device)
+        q_topk = torch.zeros((num_frames, num_tokens), dtype=torch.float32, device=device)
+        q_contrast = torch.zeros((num_frames, num_tokens), dtype=torch.float32, device=device)
 
     frame_pos, y_pos, x_pos = _spatial_positions(num_frames, num_tokens, device)
-    parts = [attn, event, novelty, density, detail, q_rel, frame_pos, y_pos, x_pos]
+    parts = [attn, event, novelty, density, detail, q_rel, q_topk, q_contrast, frame_pos, y_pos, x_pos]
     features = torch.stack(parts, dim=-1).float()
     aux = {
         "attn": attn,
@@ -122,6 +148,8 @@ def build_scalar_token_features(
         "density": density,
         "detail": detail,
         "question": q_rel,
+        "question_topk": q_topk,
+        "question_contrast": q_contrast,
         "frame_pos": frame_pos,
         "y_pos": y_pos,
         "x_pos": x_pos,
@@ -130,13 +158,18 @@ def build_scalar_token_features(
 
 
 def heuristic_learn_score(aux: dict[str, torch.Tensor], *, q_weight: float = 0.20) -> torch.Tensor:
+    q_bonus = (
+        0.45 * aux.get("question", 0.0)
+        + 0.35 * aux.get("question_topk", 0.0)
+        + 0.20 * aux.get("question_contrast", 0.0)
+    )
     score = (
-        0.36 * aux["attn"]
+        0.34 * aux["attn"]
         + 0.24 * aux["event"]
-        + 0.16 * aux["novelty"]
-        + 0.14 * aux["density"]
-        + 0.10 * aux["detail"]
-        + float(q_weight) * aux["question"]
+        + 0.14 * aux["novelty"]
+        + 0.16 * aux["density"]
+        + 0.12 * aux["detail"]
+        + float(q_weight) * q_bonus
     )
     return _minmax_per_frame(score)
 
@@ -169,12 +202,17 @@ def load_selector_checkpoint(path: str | Path, device: torch.device) -> LearnedT
     if isinstance(payload, dict) and "model" in payload:
         input_dim = int(payload.get("input_dim", len(LEARN_FEATURE_NAMES)))
         hidden_dim = int(payload.get("hidden_dim", 128))
+        feature_names = payload.get("feature_names")
         state = payload["model"]
     else:
         input_dim = len(LEARN_FEATURE_NAMES)
         hidden_dim = 128
+        feature_names = None
         state = payload
+    if not isinstance(feature_names, (list, tuple)) or len(feature_names) != input_dim:
+        feature_names = LEGACY_LEARN_FEATURE_NAMES_9 if input_dim == 9 else LEARN_FEATURE_NAMES[:input_dim]
     model = LearnedTokenSelector(input_dim=input_dim, hidden_dim=hidden_dim).to(device)
+    model.feature_names = list(feature_names)
     model.load_state_dict(state, strict=False)
     model.eval()
     return model
@@ -192,7 +230,26 @@ def score_with_selector(
     heuristic = heuristic_learn_score(aux, q_weight=q_weight)
     if selector is None:
         return heuristic
-    flat = features.reshape(-1, features.shape[-1]).to(next(selector.parameters()).device)
+    selector_dim = int(getattr(selector, "input_dim", features.shape[-1]))
+    selector_names = list(getattr(selector, "feature_names", []) or [])
+    current_index = {name: idx for idx, name in enumerate(LEARN_FEATURE_NAMES[: features.shape[-1]])}
+    if selector_names and len(selector_names) == selector_dim:
+        aligned = []
+        for name in selector_names:
+            idx = current_index.get(str(name))
+            if idx is None:
+                aligned.append(torch.zeros_like(features[..., 0]))
+            else:
+                aligned.append(features[..., idx])
+        model_features = torch.stack(aligned, dim=-1)
+    elif features.shape[-1] > selector_dim:
+        model_features = features[..., :selector_dim]
+    elif features.shape[-1] < selector_dim:
+        pad = torch.zeros(*features.shape[:-1], selector_dim - features.shape[-1], dtype=features.dtype, device=features.device)
+        model_features = torch.cat([features, pad], dim=-1)
+    else:
+        model_features = features
+    flat = model_features.reshape(-1, model_features.shape[-1]).to(next(selector.parameters()).device)
     logits = selector(flat).reshape(features.shape[:2]).float()
     learned = _minmax_per_frame(logits.to(features.device))
     blend = min(max(float(blend), 0.0), 1.0)

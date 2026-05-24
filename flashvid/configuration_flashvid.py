@@ -126,9 +126,9 @@ class FlashVidConfig:
     # LearnFlashVID-QA: tiny learned selector distilled from inner-LLM pruning.
     learn_selector_ckpt: str = field(default="")
     learn_qaware: bool = field(default=True)
-    learn_stable_floor_ratio: float = field(default=0.50)
-    learn_score_blend: float = field(default=0.50)
-    learn_q_relevance_weight: float = field(default=0.20)
+    learn_stable_floor_ratio: float = field(default=0.75)
+    learn_score_blend: float = field(default=0.35)
+    learn_q_relevance_weight: float = field(default=0.35)
     learn_density_topk: int = field(default=8)
     learn_collect_teacher: bool = field(default=False)
 

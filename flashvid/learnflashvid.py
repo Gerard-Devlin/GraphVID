@@ -24,6 +24,9 @@ def _reset_learn_metrics(config: FlashVidConfig) -> None:
         "learn_qaware_active",
         "learn_score_mean",
         "learn_score_std",
+        "learn_question_mean",
+        "learn_question_topk_mean",
+        "learn_question_contrast_mean",
         "learn_teacher_keep_ratio",
     ):
         setattr(config, f"last_{key}", None)
@@ -53,7 +56,7 @@ def _select_learned_adts(
         empty = torch.empty((num_frames, 0), dtype=torch.long, device=segment_features.device)
         return empty, torch.zeros((num_frames, num_visual_tokens), dtype=torch.bool, device=segment_features.device)
 
-    stable_ratio = min(max(float(getattr(flashvid_config, "learn_stable_floor_ratio", 0.50)), 0.0), 1.0)
+    stable_ratio = min(max(float(getattr(flashvid_config, "learn_stable_floor_ratio", 0.75)), 0.0), 1.0)
     stable_k = min(per_frame_budget, int(math.ceil(per_frame_budget * stable_ratio)))
     selector_k = max(0, per_frame_budget - stable_k)
 
@@ -80,8 +83,8 @@ def _select_learned_adts(
         selector,
         scalar_features,
         aux,
-        blend=float(getattr(flashvid_config, "learn_score_blend", 0.50)),
-        q_weight=float(getattr(flashvid_config, "learn_q_relevance_weight", 0.20)),
+        blend=float(getattr(flashvid_config, "learn_score_blend", 0.35)),
+        q_weight=float(getattr(flashvid_config, "learn_q_relevance_weight", 0.35)),
     )
     fill_indices = topk_per_frame(learned_score, selector_k, exclude=stable_mask)
 
@@ -111,6 +114,9 @@ def _select_learned_adts(
     setattr(flashvid_config, "last_learn_qaware_active", float(bool(getattr(flashvid_config, "learn_qaware", True)) and question_features is not None))
     setattr(flashvid_config, "last_learn_score_mean", float(learned_score.float().mean().item()))
     setattr(flashvid_config, "last_learn_score_std", float(learned_score.float().std(unbiased=False).item()))
+    setattr(flashvid_config, "last_learn_question_mean", float(aux["question"].float().mean().item()))
+    setattr(flashvid_config, "last_learn_question_topk_mean", float(aux.get("question_topk", aux["question"]).float().mean().item()))
+    setattr(flashvid_config, "last_learn_question_contrast_mean", float(aux.get("question_contrast", aux["question"]).float().mean().item()))
     return selected_indices, selected_mask
 
 
