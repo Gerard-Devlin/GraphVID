@@ -195,6 +195,19 @@ def flashvid(
     hedge_stable_bias: float = 0.05,
     hedge_evidence_bias: float = 0.0,
     hedge_max_mmr_candidates: int = 2048,
+    pivot_alpha: float = 0.35,
+    pivot_beta: float = 0.25,
+    pivot_gamma: float = 0.30,
+    pivot_delta: float = 0.10,
+    pivot_lambda: float = 0.40,
+    pivot_mu0: float = 1.0,
+    pivot_tau: float = 1.0,
+    pivot_budget_scale: float = 1.0,
+    pivot_candidate_factor: float = 4.0,
+    pivot_max_candidates: int = 2048,
+    pivot_surprise_topk: int = 8,
+    pivot_min_keep_per_frame: int = 0,
+    pivot_use_fuse: bool = True,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -423,6 +436,7 @@ def flashvid(
             "dynflashvid" keeps FlashVID's budget but redistributes ADTS tokens and debiases TSTM;
             "learnflashvid" keeps FlashVID's merge path but fills part of ADTS with a learned QA-aware selector;
             "hedgevid" freezes FlashVID ADTS and selects residuals from stable/evidence pools;
+            "pivotfuse" selects evidence pivots and fuses residual evidence into them;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -550,8 +564,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
@@ -562,6 +576,8 @@ def flashvid(
         temporal_merge_mode = "dynflashvid"
     elif variant == "learnflashvid":
         temporal_merge_mode = "learnflashvid"
+    elif variant == "pivotfuse":
+        temporal_merge_mode = "pivotfuse"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -686,6 +702,19 @@ def flashvid(
         hedge_stable_bias=hedge_stable_bias,
         hedge_evidence_bias=hedge_evidence_bias,
         hedge_max_mmr_candidates=hedge_max_mmr_candidates,
+        pivot_alpha=pivot_alpha,
+        pivot_beta=pivot_beta,
+        pivot_gamma=pivot_gamma,
+        pivot_delta=pivot_delta,
+        pivot_lambda=pivot_lambda,
+        pivot_mu0=pivot_mu0,
+        pivot_tau=pivot_tau,
+        pivot_budget_scale=pivot_budget_scale,
+        pivot_candidate_factor=pivot_candidate_factor,
+        pivot_max_candidates=pivot_max_candidates,
+        pivot_surprise_topk=pivot_surprise_topk,
+        pivot_min_keep_per_frame=pivot_min_keep_per_frame,
+        pivot_use_fuse=pivot_use_fuse,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

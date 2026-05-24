@@ -59,13 +59,14 @@ def _phase_display_name(phase_key: str) -> str:
         "hedgevid": "HedgeVID",
         "dynflashvid": "DynFlashVID",
         "learnflashvid": "LearnFlashVID",
+        "pivotfuse": "PIVOT-FUSE",
         "ours": "Ours",
     }
     return labels.get(phase_key, phase_key)
 
 
 def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "learnflashvid", "ours", "graphvid", "graftvid", "cats"]
+    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "ours", "graphvid", "graftvid", "cats"]
     if not summary:
         return preferred
     extras = [
@@ -173,6 +174,20 @@ HEDGE_METRIC_KEYS = [
     "hedge_final_tokens",
     "hedge_stable_floor_ratio",
     "hedge_diversity_weight",
+]
+PIVOT_METRIC_KEYS = [
+    "pivot_target_tokens",
+    "pivot_selected_tokens",
+    "pivot_candidate_count",
+    "pivot_use_fuse",
+    "pivot_budget_scale",
+    "pivot_avg_cluster_size",
+    "pivot_max_cluster_size",
+    "pivot_coverage_mean",
+    "pivot_selected_utility_mean",
+    "pivot_bridge_mean",
+    "pivot_surprise_mean",
+    "pivot_background_mean",
 ]
 LEARN_METRIC_KEYS = [
     "learn_selected_tokens",
@@ -338,6 +353,19 @@ class BenchmarkArgs:
     hedge_stable_bias: float = field(default=0.05)
     hedge_evidence_bias: float = field(default=0.0)
     hedge_max_mmr_candidates: int = field(default=2048)
+    pivot_alpha: float = field(default=0.35)
+    pivot_beta: float = field(default=0.25)
+    pivot_gamma: float = field(default=0.30)
+    pivot_delta: float = field(default=0.10)
+    pivot_lambda: float = field(default=0.40)
+    pivot_mu0: float = field(default=1.0)
+    pivot_tau: float = field(default=1.0)
+    pivot_budget_scale: float = field(default=1.0)
+    pivot_candidate_factor: float = field(default=4.0)
+    pivot_max_candidates: int = field(default=2048)
+    pivot_surprise_topk: int = field(default=8)
+    pivot_min_keep_per_frame: int = field(default=0)
+    pivot_use_fuse: bool = field(default=True)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -1398,6 +1426,38 @@ def _get_hedge_debug_metrics(model) -> dict[str, float | None]:
     return best_values
 
 
+def _get_pivot_debug_metrics(model) -> dict[str, float | None]:
+    empty = {key: None for key in PIVOT_METRIC_KEYS}
+    candidates = []
+    for obj in (
+        model,
+        getattr(model, "model", None),
+        getattr(model, "language_model", None),
+        getattr(model, "module", None),
+        getattr(getattr(model, "module", None), "model", None),
+    ):
+        if obj is None:
+            continue
+        cfg = getattr(obj, "flashvid_config", None)
+        if cfg is not None and cfg not in candidates:
+            candidates.append(cfg)
+    if not candidates:
+        return empty
+    best_values = empty
+    best_score = -1
+    for cfg in candidates:
+        values: dict[str, float | None] = {}
+        present = 0
+        for key in PIVOT_METRIC_KEYS:
+            value = getattr(cfg, f"last_{key}", None)
+            values[key] = float(value) if value is not None else None
+            present += int(value is not None)
+        if present > best_score:
+            best_score = present
+            best_values = values
+    return best_values
+
+
 def _get_learn_debug_metrics(model) -> dict[str, float | None]:
     empty = {key: None for key in LEARN_METRIC_KEYS}
     candidates = []
@@ -1501,6 +1561,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     cats_metrics_per_run = {key: [] for key in CATS_METRIC_KEYS}
     dyn_metrics_per_run = {key: [] for key in DYN_METRIC_KEYS}
     hedge_metrics_per_run = {key: [] for key in HEDGE_METRIC_KEYS}
+    pivot_metrics_per_run = {key: [] for key in PIVOT_METRIC_KEYS}
     learn_metrics_per_run = {key: [] for key in LEARN_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
@@ -1545,6 +1606,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         cats_metrics = _get_cats_debug_metrics(model)
         dyn_metrics = _get_dyn_debug_metrics(model)
         hedge_metrics = _get_hedge_debug_metrics(model)
+        pivot_metrics = _get_pivot_debug_metrics(model)
         learn_metrics = _get_learn_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
@@ -1560,6 +1622,9 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         for key in HEDGE_METRIC_KEYS:
             if hedge_metrics.get(key) is not None:
                 hedge_metrics_per_run[key].append(float(hedge_metrics[key]))
+        for key in PIVOT_METRIC_KEYS:
+            if pivot_metrics.get(key) is not None:
+                pivot_metrics_per_run[key].append(float(pivot_metrics[key]))
         for key in LEARN_METRIC_KEYS:
             if learn_metrics.get(key) is not None:
                 learn_metrics_per_run[key].append(float(learn_metrics[key]))
@@ -1672,6 +1737,10 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in hedge_metrics_per_run.items()
     }
+    pivot_metric_means = {
+        key: float(np.mean(values)) if values else None
+        for key, values in pivot_metrics_per_run.items()
+    }
     learn_metric_means = {
         key: float(np.mean(values)) if values else None
         for key, values in learn_metrics_per_run.items()
@@ -1721,6 +1790,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         **cats_metric_means,
         **dyn_metric_means,
         **hedge_metric_means,
+        **pivot_metric_means,
         **learn_metric_means,
     }
 
@@ -2142,6 +2212,10 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in HEDGE_METRIC_KEYS
     }
+    pivot_stats = {
+        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
+        for key in PIVOT_METRIC_KEYS
+    }
     learn_stats = {
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in LEARN_METRIC_KEYS
@@ -2191,6 +2265,7 @@ def _summarize_phase(records: list[dict[str, Any]]):
         **cats_stats,
         **dyn_stats,
         **hedge_stats,
+        **pivot_stats,
         **learn_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
@@ -2435,6 +2510,19 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         learn_q_relevance_weight=args.learn_q_relevance_weight,
         learn_density_topk=args.learn_density_topk,
         learn_collect_teacher=args.learn_collect_teacher,
+        pivot_alpha=args.pivot_alpha,
+        pivot_beta=args.pivot_beta,
+        pivot_gamma=args.pivot_gamma,
+        pivot_delta=args.pivot_delta,
+        pivot_lambda=args.pivot_lambda,
+        pivot_mu0=args.pivot_mu0,
+        pivot_tau=args.pivot_tau,
+        pivot_budget_scale=args.pivot_budget_scale,
+        pivot_candidate_factor=args.pivot_candidate_factor,
+        pivot_max_candidates=args.pivot_max_candidates,
+        pivot_surprise_topk=args.pivot_surprise_topk,
+        pivot_min_keep_per_frame=args.pivot_min_keep_per_frame,
+        pivot_use_fuse=args.pivot_use_fuse,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3233,6 +3321,15 @@ def _print_header(args: BenchmarkArgs, backend: str):
                 f"q_weight={args.learn_q_relevance_weight:.2f}, density_topk={args.learn_density_topk}, "
                 f"collect_teacher={args.learn_collect_teacher}"
             )
+        if ours_phase_name == "pivotfuse":
+            print(
+                "PIVOT-FUSE config: "
+                f"w=a{args.pivot_alpha:.2f}/b{args.pivot_beta:.2f}/u{args.pivot_gamma:.2f}/g{args.pivot_delta:.2f}, "
+                f"lambda={args.pivot_lambda:.2f}, mu0={args.pivot_mu0:.2f}, tau={args.pivot_tau:.2f}, "
+                f"budget_scale={args.pivot_budget_scale:.3f}, cand={args.pivot_candidate_factor:.1f}x/"
+                f"{args.pivot_max_candidates}, surprise_topk={args.pivot_surprise_topk}, "
+                f"minpf={args.pivot_min_keep_per_frame}, fuse={args.pivot_use_fuse}"
+            )
     if args.run_graphvid:
         print(
             "GraphVID config: "
@@ -3375,6 +3472,18 @@ def _print_summary(summary: dict[str, Any]):
         hedge_evidence_sel_mean = phase.get("hedge_evidence_selected", {}).get("mean")
         hedge_floor_mean = phase.get("hedge_stable_floor_ratio", {}).get("mean")
         hedge_div_mean = phase.get("hedge_diversity_weight", {}).get("mean")
+        pivot_target_mean = phase.get("pivot_target_tokens", {}).get("mean")
+        pivot_selected_mean = phase.get("pivot_selected_tokens", {}).get("mean")
+        pivot_candidate_mean = phase.get("pivot_candidate_count", {}).get("mean")
+        pivot_fuse_mean = phase.get("pivot_use_fuse", {}).get("mean")
+        pivot_scale_mean = phase.get("pivot_budget_scale", {}).get("mean")
+        pivot_avg_cluster_mean = phase.get("pivot_avg_cluster_size", {}).get("mean")
+        pivot_max_cluster_mean = phase.get("pivot_max_cluster_size", {}).get("mean")
+        pivot_coverage_mean = phase.get("pivot_coverage_mean", {}).get("mean")
+        pivot_utility_mean = phase.get("pivot_selected_utility_mean", {}).get("mean")
+        pivot_bridge_mean = phase.get("pivot_bridge_mean", {}).get("mean")
+        pivot_surprise_mean = phase.get("pivot_surprise_mean", {}).get("mean")
+        pivot_background_mean = phase.get("pivot_background_mean", {}).get("mean")
         learn_selected_mean = phase.get("learn_selected_tokens", {}).get("mean")
         learn_stable_mean = phase.get("learn_stable_tokens", {}).get("mean")
         learn_selector_mean = phase.get("learn_selector_tokens", {}).get("mean")
@@ -3517,6 +3626,20 @@ def _print_summary(summary: dict[str, Any]):
             print(
                 "  hedge floor/diversity mean: "
                 f"{(hedge_floor_mean or 0.0):.2f}/{(hedge_div_mean or 0.0):.2f}"
+            )
+        if pivot_target_mean is not None:
+            print(
+                "  pivot target/selected/candidates/fuse/scale mean: "
+                f"{pivot_target_mean:.2f}/{(pivot_selected_mean or 0.0):.2f}/"
+                f"{(pivot_candidate_mean or 0.0):.2f}/{(pivot_fuse_mean or 0.0):.2f}/"
+                f"{(pivot_scale_mean or 0.0):.3f}"
+            )
+            print(
+                "  pivot cluster/coverage/utility/bridge-surprise-bg mean: "
+                f"{(pivot_avg_cluster_mean or 0.0):.2f}/{(pivot_max_cluster_mean or 0.0):.2f}/"
+                f"{(pivot_coverage_mean or 0.0):.4f}/{(pivot_utility_mean or 0.0):.4f}/"
+                f"{(pivot_bridge_mean or 0.0):.4f}-{(pivot_surprise_mean or 0.0):.4f}-"
+                f"{(pivot_background_mean or 0.0):.4f}"
             )
         if learn_selected_mean is not None:
             print(

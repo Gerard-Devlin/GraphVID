@@ -177,6 +177,32 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.learn_density_topk),
             "--learn_collect_teacher",
             _str_bool(args.learn_collect_teacher),
+            "--pivot_alpha",
+            str(args.pivot_alpha),
+            "--pivot_beta",
+            str(args.pivot_beta),
+            "--pivot_gamma",
+            str(args.pivot_gamma),
+            "--pivot_delta",
+            str(args.pivot_delta),
+            "--pivot_lambda",
+            str(args.pivot_lambda),
+            "--pivot_mu0",
+            str(args.pivot_mu0),
+            "--pivot_tau",
+            str(args.pivot_tau),
+            "--pivot_budget_scale",
+            str(args.pivot_budget_scale),
+            "--pivot_candidate_factor",
+            str(args.pivot_candidate_factor),
+            "--pivot_max_candidates",
+            str(args.pivot_max_candidates),
+            "--pivot_surprise_topk",
+            str(args.pivot_surprise_topk),
+            "--pivot_min_keep_per_frame",
+            str(args.pivot_min_keep_per_frame),
+            "--pivot_use_fuse",
+            _str_bool(args.pivot_use_fuse),
             "--talon_adaptive_target_enabled",
             _str_bool(args.talon_adaptive_target_enabled),
             "--talon_target_mean_cap",
@@ -1027,6 +1053,19 @@ def main() -> None:
     parser.add_argument("--hedge_stable_bias", type=float, default=0.05)
     parser.add_argument("--hedge_evidence_bias", type=float, default=0.0)
     parser.add_argument("--hedge_max_mmr_candidates", type=int, default=2048)
+    parser.add_argument("--pivot_alpha", type=float, default=0.35)
+    parser.add_argument("--pivot_beta", type=float, default=0.25)
+    parser.add_argument("--pivot_gamma", type=float, default=0.30)
+    parser.add_argument("--pivot_delta", type=float, default=0.10)
+    parser.add_argument("--pivot_lambda", type=float, default=0.40)
+    parser.add_argument("--pivot_mu0", type=float, default=1.0)
+    parser.add_argument("--pivot_tau", type=float, default=1.0)
+    parser.add_argument("--pivot_budget_scale", type=float, default=1.0)
+    parser.add_argument("--pivot_candidate_factor", type=float, default=4.0)
+    parser.add_argument("--pivot_max_candidates", type=int, default=2048)
+    parser.add_argument("--pivot_surprise_topk", type=int, default=8)
+    parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
+    parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

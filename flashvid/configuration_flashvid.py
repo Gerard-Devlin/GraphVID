@@ -139,6 +139,21 @@ class FlashVidConfig:
     hedge_evidence_bias: float = field(default=0.0)
     hedge_max_mmr_candidates: int = field(default=2048)
 
+    # PIVOT-FUSE evidence-pivot token fusion.
+    pivot_alpha: float = field(default=0.35)
+    pivot_beta: float = field(default=0.25)
+    pivot_gamma: float = field(default=0.30)
+    pivot_delta: float = field(default=0.10)
+    pivot_lambda: float = field(default=0.40)
+    pivot_mu0: float = field(default=1.0)
+    pivot_tau: float = field(default=1.0)
+    pivot_budget_scale: float = field(default=1.0)
+    pivot_candidate_factor: float = field(default=4.0)
+    pivot_max_candidates: int = field(default=2048)
+    pivot_surprise_topk: int = field(default=8)
+    pivot_min_keep_per_frame: int = field(default=0)
+    pivot_use_fuse: bool = field(default=True)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -166,6 +181,7 @@ class FlashVidConfig:
     # "hedgevid": FlashVID ADTS + stable/evidence residual candidate selection.
     # "dynflashvid": FlashVID-style compression with dynamic ADTS budget and debiased TSTM.
     # "learnflashvid": FlashVID TSTM with learned QA-aware ADTS fill.
+    # "pivotfuse": evidence-pivot selection with residual-preserving fusion.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

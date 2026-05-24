@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid", "learnflashvid"}
+    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid", "learnflashvid", "pivotfuse"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -322,7 +322,7 @@ def _build_command(
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
-        variant = method if method in ("dynflashvid", "learnflashvid") else "talon"
+        variant = method if method in ("dynflashvid", "learnflashvid", "pivotfuse") else "talon"
         cmd.extend(
             [
                 "--no-run_flashvid",
@@ -348,10 +348,35 @@ def _build_command(
                 str(args.learn_q_relevance_weight),
                 "--learn_density_topk",
                 str(args.learn_density_topk),
+                "--pivot_alpha",
+                str(args.pivot_alpha),
+                "--pivot_beta",
+                str(args.pivot_beta),
+                "--pivot_gamma",
+                str(args.pivot_gamma),
+                "--pivot_delta",
+                str(args.pivot_delta),
+                "--pivot_lambda",
+                str(args.pivot_lambda),
+                "--pivot_mu0",
+                str(args.pivot_mu0),
+                "--pivot_tau",
+                str(args.pivot_tau),
+                "--pivot_budget_scale",
+                str(args.pivot_budget_scale),
+                "--pivot_candidate_factor",
+                str(args.pivot_candidate_factor),
+                "--pivot_max_candidates",
+                str(args.pivot_max_candidates),
+                "--pivot_surprise_topk",
+                str(args.pivot_surprise_topk),
+                "--pivot_min_keep_per_frame",
+                str(args.pivot_min_keep_per_frame),
             ]
         )
         cmd.append("--learn_qaware" if args.learn_qaware else "--no-learn_qaware")
         cmd.append("--learn_collect_teacher" if args.learn_collect_teacher else "--no-learn_collect_teacher")
+        cmd.append("--pivot_use_fuse" if args.pivot_use_fuse else "--no-pivot_use_fuse")
     cmd.extend(args.extra_args)
     return cmd, summary_path
 
@@ -461,7 +486,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,learnflashvid,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,learnflashvid,pivotfuse,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -560,6 +585,19 @@ def main() -> None:
     parser.add_argument("--learn_q_relevance_weight", type=float, default=0.35)
     parser.add_argument("--learn_density_topk", type=int, default=8)
     parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--pivot_alpha", type=float, default=0.35)
+    parser.add_argument("--pivot_beta", type=float, default=0.25)
+    parser.add_argument("--pivot_gamma", type=float, default=0.30)
+    parser.add_argument("--pivot_delta", type=float, default=0.10)
+    parser.add_argument("--pivot_lambda", type=float, default=0.40)
+    parser.add_argument("--pivot_mu0", type=float, default=1.0)
+    parser.add_argument("--pivot_tau", type=float, default=1.0)
+    parser.add_argument("--pivot_budget_scale", type=float, default=1.0)
+    parser.add_argument("--pivot_candidate_factor", type=float, default=4.0)
+    parser.add_argument("--pivot_max_candidates", type=int, default=2048)
+    parser.add_argument("--pivot_surprise_topk", type=int, default=8)
+    parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
+    parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 
