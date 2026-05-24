@@ -11,6 +11,11 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - tqdm is optional for headless servers.
+    tqdm = None
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -18,8 +23,14 @@ if str(REPO_ROOT) not in sys.path:
 from flashvid.learned_selector import LEARN_FEATURE_NAMES, LearnedTokenSelector
 
 
+def _progress(iterable, *, enabled: bool, **kwargs):
+    if not enabled or tqdm is None:
+        return iterable
+    return tqdm(iterable, dynamic_ncols=True, leave=True, **kwargs)
+
+
 class TeacherTokenDataset(Dataset):
-    def __init__(self, teacher_dir: str | Path, *, max_files: int = 0):
+    def __init__(self, teacher_dir: str | Path, *, max_files: int = 0, progress: bool = True):
         root = Path(teacher_dir)
         files = sorted(root.rglob("*.pt"))
         if max_files and max_files > 0:
@@ -29,7 +40,7 @@ class TeacherTokenDataset(Dataset):
 
         features = []
         labels = []
-        for path in files:
+        for path in _progress(files, enabled=progress, desc="load-teacher", unit="file", colour="green"):
             payload = torch.load(str(path), map_location="cpu")
             x = payload.get("features")
             y = payload.get("labels")
@@ -71,7 +82,8 @@ def train(args: argparse.Namespace) -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    dataset = TeacherTokenDataset(args.teacher_dir, max_files=args.max_files)
+    progress_enabled = bool(args.progress)
+    dataset = TeacherTokenDataset(args.teacher_dir, max_files=args.max_files, progress=progress_enabled)
     loader = DataLoader(
         dataset,
         batch_size=int(args.batch_tokens),
@@ -113,7 +125,15 @@ def train(args: argparse.Namespace) -> None:
         total_bce = 0.0
         total_rank = 0.0
         total = 0
-        for x, y in loader:
+        batch_iter = _progress(
+            loader,
+            enabled=progress_enabled,
+            desc=f"epoch {epoch}/{int(args.epochs)}",
+            unit="batch",
+            colour="cyan",
+            total=len(loader),
+        )
+        for x, y in batch_iter:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             logits = model(x)
@@ -129,6 +149,13 @@ def train(args: argparse.Namespace) -> None:
             total_loss += float(loss.item()) * batch
             total_bce += float(bce.item()) * batch
             total_rank += float(rank.item()) * batch
+            if hasattr(batch_iter, "set_postfix"):
+                denom_live = max(1, total)
+                batch_iter.set_postfix(
+                    loss=f"{total_loss / denom_live:.4f}",
+                    bce=f"{total_bce / denom_live:.4f}",
+                    rank=f"{total_rank / denom_live:.4f}",
+                )
         denom = max(1, total)
         print(
             json.dumps(
@@ -177,6 +204,7 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--device", default="")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
     train(parser.parse_args())
 
 

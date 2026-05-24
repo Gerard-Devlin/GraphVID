@@ -65,6 +65,32 @@ def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
     ]
     return preferred + sorted(extras)
 
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if torch.is_tensor(value):
+        if value.numel() == 1:
+            return _json_safe(value.detach().cpu().item())
+        return [_json_safe(v) for v in value.detach().cpu().tolist()]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
+def _jsonl_line(record: dict[str, Any]) -> str:
+    safe_record = _json_safe(record)
+    line = json.dumps(safe_record, ensure_ascii=False, allow_nan=False)
+    # Catch malformed records at write time, not after a full benchmark phase.
+    json.loads(line)
+    return line + "\n"
+
 GRAFT_METRIC_KEYS = [
     "graft_num_nodes",
     "graft_target_components",
@@ -1844,7 +1870,29 @@ def _run_phase(
                 if missing:
                     record["error"] = f"missing metrics: {', '.join(missing)}"
 
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            try:
+                f.write(_jsonl_line(record))
+            except Exception as exc:
+                fallback = {
+                    "question_id": record.get("question_id"),
+                    "videoID": record.get("videoID"),
+                    "duration": record.get("duration"),
+                    "answer": record.get("answer"),
+                    "pred_answer": "",
+                    "correct": None,
+                    "latency_ms": None,
+                    "generated_tokens": None,
+                    "tokens_per_second": None,
+                    "raw_visual_tokens": None,
+                    "compressed_visual_tokens": None,
+                    "vision_compressed_visual_tokens": None,
+                    "visual_token_reduction_ratio": None,
+                    "vision_visual_token_reduction_ratio": None,
+                    "method": _canonical_method_name(phase_key or phase_name),
+                    "error": f"jsonl write failed: {type(exc).__name__}: {str(exc)[:500]}",
+                    "error_traceback": traceback.format_exc(limit=8),
+                }
+                f.write(_jsonl_line(fallback))
             f.flush()
 
             if record["error"]:
@@ -1862,8 +1910,35 @@ def _run_phase(
 
 
 def _read_jsonl(path: str):
+    rows: list[dict[str, Any]] = []
     with Path(path).open(encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
+        for line_no, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                snippet = line[max(0, exc.pos - 160) : exc.pos + 160].replace("\n", "\\n")
+                rows.append(
+                    {
+                        "question_id": None,
+                        "correct": None,
+                        "latency_ms": None,
+                        "generated_tokens": None,
+                        "tokens_per_second": None,
+                        "raw_visual_tokens": None,
+                        "compressed_visual_tokens": None,
+                        "vision_compressed_visual_tokens": None,
+                        "visual_token_reduction_ratio": None,
+                        "vision_visual_token_reduction_ratio": None,
+                        "error": (
+                            f"corrupt jsonl line in {path}:{line_no}: "
+                            f"{type(exc).__name__}: {exc.msg} at col {exc.colno}; snippet={snippet}"
+                        ),
+                        "error_traceback": None,
+                    }
+                )
+    return rows
 
 
 def _summarize_phase(records: list[dict[str, Any]]):

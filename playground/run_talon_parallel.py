@@ -753,11 +753,34 @@ def _combine_jsonl(paths: list[Path], out_path: Path) -> list[dict]:
             if not path.exists():
                 continue
             with path.open("r", encoding="utf-8") as r:
-                for line in r:
+                for line_no, line in enumerate(r, 1):
                     if not line.strip():
                         continue
-                    rows.append(json.loads(line))
-                    w.write(line if line.endswith("\n") else line + "\n")
+                    try:
+                        row = json.loads(line)
+                        rows.append(row)
+                        w.write(line if line.endswith("\n") else line + "\n")
+                    except json.JSONDecodeError as exc:
+                        snippet = line[max(0, exc.pos - 160) : exc.pos + 160].replace("\n", "\\n")
+                        row = {
+                            "question_id": None,
+                            "correct": None,
+                            "latency_ms": None,
+                            "generated_tokens": None,
+                            "tokens_per_second": None,
+                            "raw_visual_tokens": None,
+                            "compressed_visual_tokens": None,
+                            "vision_compressed_visual_tokens": None,
+                            "visual_token_reduction_ratio": None,
+                            "vision_visual_token_reduction_ratio": None,
+                            "error": (
+                                f"corrupt jsonl line in {path}:{line_no}: "
+                                f"{type(exc).__name__}: {exc.msg} at col {exc.colno}; snippet={snippet}"
+                            ),
+                            "error_traceback": None,
+                        }
+                        rows.append(row)
+                        w.write(json.dumps(row, ensure_ascii=False) + "\n")
     return rows
 
 
