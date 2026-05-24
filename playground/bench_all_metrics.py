@@ -95,7 +95,10 @@ def _json_safe(value: Any) -> Any:
 
 def _jsonl_line(record: dict[str, Any]) -> str:
     safe_record = _json_safe(record)
-    line = json.dumps(safe_record, ensure_ascii=False, allow_nan=False)
+    # Use ASCII escaping for result files. Some datasets/model outputs may contain
+    # odd Unicode surrogate fragments; ensure_ascii=True keeps JSONL writable and
+    # parseable on every server locale.
+    line = json.dumps(safe_record, ensure_ascii=True, allow_nan=False)
     # Catch malformed records at write time, not after a full benchmark phase.
     json.loads(line)
     return line + "\n"
@@ -1880,14 +1883,14 @@ def _run_phase(
                     record["error"] = f"missing metrics: {', '.join(missing)}"
 
             try:
-                f.write(_jsonl_line(record))
+                line = _jsonl_line(record)
             except Exception as exc:
-                fallback = {
+                record = {
                     "question_id": record.get("question_id"),
                     "videoID": record.get("videoID"),
                     "duration": record.get("duration"),
                     "answer": record.get("answer"),
-                    "pred_answer": "",
+                    "pred_answer": record.get("pred_answer", ""),
                     "correct": None,
                     "latency_ms": None,
                     "generated_tokens": None,
@@ -1901,7 +1904,12 @@ def _run_phase(
                     "error": f"jsonl write failed: {type(exc).__name__}: {str(exc)[:500]}",
                     "error_traceback": traceback.format_exc(limit=8),
                 }
-                f.write(_jsonl_line(fallback))
+                print(
+                    f"[{phase_name}] {idx}/{len(samples)} {record.get('question_id')} "
+                    f"jsonl-write-error: {record['error']}"
+                )
+                line = _jsonl_line(record)
+            f.write(line)
             f.flush()
 
             if record["error"]:
