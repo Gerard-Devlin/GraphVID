@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 from typing import Tuple
 
 import torch
@@ -17,6 +18,9 @@ def _reset_wave_metrics(config: FlashVidConfig) -> None:
         "last_wave_anchor_ratio": 0.0,
         "last_wave_sim_threshold": 0.0,
         "last_wave_budget_scale": 0.0,
+        "last_wave_intrinsic_weight": 0.0,
+        "last_wave_vault_intrinsic_weight": 0.0,
+        "last_wave_q_floor": 0.0,
         "last_wave_coverage_mean": None,
         "last_wave_residual_mean": None,
         "last_wave_anchor_utility_mean": None,
@@ -47,6 +51,9 @@ def _accumulate_wave_metrics(
     anchor_ratio: float,
     sim_threshold: float,
     budget_scale: float,
+    intrinsic_weight: float,
+    vault_intrinsic_weight: float,
+    q_floor: float,
     coverage_mean: float | None,
     residual_mean: float | None,
     anchor_utility_mean: float | None,
@@ -63,6 +70,9 @@ def _accumulate_wave_metrics(
         "wave_anchor_ratio": anchor_ratio,
         "wave_sim_threshold": sim_threshold,
         "wave_budget_scale": budget_scale,
+        "wave_intrinsic_weight": intrinsic_weight,
+        "wave_vault_intrinsic_weight": vault_intrinsic_weight,
+        "wave_q_floor": q_floor,
         "wave_anchor_drift": 0.0,
     }
     for key, value in simple.items():
@@ -94,50 +104,105 @@ def _accumulate_wave_metrics(
         setattr(config, last_key, float(getattr(config, f"_{key}_sum", 0.0)) / count if count > 0 else None)
 
 
-def _choose_from_candidates(
+def _choose_by_global_coverage(
     *,
     normed_flat: torch.Tensor,
     candidates: torch.Tensor,
-    base_score: torch.Tensor,
+    token_weight: torch.Tensor,
+    candidate_quality: torch.Tensor | None,
     count: int,
     sim_threshold: float,
+    initial_coverage: torch.Tensor | None = None,
     already_selected: torch.Tensor | None = None,
+    intrinsic_weight: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Approximate safe facility-location greedy over the candidate pool."""
+    """Lazy greedy safe facility-location over all tokens.
+
+    The coverage state has length L (all visual tokens), matching the WAVE
+    objective sum_i q_i max_p s(x_i, p). A heap gives us lazy submodular
+    greedy: stale gains are upper bounds, so only promising candidates are
+    recomputed after each coverage update.
+    """
+    device = normed_flat.device
+    total_tokens = int(normed_flat.shape[0])
     count = min(max(0, int(count)), int(candidates.numel()))
+    coverage = (
+        initial_coverage.float().clone()
+        if initial_coverage is not None
+        else torch.zeros((total_tokens,), dtype=torch.float32, device=device)
+    )
     if count <= 0 or candidates.numel() == 0:
-        empty = torch.empty((0,), dtype=torch.long, device=normed_flat.device)
-        return empty, torch.zeros((int(candidates.numel()),), dtype=torch.float32, device=normed_flat.device)
+        empty = torch.empty((0,), dtype=torch.long, device=device)
+        return empty, coverage
 
-    candidate_normed = normed_flat[candidates]
-    coverage = torch.zeros((int(candidates.numel()),), dtype=torch.float32, device=normed_flat.device)
-    blocked = torch.zeros_like(coverage, dtype=torch.bool)
+    candidates = candidates.long()
+    candidate_normed = normed_flat[candidates].float()
+    all_normed = normed_flat.float()
+    token_weight = token_weight.float().clamp_min(0.0)
+    safe_sim = torch.matmul(all_normed, candidate_normed.transpose(0, 1)).clamp_min(0.0)
+    safe_sim = safe_sim * (safe_sim >= sim_threshold).float()
+
+    num_candidates = int(candidates.numel())
+    blocked = torch.zeros((num_candidates,), dtype=torch.bool, device=device)
     if already_selected is not None and already_selected.numel() > 0:
-        selected_set = set(int(x) for x in already_selected.detach().cpu().tolist())
-        blocked_cpu = [int(x) in selected_set for x in candidates.detach().cpu().tolist()]
-        blocked = torch.tensor(blocked_cpu, dtype=torch.bool, device=normed_flat.device)
+        already_mask = torch.zeros((total_tokens,), dtype=torch.bool, device=device)
+        already_mask[already_selected.long()] = True
+        blocked = already_mask[candidates]
 
-    selected: list[int] = []
+    if candidate_quality is None:
+        intrinsic = torch.zeros((num_candidates,), dtype=torch.float32, device=device)
+    else:
+        intrinsic = candidate_quality[candidates].float().clamp_min(0.0) * max(0.0, float(intrinsic_weight))
+
+    initial_gain = (token_weight.unsqueeze(1) * (safe_sim - coverage.unsqueeze(1)).clamp_min(0.0)).sum(dim=0)
+    initial_gain = initial_gain + intrinsic
+    initial_gain = initial_gain.masked_fill(blocked, -float("inf"))
+
+    versions = torch.zeros((num_candidates,), dtype=torch.long, device=device)
+    heap: list[tuple[float, int, int]] = [
+        (-float(initial_gain[pos].item()), pos, 0)
+        for pos in range(num_candidates)
+        if torch.isfinite(initial_gain[pos])
+    ]
+    heapq.heapify(heap)
+
+    def _next_upper_bound() -> float:
+        while heap:
+            neg_gain, pos, version = heap[0]
+            if bool(blocked[pos]) or version != int(versions[pos].item()):
+                heapq.heappop(heap)
+                continue
+            return -float(neg_gain)
+        return -float("inf")
+
+    selected_positions: list[int] = []
     for _ in range(count):
-        score = base_score[candidates] * (1.0 - coverage).clamp_min(0.0)
-        score = score.masked_fill(blocked, -float("inf"))
-        best_pos = int(torch.argmax(score).item())
-        if not torch.isfinite(score[best_pos]):
+        accepted_pos: int | None = None
+        while heap:
+            neg_gain, pos, version = heapq.heappop(heap)
+            if bool(blocked[pos]) or version != int(versions[pos].item()):
+                continue
+            exact_gain = (token_weight * (safe_sim[:, pos] - coverage).clamp_min(0.0)).sum() + intrinsic[pos]
+            exact_value = float(exact_gain.item())
+            if not torch.isfinite(exact_gain):
+                blocked[pos] = True
+                continue
+            next_bound = _next_upper_bound()
+            if exact_value >= next_bound - 1.0e-8:
+                accepted_pos = pos
+                break
+            versions[pos] += 1
+            heapq.heappush(heap, (-exact_value, pos, int(versions[pos].item())))
+        if accepted_pos is None:
             break
-        best_idx = int(candidates[best_pos].item())
-        selected.append(best_idx)
-        blocked[best_pos] = True
-        sim = torch.matmul(candidate_normed, normed_flat[best_idx]).clamp_min(0.0)
-        safe_sim = sim * (sim >= sim_threshold).float()
-        coverage = torch.maximum(coverage, safe_sim)
+        selected_positions.append(accepted_pos)
+        blocked[accepted_pos] = True
+        coverage = torch.maximum(coverage, safe_sim[:, accepted_pos])
 
-    if len(selected) < count:
-        remaining_mask = ~blocked
-        remaining = candidates[remaining_mask]
-        if remaining.numel() > 0:
-            fill = _safe_topk(base_score[remaining], count - len(selected), largest=True)
-            selected.extend(int(x) for x in remaining[fill].tolist())
-    selected_tensor = torch.tensor(selected[:count], dtype=torch.long, device=normed_flat.device)
+    if not selected_positions:
+        empty = torch.empty((0,), dtype=torch.long, device=device)
+        return empty, coverage
+    selected_tensor = candidates[torch.tensor(selected_positions[:count], dtype=torch.long, device=device)]
     return selected_tensor, coverage
 
 
@@ -157,6 +222,28 @@ def _safe_coverage(
         safe_sim = sim * (sim >= sim_threshold).float()
         coverage = torch.maximum(coverage, safe_sim.max(dim=1).values)
     return coverage
+
+
+def _merge_unique_indices(
+    *indices: torch.Tensor,
+    max_count: int | None = None,
+) -> torch.Tensor:
+    parts = [idx.long().reshape(-1) for idx in indices if idx is not None and idx.numel() > 0]
+    if not parts:
+        device = indices[0].device if indices else torch.device("cpu")
+        return torch.empty((0,), dtype=torch.long, device=device)
+    merged = torch.cat(parts, dim=0)
+    keep: list[int] = []
+    seen: set[int] = set()
+    for value in merged.detach().cpu().tolist():
+        idx = int(value)
+        if idx in seen:
+            continue
+        seen.add(idx)
+        keep.append(idx)
+        if max_count is not None and len(keep) >= int(max_count):
+            break
+    return torch.tensor(keep, dtype=torch.long, device=merged.device)
 
 
 def wavevault_segment_compression(
@@ -182,6 +269,9 @@ def wavevault_segment_compression(
     if per_frame_budget <= 0:
         per_frame_budget = max(1, int(round(num_visual_tokens * float(flashvid_config.retention_ratio) * float(flashvid_config.expansion))))
     budget_scale = max(0.01, _cfg_float(flashvid_config, "wave_budget_scale", 1.0))
+    intrinsic_weight = max(0.0, _cfg_float(flashvid_config, "wave_intrinsic_weight", 0.01))
+    vault_intrinsic_weight = max(0.0, _cfg_float(flashvid_config, "wave_vault_intrinsic_weight", 0.0))
+    q_floor = max(0.0, _cfg_float(flashvid_config, "wave_q_floor", 0.03))
     target_tokens = min(total_tokens, max(1, int(round(per_frame_budget * num_frames * budget_scale))))
     anchor_ratio = min(max(_cfg_float(flashvid_config, "wave_anchor_ratio", 0.80), 0.0), 1.0)
     anchor_tokens = min(target_tokens, max(0, int(round(target_tokens * anchor_ratio))))
@@ -189,7 +279,7 @@ def wavevault_segment_compression(
     if anchor_tokens <= 0 and target_tokens > 0:
         anchor_tokens = 1
         vault_tokens = max(0, target_tokens - 1)
-    sim_threshold = min(max(_cfg_float(flashvid_config, "wave_sim_threshold", 0.60), 0.0), 1.0)
+    sim_threshold = min(max(_cfg_float(flashvid_config, "wave_sim_threshold", 0.55), 0.0), 1.0)
 
     utility_map, evidence_map, _bridge, _surprise, _background, normed = _compute_pivot_utility(
         segment_features,
@@ -201,45 +291,68 @@ def wavevault_segment_compression(
     normed_flat = normed.reshape(total_tokens, feat_dim)
     utility = utility_map.reshape(total_tokens)
     evidence = evidence_map.reshape(total_tokens)
-    q = evidence / evidence.sum().clamp_min(1.0e-6)
+    q_raw = evidence.clamp_min(0.0)
+    q_floor = min(max(q_floor, 0.0), 0.5)
+    if bool(torch.isfinite(q_raw).all()) and float(q_raw.sum().item()) > 1.0e-6:
+        q_evidence = q_raw / q_raw.sum().clamp_min(1.0e-6)
+    else:
+        q_evidence = torch.full_like(q_raw, 1.0 / max(1, total_tokens))
+    q_uniform = torch.full_like(q_evidence, 1.0 / max(1, total_tokens))
+    q = (1.0 - q_floor) * q_evidence + q_floor * q_uniform
+    q = q / q.sum().clamp_min(1.0e-6)
     base_score = (q * utility.clamp_min(1.0e-6)).clamp_min(1.0e-9)
 
-    candidate_factor = max(1.0, _cfg_float(flashvid_config, "wave_candidate_factor", 4.0))
-    max_candidates = max(target_tokens, _cfg_int(flashvid_config, "wave_max_candidates", 2048))
+    candidate_factor = max(1.0, _cfg_float(flashvid_config, "wave_candidate_factor", 2.0))
+    max_candidates = max(target_tokens, _cfg_int(flashvid_config, "wave_max_candidates", 1024))
     candidate_count = min(total_tokens, max(target_tokens, min(max_candidates, int(candidate_factor * target_tokens))))
-    candidates = _safe_topk(base_score, candidate_count, largest=True)
+    uniform_count = min(total_tokens, max(1, target_tokens // 4))
+    top_count = max(1, min(total_tokens, max(1, candidate_count - uniform_count)))
+    top_candidates = _safe_topk(base_score, top_count, largest=True)
+    uniform_idx = torch.linspace(
+        0,
+        max(0, total_tokens - 1),
+        steps=uniform_count,
+        device=segment_features.device,
+    ).long()
+    candidates = _merge_unique_indices(top_candidates, uniform_idx, max_count=max_candidates)
     if candidates.numel() == 0:
         candidates = torch.arange(total_tokens, dtype=torch.long, device=segment_features.device)
 
-    anchors, _ = _choose_from_candidates(
+    anchors, coverage_after_anchor = _choose_by_global_coverage(
         normed_flat=normed_flat,
         candidates=candidates,
-        base_score=base_score,
+        token_weight=q,
+        candidate_quality=utility,
         count=anchor_tokens,
         sim_threshold=sim_threshold,
+        intrinsic_weight=intrinsic_weight,
     )
-    coverage_after_anchor = _safe_coverage(normed_flat, anchors, sim_threshold)
     residual_score = q * (1.0 - coverage_after_anchor).clamp_min(0.0)
     if anchors.numel() > 0:
         residual_score[anchors] = -float("inf")
     vault_candidate_count = min(total_tokens, max(vault_tokens, min(max_candidates, int(candidate_factor * max(1, vault_tokens)))))
     vault_candidates = _safe_topk(residual_score, vault_candidate_count, largest=True)
-    vaults, _ = _choose_from_candidates(
+    vaults, coverage_after_vault = _choose_by_global_coverage(
         normed_flat=normed_flat,
         candidates=vault_candidates,
-        base_score=residual_score.clamp_min(0.0),
+        token_weight=q,
+        candidate_quality=residual_score.clamp_min(0.0),
         count=vault_tokens,
         sim_threshold=sim_threshold,
+        initial_coverage=coverage_after_anchor,
         already_selected=anchors,
+        intrinsic_weight=vault_intrinsic_weight,
     )
     selected = torch.cat([anchors, vaults], dim=0) if vaults.numel() > 0 else anchors
     if selected.numel() < target_tokens:
         selected_mask = torch.zeros((total_tokens,), dtype=torch.bool, device=segment_features.device)
         if selected.numel() > 0:
             selected_mask[selected] = True
-        remaining = torch.where(~selected_mask)[0]
-        fill = _safe_topk(base_score[remaining], target_tokens - int(selected.numel()), largest=True)
-        selected = torch.cat([selected, remaining[fill]], dim=0)
+        current_coverage = coverage_after_vault if selected.numel() > 0 else torch.zeros_like(q)
+        fill_score = q * (1.0 - current_coverage).clamp_min(0.0)
+        fill_score[selected_mask] = -float("inf")
+        fill = _safe_topk(fill_score, target_tokens - int(selected.numel()), largest=True)
+        selected = torch.cat([selected, fill], dim=0)
     selected = selected[:target_tokens]
     selected_globals = globals_flat[selected]
     order = torch.argsort(selected_globals)
@@ -257,6 +370,9 @@ def wavevault_segment_compression(
         anchor_ratio=anchor_ratio,
         sim_threshold=sim_threshold,
         budget_scale=budget_scale,
+        intrinsic_weight=intrinsic_weight,
+        vault_intrinsic_weight=vault_intrinsic_weight,
+        q_floor=q_floor,
         coverage_mean=float(final_coverage.mean().item()) if final_coverage.numel() > 0 else None,
         residual_mean=float((1.0 - final_coverage).mean().item()) if final_coverage.numel() > 0 else None,
         anchor_utility_mean=float(utility[anchors].mean().item()) if anchors.numel() > 0 else None,

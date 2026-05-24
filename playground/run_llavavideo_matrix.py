@@ -385,6 +385,12 @@ def _build_command(
             str(args.wave_candidate_factor),
             "--wave_max_candidates",
             str(args.wave_max_candidates),
+            "--wave_intrinsic_weight",
+            str(args.wave_intrinsic_weight),
+            "--wave_vault_intrinsic_weight",
+            str(args.wave_vault_intrinsic_weight),
+            "--wave_q_floor",
+            str(args.wave_q_floor),
         ]
     )
     cmd.append("--pivot_use_fuse" if args.pivot_use_fuse else "--no-pivot_use_fuse")
@@ -785,10 +791,13 @@ def main() -> None:
     parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
     parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
-    parser.add_argument("--wave_sim_threshold", type=float, default=0.60)
+    parser.add_argument("--wave_sim_threshold", type=float, default=0.55)
     parser.add_argument("--wave_budget_scale", type=float, default=1.0)
-    parser.add_argument("--wave_candidate_factor", type=float, default=4.0)
-    parser.add_argument("--wave_max_candidates", type=int, default=2048)
+    parser.add_argument("--wave_candidate_factor", type=float, default=2.0)
+    parser.add_argument("--wave_max_candidates", type=int, default=1024)
+    parser.add_argument("--wave_intrinsic_weight", type=float, default=0.01)
+    parser.add_argument("--wave_vault_intrinsic_weight", type=float, default=0.0)
+    parser.add_argument("--wave_q_floor", type=float, default=0.03)
     parser.add_argument("--learn_selector_ckpt", default="")
     parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.75)

@@ -213,6 +213,12 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.wave_candidate_factor),
             "--wave_max_candidates",
             str(args.wave_max_candidates),
+            "--wave_intrinsic_weight",
+            str(args.wave_intrinsic_weight),
+            "--wave_vault_intrinsic_weight",
+            str(args.wave_vault_intrinsic_weight),
+            "--wave_q_floor",
+            str(args.wave_q_floor),
             "--talon_adaptive_target_enabled",
             _str_bool(args.talon_adaptive_target_enabled),
             "--talon_target_mean_cap",
@@ -1077,10 +1083,13 @@ def main() -> None:
     parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
     parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
-    parser.add_argument("--wave_sim_threshold", type=float, default=0.60)
+    parser.add_argument("--wave_sim_threshold", type=float, default=0.55)
     parser.add_argument("--wave_budget_scale", type=float, default=1.0)
-    parser.add_argument("--wave_candidate_factor", type=float, default=4.0)
-    parser.add_argument("--wave_max_candidates", type=int, default=2048)
+    parser.add_argument("--wave_candidate_factor", type=float, default=2.0)
+    parser.add_argument("--wave_max_candidates", type=int, default=1024)
+    parser.add_argument("--wave_intrinsic_weight", type=float, default=0.01)
+    parser.add_argument("--wave_vault_intrinsic_weight", type=float, default=0.0)
+    parser.add_argument("--wave_q_floor", type=float, default=0.03)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

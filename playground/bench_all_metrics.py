@@ -198,6 +198,9 @@ WAVE_METRIC_KEYS = [
     "wave_anchor_ratio",
     "wave_sim_threshold",
     "wave_budget_scale",
+    "wave_intrinsic_weight",
+    "wave_vault_intrinsic_weight",
+    "wave_q_floor",
     "wave_coverage_mean",
     "wave_residual_mean",
     "wave_anchor_utility_mean",
@@ -382,10 +385,13 @@ class BenchmarkArgs:
     pivot_min_keep_per_frame: int = field(default=0)
     pivot_use_fuse: bool = field(default=True)
     wave_anchor_ratio: float = field(default=0.80)
-    wave_sim_threshold: float = field(default=0.60)
+    wave_sim_threshold: float = field(default=0.55)
     wave_budget_scale: float = field(default=1.0)
-    wave_candidate_factor: float = field(default=4.0)
-    wave_max_candidates: int = field(default=2048)
+    wave_candidate_factor: float = field(default=2.0)
+    wave_max_candidates: int = field(default=1024)
+    wave_intrinsic_weight: float = field(default=0.01)
+    wave_vault_intrinsic_weight: float = field(default=0.0)
+    wave_q_floor: float = field(default=0.03)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -2595,6 +2601,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         wave_budget_scale=args.wave_budget_scale,
         wave_candidate_factor=args.wave_candidate_factor,
         wave_max_candidates=args.wave_max_candidates,
+        wave_intrinsic_weight=args.wave_intrinsic_weight,
+        wave_vault_intrinsic_weight=args.wave_vault_intrinsic_weight,
+        wave_q_floor=args.wave_q_floor,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3151,6 +3160,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         wave_budget_scale=args.wave_budget_scale,
         wave_candidate_factor=args.wave_candidate_factor,
         wave_max_candidates=args.wave_max_candidates,
+        wave_intrinsic_weight=args.wave_intrinsic_weight,
+        wave_vault_intrinsic_weight=args.wave_vault_intrinsic_weight,
+        wave_q_floor=args.wave_q_floor,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3425,7 +3437,8 @@ def _print_header(args: BenchmarkArgs, backend: str):
                 "WAVE-VAULT config: "
                 f"anchor={args.wave_anchor_ratio:.2f}, sim_thr={args.wave_sim_threshold:.2f}, "
                 f"budget_scale={args.wave_budget_scale:.3f}, cand={args.wave_candidate_factor:.1f}x/"
-                f"{args.wave_max_candidates}, drift=0"
+                f"{args.wave_max_candidates}, intrinsic={args.wave_intrinsic_weight:.3f}/"
+                f"{args.wave_vault_intrinsic_weight:.3f}, q_floor={args.wave_q_floor:.3f}, drift=0"
             )
     if args.run_graphvid:
         print(
@@ -3588,6 +3601,9 @@ def _print_summary(summary: dict[str, Any]):
         wave_anchor_ratio_mean = phase.get("wave_anchor_ratio", {}).get("mean")
         wave_thr_mean = phase.get("wave_sim_threshold", {}).get("mean")
         wave_scale_mean = phase.get("wave_budget_scale", {}).get("mean")
+        wave_intrinsic_mean = phase.get("wave_intrinsic_weight", {}).get("mean")
+        wave_vault_intrinsic_mean = phase.get("wave_vault_intrinsic_weight", {}).get("mean")
+        wave_q_floor_mean = phase.get("wave_q_floor", {}).get("mean")
         wave_coverage_mean = phase.get("wave_coverage_mean", {}).get("mean")
         wave_residual_mean = phase.get("wave_residual_mean", {}).get("mean")
         wave_anchor_utility_mean = phase.get("wave_anchor_utility_mean", {}).get("mean")
@@ -3761,6 +3777,11 @@ def _print_summary(summary: dict[str, Any]):
                 f"{(wave_anchor_ratio_mean or 0.0):.2f}/{(wave_thr_mean or 0.0):.2f}/"
                 f"{(wave_scale_mean or 0.0):.3f}/{(wave_coverage_mean or 0.0):.4f}/"
                 f"{(wave_residual_mean or 0.0):.4f}/{(wave_drift_mean or 0.0):.4f}"
+            )
+            print(
+                "  wave intrinsic/vault_intrinsic/q_floor mean: "
+                f"{(wave_intrinsic_mean or 0.0):.4f}/{(wave_vault_intrinsic_mean or 0.0):.4f}/"
+                f"{(wave_q_floor_mean or 0.0):.4f}"
             )
             print(
                 "  wave anchor utility/vault residual mean: "

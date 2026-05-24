@@ -156,10 +156,13 @@ class FlashVidConfig:
 
     # WAVE-VAULT drift-free Wasserstein token vaulting.
     wave_anchor_ratio: float = field(default=0.80)
-    wave_sim_threshold: float = field(default=0.60)
+    wave_sim_threshold: float = field(default=0.55)
     wave_budget_scale: float = field(default=1.0)
-    wave_candidate_factor: float = field(default=4.0)
-    wave_max_candidates: int = field(default=2048)
+    wave_candidate_factor: float = field(default=2.0)
+    wave_max_candidates: int = field(default=1024)
+    wave_intrinsic_weight: float = field(default=0.01)
+    wave_vault_intrinsic_weight: float = field(default=0.0)
+    wave_q_floor: float = field(default=0.03)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
