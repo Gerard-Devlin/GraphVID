@@ -7,6 +7,7 @@ import torch
 
 from .configuration_flashvid import FlashVidConfig
 from .pivotfuse import _cfg_float, _cfg_int, _compute_pivot_utility, _safe_topk
+from .learned_selector import build_scalar_token_features, load_selector_checkpoint, score_with_selector
 
 
 def _reset_wave_metrics(config: FlashVidConfig) -> None:
@@ -26,6 +27,10 @@ def _reset_wave_metrics(config: FlashVidConfig) -> None:
         "last_wave_anchor_utility_mean": None,
         "last_wave_vault_residual_mean": None,
         "last_wave_anchor_drift": 0.0,
+        "last_wave_learn_active": 0.0,
+        "last_wave_learn_blend": 0.0,
+        "last_wave_learn_score_mean": None,
+        "last_wave_learn_score_std": None,
     }
     for key, value in defaults.items():
         setattr(config, key, value)
@@ -37,6 +42,8 @@ def _reset_wave_metrics(config: FlashVidConfig) -> None:
         "wave_residual",
         "wave_anchor_utility",
         "wave_vault_residual",
+        "wave_learn_score",
+        "wave_learn_score_std",
     ):
         setattr(config, f"_{key}_count", 0.0)
 
@@ -54,10 +61,14 @@ def _accumulate_wave_metrics(
     intrinsic_weight: float,
     vault_intrinsic_weight: float,
     q_floor: float,
+    learn_active: bool,
+    learn_blend: float,
     coverage_mean: float | None,
     residual_mean: float | None,
     anchor_utility_mean: float | None,
     vault_residual_mean: float | None,
+    learn_score_mean: float | None,
+    learn_score_std: float | None,
 ) -> None:
     if not hasattr(config, "_wave_segments"):
         _reset_wave_metrics(config)
@@ -74,6 +85,8 @@ def _accumulate_wave_metrics(
         "wave_vault_intrinsic_weight": vault_intrinsic_weight,
         "wave_q_floor": q_floor,
         "wave_anchor_drift": 0.0,
+        "wave_learn_active": float(bool(learn_active)),
+        "wave_learn_blend": learn_blend,
     }
     for key, value in simple.items():
         attr = f"_{key}_sum"
@@ -84,6 +97,8 @@ def _accumulate_wave_metrics(
         "wave_residual": residual_mean,
         "wave_anchor_utility": anchor_utility_mean,
         "wave_vault_residual": vault_residual_mean,
+        "wave_learn_score": learn_score_mean,
+        "wave_learn_score_std": learn_score_std,
     }
     for key, value in optional.items():
         if value is None:
@@ -99,9 +114,32 @@ def _accumulate_wave_metrics(
         ("wave_residual", "last_wave_residual_mean"),
         ("wave_anchor_utility", "last_wave_anchor_utility_mean"),
         ("wave_vault_residual", "last_wave_vault_residual_mean"),
+        ("wave_learn_score", "last_wave_learn_score_mean"),
+        ("wave_learn_score_std", "last_wave_learn_score_std"),
     ):
         count = float(getattr(config, f"_{key}_count", 0.0))
         setattr(config, last_key, float(getattr(config, f"_{key}_sum", 0.0)) / count if count > 0 else None)
+
+
+def _minmax_per_frame(values: torch.Tensor) -> torch.Tensor:
+    values = values.float()
+    lo = values.amin(dim=1, keepdim=True)
+    hi = values.amax(dim=1, keepdim=True)
+    return ((values - lo) / (hi - lo + 1.0e-6)).clamp(0.0, 1.0)
+
+
+def _get_wave_selector(config: FlashVidConfig, device: torch.device):
+    path = str(getattr(config, "learn_selector_ckpt", "") or "")
+    if not path:
+        return None
+    cached_path = str(getattr(config, "_wave_selector_ckpt_path", "") or "")
+    cached = getattr(config, "_wave_selector_model", None)
+    if cached is not None and cached_path == path:
+        return cached
+    selector = load_selector_checkpoint(path, device)
+    setattr(config, "_wave_selector_ckpt_path", path)
+    setattr(config, "_wave_selector_model", selector)
+    return selector
 
 
 def _choose_by_global_coverage(
@@ -251,6 +289,7 @@ def wavevault_segment_compression(
     segment_global_indices: torch.Tensor,
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
+    question_features: torch.Tensor | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """WAVE-VAULT: drift-free anchor selection plus residual vault tokens.
 
@@ -286,6 +325,30 @@ def wavevault_segment_compression(
         cls_attention,
         flashvid_config,
     )
+    learn_active = False
+    learn_blend = min(max(float(getattr(flashvid_config, "learn_score_blend", 0.35)), 0.0), 1.0)
+    learn_score_mean: float | None = None
+    learn_score_std: float | None = None
+    selector = _get_wave_selector(flashvid_config, segment_features.device)
+    if selector is not None and learn_blend > 0.0:
+        scalar_features, aux = build_scalar_token_features(
+            segment_features,
+            cls_attention,
+            question_features if bool(getattr(flashvid_config, "learn_qaware", True)) else None,
+            density_topk=int(getattr(flashvid_config, "learn_density_topk", 8) or 8),
+        )
+        learned_score = score_with_selector(
+            selector,
+            scalar_features,
+            aux,
+            blend=learn_blend,
+            q_weight=float(getattr(flashvid_config, "learn_q_relevance_weight", 0.35)),
+        )
+        learn_active = True
+        learn_score_mean = float(learned_score.float().mean().item())
+        learn_score_std = float(learned_score.float().std(unbiased=False).item())
+        utility_map = _minmax_per_frame((1.0 - learn_blend) * utility_map.float() + learn_blend * learned_score.float())
+        evidence_map = _minmax_per_frame((1.0 - learn_blend) * evidence_map.float() + learn_blend * learned_score.float())
     features_flat = segment_features.reshape(total_tokens, feat_dim)
     globals_flat = segment_global_indices.reshape(total_tokens)
     normed_flat = normed.reshape(total_tokens, feat_dim)
@@ -373,9 +436,13 @@ def wavevault_segment_compression(
         intrinsic_weight=intrinsic_weight,
         vault_intrinsic_weight=vault_intrinsic_weight,
         q_floor=q_floor,
+        learn_active=learn_active,
+        learn_blend=learn_blend if learn_active else 0.0,
         coverage_mean=float(final_coverage.mean().item()) if final_coverage.numel() > 0 else None,
         residual_mean=float((1.0 - final_coverage).mean().item()) if final_coverage.numel() > 0 else None,
         anchor_utility_mean=float(utility[anchors].mean().item()) if anchors.numel() > 0 else None,
         vault_residual_mean=float(residual_score[vaults].mean().item()) if vaults.numel() > 0 else None,
+        learn_score_mean=learn_score_mean,
+        learn_score_std=learn_score_std,
     )
     return selected_tokens.to(dtype=segment_features.dtype), selected_globals

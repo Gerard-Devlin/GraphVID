@@ -322,6 +322,7 @@ def segment_compression(
             segment_global_indices=segment_global_indices,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
+            question_features=question_features,
         )
 
     # 1. Apply Attention and Diversity-based Token Selection (ADTS).

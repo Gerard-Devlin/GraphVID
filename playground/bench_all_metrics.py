@@ -206,6 +206,10 @@ WAVE_METRIC_KEYS = [
     "wave_anchor_utility_mean",
     "wave_vault_residual_mean",
     "wave_anchor_drift",
+    "wave_learn_active",
+    "wave_learn_blend",
+    "wave_learn_score_mean",
+    "wave_learn_score_std",
 ]
 LEARN_METRIC_KEYS = [
     "learn_selected_tokens",
@@ -3440,6 +3444,11 @@ def _print_header(args: BenchmarkArgs, backend: str):
                 f"{args.wave_max_candidates}, intrinsic={args.wave_intrinsic_weight:.3f}/"
                 f"{args.wave_vault_intrinsic_weight:.3f}, q_floor={args.wave_q_floor:.3f}, drift=0"
             )
+            print(
+                "WAVE learned value: "
+                f"ckpt={args.learn_selector_ckpt or '<off>'}, blend={args.learn_score_blend:.2f}, "
+                f"qaware={args.learn_qaware}, density_topk={args.learn_density_topk}"
+            )
     if args.run_graphvid:
         print(
             "GraphVID config: "
@@ -3609,6 +3618,10 @@ def _print_summary(summary: dict[str, Any]):
         wave_anchor_utility_mean = phase.get("wave_anchor_utility_mean", {}).get("mean")
         wave_vault_residual_mean = phase.get("wave_vault_residual_mean", {}).get("mean")
         wave_drift_mean = phase.get("wave_anchor_drift", {}).get("mean")
+        wave_learn_active_mean = phase.get("wave_learn_active", {}).get("mean")
+        wave_learn_blend_mean = phase.get("wave_learn_blend", {}).get("mean")
+        wave_learn_score_mean = phase.get("wave_learn_score_mean", {}).get("mean")
+        wave_learn_score_std_mean = phase.get("wave_learn_score_std", {}).get("mean")
         learn_selected_mean = phase.get("learn_selected_tokens", {}).get("mean")
         learn_stable_mean = phase.get("learn_stable_tokens", {}).get("mean")
         learn_selector_mean = phase.get("learn_selector_tokens", {}).get("mean")
@@ -3786,6 +3799,11 @@ def _print_summary(summary: dict[str, Any]):
             print(
                 "  wave anchor utility/vault residual mean: "
                 f"{(wave_anchor_utility_mean or 0.0):.4f}/{(wave_vault_residual_mean or 0.0):.6f}"
+            )
+            print(
+                "  wave learned active/blend/score mean-std: "
+                f"{(wave_learn_active_mean or 0.0):.2f}/{(wave_learn_blend_mean or 0.0):.2f}/"
+                f"{(wave_learn_score_mean or 0.0):.4f}-{(wave_learn_score_std_mean or 0.0):.4f}"
             )
         if learn_selected_mean is not None:
             print(
