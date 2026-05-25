@@ -195,7 +195,25 @@ def LlamaAttention_forward(
         teacher_keys = repeat_kv(key_states, self.num_key_value_groups)
         attn_weights = torch.matmul(last_query, teacher_keys.transpose(2, 3)) * self.scaling
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask[:, :, -1:, : teacher_keys.shape[-2]]
+            key_len = teacher_keys.shape[-2]
+            if attention_mask.dim() == 4:
+                attn_weights = attn_weights + attention_mask[:, :, -1:, :key_len]
+            elif attention_mask.dim() == 3:
+                key_mask = attention_mask[:, None, -1:, :key_len]
+                if key_mask.dtype == torch.bool:
+                    attn_weights = attn_weights.masked_fill(~key_mask, torch.finfo(attn_weights.dtype).min)
+                else:
+                    attn_weights = attn_weights + key_mask.to(dtype=attn_weights.dtype)
+            elif attention_mask.dim() == 2:
+                key_mask = attention_mask[:, None, None, :key_len]
+                if key_mask.dtype == torch.bool:
+                    attn_weights = attn_weights.masked_fill(~key_mask, torch.finfo(attn_weights.dtype).min)
+                else:
+                    # HF padding masks are commonly 1 for valid and 0 for pad.
+                    if torch.is_floating_point(key_mask) and float(key_mask.max().item()) <= 1.0 and float(key_mask.min().item()) >= 0.0:
+                        attn_weights = attn_weights.masked_fill(key_mask <= 0, torch.finfo(attn_weights.dtype).min)
+                    else:
+                        attn_weights = attn_weights + key_mask.to(dtype=attn_weights.dtype)
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
 
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
