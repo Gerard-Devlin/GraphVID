@@ -79,91 +79,6 @@ class FlashVidConfig:
     graft_long_spatial_penalty: Optional[float] = field(default=None)
     graft_long_scene_threshold: Optional[float] = field(default=None)
 
-    # CATS-FlashVID confidence-aware protected-sink TSTM.
-    cats_adts_mode: str = field(default="cats")  # cats | flashvid
-    cats_adts_beta: float = field(default=0.05)
-    cats_margin_threshold: float = field(default=0.03)
-    cats_high_conf_bonus: float = field(default=0.05)
-    cats_mutual_nn: bool = field(default=True)
-    cats_confidence_attn_weight: float = field(default=0.75)
-    cats_confidence_sim_weight: float = field(default=1.0)
-    cats_anchor_self_weight: float = field(default=1.0)
-    cats_adaptive_adts_budget: bool = field(default=False)
-    cats_frame_budget_min: int = field(default=1)
-    cats_frame_budget_temperature: float = field(default=0.7)
-
-    # DynFlashVID: dynamic ADTS budget + debiased residual TSTM.
-    dyn_adaptive_adts_budget: bool = field(default=True)
-    dyn_budget_strength: float = field(default=0.45)
-    dyn_budget_temperature: float = field(default=0.75)
-    dyn_frame_budget_min_ratio: float = field(default=0.50)
-    dyn_frame_budget_max_ratio: float = field(default=1.75)
-    dyn_boundary_boost: float = field(default=0.08)
-    dyn_adts_beta: float = field(default=0.05)
-    dyn_attn_weight: float = field(default=0.50)
-    dyn_event_weight: float = field(default=0.30)
-    dyn_novelty_weight: float = field(default=0.15)
-    dyn_detail_weight: float = field(default=0.05)
-    dyn_density_weight: float = field(default=0.15)
-    dyn_density_topk: int = field(default=8)
-    dyn_event_chunk_radius: int = field(default=2)
-    dyn_frame_event_weight: float = field(default=0.30)
-    dyn_frame_novelty_weight: float = field(default=0.25)
-    dyn_frame_attn_weight: float = field(default=0.20)
-    dyn_frame_density_weight: float = field(default=0.20)
-    dyn_frame_detail_weight: float = field(default=0.05)
-    dyn_similarity_debias: bool = field(default=True)
-    dyn_debias_frame_weight: float = field(default=0.35)
-    dyn_debias_global_weight: float = field(default=0.20)
-    dyn_sink_tstm: bool = field(default=False)
-    dyn_mutual_nn: bool = field(default=False)
-    dyn_margin_threshold: float = field(default=0.0)
-    dyn_high_conf_bonus: float = field(default=0.05)
-    dyn_weighted_merge: bool = field(default=False)
-    dyn_confidence_attn_weight: float = field(default=0.50)
-    dyn_confidence_sim_weight: float = field(default=0.50)
-
-    # LearnFlashVID-QA: tiny learned selector distilled from inner-LLM pruning.
-    learn_selector_ckpt: str = field(default="")
-    learn_qaware: bool = field(default=True)
-    learn_stable_floor_ratio: float = field(default=0.75)
-    learn_score_blend: float = field(default=0.35)
-    learn_q_relevance_weight: float = field(default=0.35)
-    learn_density_topk: int = field(default=8)
-    learn_collect_teacher: bool = field(default=False)
-
-    # HEDGE-VID dual-path residual selection.
-    hedge_stable_floor_ratio: float = field(default=0.85)
-    hedge_diversity_weight: float = field(default=0.04)
-    hedge_stable_bias: float = field(default=0.05)
-    hedge_evidence_bias: float = field(default=0.0)
-    hedge_max_mmr_candidates: int = field(default=2048)
-
-    # PIVOT-FUSE evidence-pivot token fusion.
-    pivot_alpha: float = field(default=0.35)
-    pivot_beta: float = field(default=0.25)
-    pivot_gamma: float = field(default=0.30)
-    pivot_delta: float = field(default=0.10)
-    pivot_lambda: float = field(default=0.40)
-    pivot_mu0: float = field(default=1.0)
-    pivot_tau: float = field(default=1.0)
-    pivot_budget_scale: float = field(default=1.0)
-    pivot_candidate_factor: float = field(default=4.0)
-    pivot_max_candidates: int = field(default=2048)
-    pivot_surprise_topk: int = field(default=8)
-    pivot_min_keep_per_frame: int = field(default=0)
-    pivot_use_fuse: bool = field(default=True)
-
-    # WAVE-VAULT drift-free Wasserstein token vaulting.
-    wave_anchor_ratio: float = field(default=0.80)
-    wave_sim_threshold: float = field(default=0.55)
-    wave_budget_scale: float = field(default=1.0)
-    wave_candidate_factor: float = field(default=2.0)
-    wave_max_candidates: int = field(default=1024)
-    wave_intrinsic_weight: float = field(default=0.01)
-    wave_vault_intrinsic_weight: float = field(default=0.0)
-    wave_q_floor: float = field(default=0.03)
-
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -187,12 +102,6 @@ class FlashVidConfig:
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "graftvid": ADTS + constrained temporal forest path.
-    # "cats": CATS protected-sink ADTS + confidence-aware TSTM path.
-    # "hedgevid": FlashVID ADTS + stable/evidence residual candidate selection.
-    # "dynflashvid": FlashVID-style compression with dynamic ADTS budget and debiased TSTM.
-    # "learnflashvid": FlashVID TSTM with learned QA-aware ADTS fill.
-    # "pivotfuse": evidence-pivot selection with residual-preserving fusion.
-    # "wavevault": drift-free WAVE anchors plus residual vault medoids.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.

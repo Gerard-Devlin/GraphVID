@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon", "cats", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"}
+    allowed = {"graphvid", "graftvid", "flashvid", "talon"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -196,13 +196,12 @@ def _build_command(
     ]
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
-    if method in ("graphvid", "graftvid", "cats"):
+    if method in ("graphvid", "graftvid"):
         graph_cap = _graph_cap_for_rate(args, ratio)
         cmd.extend(
             [
                 "--run_graphvid" if method == "graphvid" else "--no-run_graphvid",
                 "--run_graftvid" if method == "graftvid" else "--no-run_graftvid",
-                "--run_cats" if method == "cats" else "--no-run_cats",
                 "--no-run_flashvid",
                 "--graph_temporal_topk",
                 str(args.graph_temporal_topk),
@@ -282,31 +281,6 @@ def _build_command(
             cmd.append("--graft_adaptive_aggregation" if args.graft_adaptive_aggregation else "--no-graft_adaptive_aggregation")
             cmd.append("--graft_budget_correction" if args.graft_budget_correction else "--no-graft_budget_correction")
             cmd.append("--graft_input_is_residual" if args.graft_input_is_residual else "--no-graft_input_is_residual")
-        elif method == "cats":
-            cmd.extend(
-                [
-                    "--cats_adts_beta",
-                    str(args.cats_adts_beta),
-                    "--cats_adts_mode",
-                    str(args.cats_adts_mode),
-                    "--cats_margin_threshold",
-                    str(args.cats_margin_threshold),
-                    "--cats_high_conf_bonus",
-                    str(args.cats_high_conf_bonus),
-                    "--cats_confidence_attn_weight",
-                    str(args.cats_confidence_attn_weight),
-                    "--cats_confidence_sim_weight",
-                    str(args.cats_confidence_sim_weight),
-                    "--cats_anchor_self_weight",
-                    str(args.cats_anchor_self_weight),
-                    "--cats_frame_budget_min",
-                    str(args.cats_frame_budget_min),
-                    "--cats_frame_budget_temperature",
-                    str(args.cats_frame_budget_temperature),
-                ]
-            )
-            cmd.append("--cats_mutual_nn" if args.cats_mutual_nn else "--no-cats_mutual_nn")
-            cmd.append("--cats_adaptive_adts_budget" if args.cats_adaptive_adts_budget else "--no-cats_adaptive_adts_budget")
         if args.graph_skip_spatial_merge_when_capped:
             cmd.append("--graph_skip_spatial_merge_when_capped")
         else:
@@ -322,12 +296,11 @@ def _build_command(
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
-        variant = method if method in ("dynflashvid", "learnflashvid", "pivotfuse", "wavevault") else "talon"
         cmd.extend(
             [
                 "--no-run_flashvid",
                 "--compression_variant",
-                variant,
+                "talon",
                 "--talon_target_tokens_per_frame",
                 str(args.talon_target_tokens_per_frame),
                 "--talon_question_recall_ratio",
@@ -338,61 +311,8 @@ def _build_command(
                 args.talon_question_pooling,
                 "--talon_question_pooling_topk",
                 str(args.talon_question_pooling_topk),
-                "--learn_selector_ckpt",
-                str(args.learn_selector_ckpt),
-                "--learn_stable_floor_ratio",
-                str(args.learn_stable_floor_ratio),
-                "--learn_score_blend",
-                str(args.learn_score_blend),
-                "--learn_q_relevance_weight",
-                str(args.learn_q_relevance_weight),
-                "--learn_density_topk",
-                str(args.learn_density_topk),
-                "--pivot_alpha",
-                str(args.pivot_alpha),
-                "--pivot_beta",
-                str(args.pivot_beta),
-                "--pivot_gamma",
-                str(args.pivot_gamma),
-                "--pivot_delta",
-                str(args.pivot_delta),
-                "--pivot_lambda",
-                str(args.pivot_lambda),
-                "--pivot_mu0",
-                str(args.pivot_mu0),
-                "--pivot_tau",
-                str(args.pivot_tau),
-                "--pivot_budget_scale",
-                str(args.pivot_budget_scale),
-                "--pivot_candidate_factor",
-                str(args.pivot_candidate_factor),
-                "--pivot_max_candidates",
-                str(args.pivot_max_candidates),
-                "--pivot_surprise_topk",
-                str(args.pivot_surprise_topk),
-                "--pivot_min_keep_per_frame",
-                str(args.pivot_min_keep_per_frame),
-                "--wave_anchor_ratio",
-                str(args.wave_anchor_ratio),
-                "--wave_sim_threshold",
-                str(args.wave_sim_threshold),
-                "--wave_budget_scale",
-                str(args.wave_budget_scale),
-                "--wave_candidate_factor",
-                str(args.wave_candidate_factor),
-                "--wave_max_candidates",
-                str(args.wave_max_candidates),
-                "--wave_intrinsic_weight",
-                str(args.wave_intrinsic_weight),
-                "--wave_vault_intrinsic_weight",
-                str(args.wave_vault_intrinsic_weight),
-                "--wave_q_floor",
-                str(args.wave_q_floor),
             ]
         )
-        cmd.append("--learn_qaware" if args.learn_qaware else "--no-learn_qaware")
-        cmd.append("--learn_collect_teacher" if args.learn_collect_teacher else "--no-learn_collect_teacher")
-        cmd.append("--pivot_use_fuse" if args.pivot_use_fuse else "--no-pivot_use_fuse")
     cmd.extend(args.extra_args)
     return cmd, summary_path
 
@@ -407,7 +327,7 @@ def _load_summary(path: Path) -> dict[str, Any] | None:
 def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: str) -> dict[str, float | None]:
     phase_key = _phase_name(method)
     phase = summary.get(phase_key) if summary else None
-    if phase is None and method in ("talon", "dynflashvid", "learnflashvid") and summary:
+    if phase is None and method == "talon" and summary:
         phase = summary.get("ours")
     result: dict[str, float | None] = {
         "acc": _safe_pct(phase.get("accuracy")) if phase else None,
@@ -418,7 +338,7 @@ def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: st
         for duration in ("short", "medium", "long"):
             bucket = by_duration.get(duration, {})
             sub_phase = bucket.get(phase_key)
-            if sub_phase is None and method in ("talon", "dynflashvid", "learnflashvid"):
+            if sub_phase is None and method == "talon":
                 sub_phase = bucket.get("ours")
             result[duration] = _safe_pct(sub_phase.get("accuracy")) if sub_phase else None
     return result
@@ -502,7 +422,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,cats,dynflashvid,learnflashvid,pivotfuse,wavevault,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -576,17 +496,6 @@ def main() -> None:
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
-    parser.add_argument("--cats_adts_mode", default="cats", choices=["cats", "flashvid"])
-    parser.add_argument("--cats_adts_beta", type=float, default=0.05)
-    parser.add_argument("--cats_margin_threshold", type=float, default=0.03)
-    parser.add_argument("--cats_high_conf_bonus", type=float, default=0.05)
-    parser.add_argument("--cats_mutual_nn", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--cats_confidence_attn_weight", type=float, default=0.75)
-    parser.add_argument("--cats_confidence_sim_weight", type=float, default=1.0)
-    parser.add_argument("--cats_anchor_self_weight", type=float, default=1.0)
-    parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--cats_frame_budget_min", type=int, default=1)
-    parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)
     parser.add_argument("--token_selection_method", default="attn_div_stable")
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_stable")
     parser.add_argument("--talon_target_tokens_per_frame", type=int, default=22)
@@ -594,34 +503,6 @@ def main() -> None:
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     parser.add_argument("--talon_question_pooling", default="topk")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
-    parser.add_argument("--learn_selector_ckpt", default="")
-    parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.75)
-    parser.add_argument("--learn_score_blend", type=float, default=0.35)
-    parser.add_argument("--learn_q_relevance_weight", type=float, default=0.35)
-    parser.add_argument("--learn_density_topk", type=int, default=8)
-    parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--pivot_alpha", type=float, default=0.35)
-    parser.add_argument("--pivot_beta", type=float, default=0.25)
-    parser.add_argument("--pivot_gamma", type=float, default=0.30)
-    parser.add_argument("--pivot_delta", type=float, default=0.10)
-    parser.add_argument("--pivot_lambda", type=float, default=0.40)
-    parser.add_argument("--pivot_mu0", type=float, default=1.0)
-    parser.add_argument("--pivot_tau", type=float, default=1.0)
-    parser.add_argument("--pivot_budget_scale", type=float, default=1.0)
-    parser.add_argument("--pivot_candidate_factor", type=float, default=4.0)
-    parser.add_argument("--pivot_max_candidates", type=int, default=2048)
-    parser.add_argument("--pivot_surprise_topk", type=int, default=8)
-    parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
-    parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
-    parser.add_argument("--wave_sim_threshold", type=float, default=0.55)
-    parser.add_argument("--wave_budget_scale", type=float, default=1.0)
-    parser.add_argument("--wave_candidate_factor", type=float, default=2.0)
-    parser.add_argument("--wave_max_candidates", type=int, default=1024)
-    parser.add_argument("--wave_intrinsic_weight", type=float, default=0.01)
-    parser.add_argument("--wave_vault_intrinsic_weight", type=float, default=0.0)
-    parser.add_argument("--wave_q_floor", type=float, default=0.03)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

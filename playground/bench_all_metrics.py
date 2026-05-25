@@ -54,20 +54,14 @@ def _phase_display_name(phase_key: str) -> str:
         "flashvid": "FlashVID",
         "graphvid": "GraphVID",
         "graftvid": "GraftVID",
-        "cats": "CATS",
         "talon": "TALON",
-        "hedgevid": "HedgeVID",
-        "dynflashvid": "DynFlashVID",
-        "learnflashvid": "LearnFlashVID",
-        "pivotfuse": "PIVOT-FUSE",
-        "wavevault": "WAVE-VAULT",
         "ours": "Ours",
     }
     return labels.get(phase_key, phase_key)
 
 
 def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "talon", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault", "ours", "graphvid", "graftvid", "cats"]
+    preferred = ["baseline", "flashvid", "talon", "ours", "graphvid", "graftvid"]
     if not summary:
         return preferred
     extras = [
@@ -133,96 +127,6 @@ GRAFT_METRIC_KEYS = [
     "graft_capacity_rejected",
     "graft_same_frame_rejected",
 ]
-CATS_METRIC_KEYS = [
-    "cats_adts_mode_code",
-    "cats_selected_tokens",
-    "cats_sink_merges",
-    "cats_residual_merges",
-    "cats_mutual_rejected",
-    "cats_margin_rejected",
-    "cats_threshold_rejected",
-    "cats_retained_residual_tokens",
-    "cats_spatial_tokens_before",
-    "cats_spatial_tokens_after",
-    "cats_mean_merge_sim",
-    "cats_mean_margin",
-]
-DYN_METRIC_KEYS = [
-    "dyn_selected_tokens",
-    "dyn_budget_min",
-    "dyn_budget_max",
-    "dyn_budget_std",
-    "dyn_sink_merges",
-    "dyn_residual_merges",
-    "dyn_retained_residual_tokens",
-    "dyn_spatial_tokens_before",
-    "dyn_spatial_tokens_after",
-    "dyn_mean_merge_sim",
-    "dyn_similarity_debias_active",
-    "dyn_sink_active",
-    "dyn_weighted_active",
-    "dyn_density_frame_mean",
-    "dyn_event_chunk_mean",
-    "dyn_motion_frame_mean",
-]
-HEDGE_METRIC_KEYS = [
-    "hedge_selected_adts",
-    "hedge_residual_budget",
-    "hedge_stable_candidates",
-    "hedge_evidence_candidates",
-    "hedge_stable_selected",
-    "hedge_evidence_selected",
-    "hedge_final_tokens",
-    "hedge_stable_floor_ratio",
-    "hedge_diversity_weight",
-]
-PIVOT_METRIC_KEYS = [
-    "pivot_target_tokens",
-    "pivot_selected_tokens",
-    "pivot_candidate_count",
-    "pivot_use_fuse",
-    "pivot_budget_scale",
-    "pivot_avg_cluster_size",
-    "pivot_max_cluster_size",
-    "pivot_coverage_mean",
-    "pivot_selected_utility_mean",
-    "pivot_bridge_mean",
-    "pivot_surprise_mean",
-    "pivot_background_mean",
-]
-WAVE_METRIC_KEYS = [
-    "wave_target_tokens",
-    "wave_anchor_tokens",
-    "wave_vault_tokens",
-    "wave_candidate_count",
-    "wave_anchor_ratio",
-    "wave_sim_threshold",
-    "wave_budget_scale",
-    "wave_intrinsic_weight",
-    "wave_vault_intrinsic_weight",
-    "wave_q_floor",
-    "wave_coverage_mean",
-    "wave_residual_mean",
-    "wave_anchor_utility_mean",
-    "wave_vault_residual_mean",
-    "wave_anchor_drift",
-    "wave_learn_active",
-    "wave_learn_blend",
-    "wave_learn_score_mean",
-    "wave_learn_score_std",
-]
-LEARN_METRIC_KEYS = [
-    "learn_selected_tokens",
-    "learn_stable_tokens",
-    "learn_selector_tokens",
-    "learn_qaware_active",
-    "learn_score_mean",
-    "learn_score_std",
-    "learn_question_mean",
-    "learn_question_topk_mean",
-    "learn_question_contrast_mean",
-    "learn_teacher_keep_ratio",
-]
 
 
 @dataclass
@@ -255,8 +159,6 @@ class BenchmarkArgs:
     run_ours: bool = field(default=True)
     run_graphvid: bool = field(default=False)
     run_graftvid: bool = field(default=False)
-    run_cats: bool = field(default=False)
-    run_dynflashvid: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
@@ -323,79 +225,6 @@ class BenchmarkArgs:
     graft_long_split_radius_eps: Optional[float] = field(default=None)
     graft_long_spatial_penalty: Optional[float] = field(default=None)
     graft_long_scene_threshold: Optional[float] = field(default=None)
-    cats_adts_mode: str = field(default="cats")
-    cats_adts_beta: float = field(default=0.05)
-    cats_margin_threshold: float = field(default=0.03)
-    cats_high_conf_bonus: float = field(default=0.05)
-    cats_mutual_nn: bool = field(default=True)
-    cats_confidence_attn_weight: float = field(default=0.75)
-    cats_confidence_sim_weight: float = field(default=1.0)
-    cats_anchor_self_weight: float = field(default=1.0)
-    cats_adaptive_adts_budget: bool = field(default=False)
-    cats_frame_budget_min: int = field(default=1)
-    cats_frame_budget_temperature: float = field(default=0.7)
-    dyn_adaptive_adts_budget: bool = field(default=True)
-    dyn_budget_strength: float = field(default=0.45)
-    dyn_budget_temperature: float = field(default=0.75)
-    dyn_frame_budget_min_ratio: float = field(default=0.50)
-    dyn_frame_budget_max_ratio: float = field(default=1.75)
-    dyn_boundary_boost: float = field(default=0.08)
-    dyn_adts_beta: float = field(default=0.05)
-    dyn_attn_weight: float = field(default=0.50)
-    dyn_event_weight: float = field(default=0.30)
-    dyn_novelty_weight: float = field(default=0.15)
-    dyn_detail_weight: float = field(default=0.05)
-    dyn_density_weight: float = field(default=0.15)
-    dyn_density_topk: int = field(default=8)
-    dyn_event_chunk_radius: int = field(default=2)
-    dyn_frame_event_weight: float = field(default=0.30)
-    dyn_frame_novelty_weight: float = field(default=0.25)
-    dyn_frame_attn_weight: float = field(default=0.20)
-    dyn_frame_density_weight: float = field(default=0.20)
-    dyn_frame_detail_weight: float = field(default=0.05)
-    dyn_similarity_debias: bool = field(default=True)
-    dyn_debias_frame_weight: float = field(default=0.35)
-    dyn_debias_global_weight: float = field(default=0.20)
-    dyn_sink_tstm: bool = field(default=False)
-    dyn_mutual_nn: bool = field(default=False)
-    dyn_margin_threshold: float = field(default=0.0)
-    dyn_high_conf_bonus: float = field(default=0.05)
-    dyn_weighted_merge: bool = field(default=False)
-    dyn_confidence_attn_weight: float = field(default=0.50)
-    dyn_confidence_sim_weight: float = field(default=0.50)
-    learn_selector_ckpt: str = field(default="")
-    learn_qaware: bool = field(default=True)
-    learn_stable_floor_ratio: float = field(default=0.75)
-    learn_score_blend: float = field(default=0.35)
-    learn_q_relevance_weight: float = field(default=0.35)
-    learn_density_topk: int = field(default=8)
-    learn_collect_teacher: bool = field(default=False)
-    hedge_stable_floor_ratio: float = field(default=0.85)
-    hedge_diversity_weight: float = field(default=0.04)
-    hedge_stable_bias: float = field(default=0.05)
-    hedge_evidence_bias: float = field(default=0.0)
-    hedge_max_mmr_candidates: int = field(default=2048)
-    pivot_alpha: float = field(default=0.35)
-    pivot_beta: float = field(default=0.25)
-    pivot_gamma: float = field(default=0.30)
-    pivot_delta: float = field(default=0.10)
-    pivot_lambda: float = field(default=0.40)
-    pivot_mu0: float = field(default=1.0)
-    pivot_tau: float = field(default=1.0)
-    pivot_budget_scale: float = field(default=1.0)
-    pivot_candidate_factor: float = field(default=4.0)
-    pivot_max_candidates: int = field(default=2048)
-    pivot_surprise_topk: int = field(default=8)
-    pivot_min_keep_per_frame: int = field(default=0)
-    pivot_use_fuse: bool = field(default=True)
-    wave_anchor_ratio: float = field(default=0.80)
-    wave_sim_threshold: float = field(default=0.55)
-    wave_budget_scale: float = field(default=1.0)
-    wave_candidate_factor: float = field(default=2.0)
-    wave_max_candidates: int = field(default=1024)
-    wave_intrinsic_weight: float = field(default=0.01)
-    wave_vault_intrinsic_weight: float = field(default=0.0)
-    wave_q_floor: float = field(default=0.03)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
@@ -612,9 +441,6 @@ class BenchmarkArgs:
     ours_output: str = field(default="logs/efficiency/ours_all_metrics.jsonl")
     graphvid_output: str = field(default="logs/efficiency/graphvid_all_metrics.jsonl")
     graftvid_output: str = field(default="logs/efficiency/graftvid_all_metrics.jsonl")
-    cats_output: str = field(default="logs/efficiency/cats_all_metrics.jsonl")
-    dynflashvid_output: str = field(default="logs/efficiency/dynflashvid_all_metrics.jsonl")
-    learnflashvid_output: str = field(default="logs/efficiency/learnflashvid_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
@@ -1373,198 +1199,6 @@ def _get_graft_debug_metrics(model) -> dict[str, float | None]:
     return values
 
 
-def _get_cats_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in CATS_METRIC_KEYS}
-    candidates = []
-    for obj in (
-        model,
-        getattr(model, "model", None),
-        getattr(model, "language_model", None),
-        getattr(model, "module", None),
-        getattr(getattr(model, "module", None), "model", None),
-    ):
-        if obj is None:
-            continue
-        cfg = getattr(obj, "flashvid_config", None)
-        if cfg is not None and cfg not in candidates:
-            candidates.append(cfg)
-    if not candidates:
-        return empty
-    best_values = empty
-    best_score = -1
-    for cfg in candidates:
-        values: dict[str, float | None] = {}
-        present = 0
-        for key in CATS_METRIC_KEYS:
-            value = getattr(cfg, f"last_{key}", None)
-            values[key] = float(value) if value is not None else None
-            present += int(value is not None)
-        if present > best_score:
-            best_score = present
-            best_values = values
-    return best_values
-
-
-def _get_dyn_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in DYN_METRIC_KEYS}
-    candidates = []
-    for obj in (
-        model,
-        getattr(model, "model", None),
-        getattr(model, "language_model", None),
-        getattr(model, "module", None),
-        getattr(getattr(model, "module", None), "model", None),
-    ):
-        if obj is None:
-            continue
-        cfg = getattr(obj, "flashvid_config", None)
-        if cfg is not None and cfg not in candidates:
-            candidates.append(cfg)
-    if not candidates:
-        return empty
-    best_values = empty
-    best_score = -1
-    for cfg in candidates:
-        values: dict[str, float | None] = {}
-        present = 0
-        for key in DYN_METRIC_KEYS:
-            value = getattr(cfg, f"last_{key}", None)
-            values[key] = float(value) if value is not None else None
-            present += int(value is not None)
-        if present > best_score:
-            best_score = present
-            best_values = values
-    return best_values
-
-
-def _get_hedge_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in HEDGE_METRIC_KEYS}
-    candidates = []
-    for obj in (
-        model,
-        getattr(model, "model", None),
-        getattr(model, "language_model", None),
-        getattr(model, "module", None),
-        getattr(getattr(model, "module", None), "model", None),
-    ):
-        if obj is None:
-            continue
-        cfg = getattr(obj, "flashvid_config", None)
-        if cfg is not None and cfg not in candidates:
-            candidates.append(cfg)
-    if not candidates:
-        return empty
-    best_values = empty
-    best_score = -1
-    for cfg in candidates:
-        values: dict[str, float | None] = {}
-        present = 0
-        for key in HEDGE_METRIC_KEYS:
-            value = getattr(cfg, f"last_{key}", None)
-            values[key] = float(value) if value is not None else None
-            present += int(value is not None)
-        if present > best_score:
-            best_score = present
-            best_values = values
-    return best_values
-
-
-def _get_pivot_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in PIVOT_METRIC_KEYS}
-    candidates = []
-    for obj in (
-        model,
-        getattr(model, "model", None),
-        getattr(model, "language_model", None),
-        getattr(model, "module", None),
-        getattr(getattr(model, "module", None), "model", None),
-    ):
-        if obj is None:
-            continue
-        cfg = getattr(obj, "flashvid_config", None)
-        if cfg is not None and cfg not in candidates:
-            candidates.append(cfg)
-    if not candidates:
-        return empty
-    best_values = empty
-    best_score = -1
-    for cfg in candidates:
-        values: dict[str, float | None] = {}
-        present = 0
-        for key in PIVOT_METRIC_KEYS:
-            value = getattr(cfg, f"last_{key}", None)
-            values[key] = float(value) if value is not None else None
-            present += int(value is not None)
-        if present > best_score:
-            best_score = present
-            best_values = values
-    return best_values
-
-
-def _get_wave_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in WAVE_METRIC_KEYS}
-    candidates = []
-    for obj in (
-        model,
-        getattr(model, "model", None),
-        getattr(model, "language_model", None),
-        getattr(model, "module", None),
-        getattr(getattr(model, "module", None), "model", None),
-    ):
-        if obj is None:
-            continue
-        cfg = getattr(obj, "flashvid_config", None)
-        if cfg is not None and cfg not in candidates:
-            candidates.append(cfg)
-    if not candidates:
-        return empty
-    best_values = empty
-    best_score = -1
-    for cfg in candidates:
-        values: dict[str, float | None] = {}
-        present = 0
-        for key in WAVE_METRIC_KEYS:
-            value = getattr(cfg, f"last_{key}", None)
-            values[key] = float(value) if value is not None else None
-            present += int(value is not None)
-        if present > best_score:
-            best_score = present
-            best_values = values
-    return best_values
-
-
-def _get_learn_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in LEARN_METRIC_KEYS}
-    candidates = []
-    for obj in (
-        model,
-        getattr(model, "model", None),
-        getattr(model, "language_model", None),
-        getattr(model, "module", None),
-        getattr(getattr(model, "module", None), "model", None),
-    ):
-        if obj is None:
-            continue
-        cfg = getattr(obj, "flashvid_config", None)
-        if cfg is not None and cfg not in candidates:
-            candidates.append(cfg)
-    if not candidates:
-        return empty
-    best_values = empty
-    best_score = -1
-    for cfg in candidates:
-        values: dict[str, float | None] = {}
-        present = 0
-        for key in LEARN_METRIC_KEYS:
-            value = getattr(cfg, f"last_{key}", None)
-            values[key] = float(value) if value is not None else None
-            present += int(value is not None)
-        if present > best_score:
-            best_score = present
-            best_values = values
-    return best_values
-
-
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
     model = model_bundle["model"]
     backend = model_bundle["backend"]
@@ -1633,12 +1267,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_grid_h_per_run = []
     talon_core_grid_w_per_run = []
     graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
-    cats_metrics_per_run = {key: [] for key in CATS_METRIC_KEYS}
-    dyn_metrics_per_run = {key: [] for key in DYN_METRIC_KEYS}
-    hedge_metrics_per_run = {key: [] for key in HEDGE_METRIC_KEYS}
-    pivot_metrics_per_run = {key: [] for key in PIVOT_METRIC_KEYS}
-    wave_metrics_per_run = {key: [] for key in WAVE_METRIC_KEYS}
-    learn_metrics_per_run = {key: [] for key in LEARN_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -1679,35 +1307,11 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         debug_metrics = _get_talon_debug_metrics(model)
         talon_core_metrics = _get_talon_core_debug_metrics(model)
         graft_metrics = _get_graft_debug_metrics(model)
-        cats_metrics = _get_cats_debug_metrics(model)
-        dyn_metrics = _get_dyn_debug_metrics(model)
-        hedge_metrics = _get_hedge_debug_metrics(model)
-        pivot_metrics = _get_pivot_debug_metrics(model)
-        wave_metrics = _get_wave_debug_metrics(model)
-        learn_metrics = _get_learn_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
         for key in GRAFT_METRIC_KEYS:
             if graft_metrics.get(key) is not None:
                 graft_metrics_per_run[key].append(float(graft_metrics[key]))
-        for key in CATS_METRIC_KEYS:
-            if cats_metrics.get(key) is not None:
-                cats_metrics_per_run[key].append(float(cats_metrics[key]))
-        for key in DYN_METRIC_KEYS:
-            if dyn_metrics.get(key) is not None:
-                dyn_metrics_per_run[key].append(float(dyn_metrics[key]))
-        for key in HEDGE_METRIC_KEYS:
-            if hedge_metrics.get(key) is not None:
-                hedge_metrics_per_run[key].append(float(hedge_metrics[key]))
-        for key in PIVOT_METRIC_KEYS:
-            if pivot_metrics.get(key) is not None:
-                pivot_metrics_per_run[key].append(float(pivot_metrics[key]))
-        for key in WAVE_METRIC_KEYS:
-            if wave_metrics.get(key) is not None:
-                wave_metrics_per_run[key].append(float(wave_metrics[key]))
-        for key in LEARN_METRIC_KEYS:
-            if learn_metrics.get(key) is not None:
-                learn_metrics_per_run[key].append(float(learn_metrics[key]))
         if debug_metrics["talon_target_tokens_per_frame"] is not None:
             talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
         if debug_metrics["talon_complexity_score"] is not None:
@@ -1805,30 +1409,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         key: float(np.mean(values)) if values else None
         for key, values in graft_metrics_per_run.items()
     }
-    cats_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in cats_metrics_per_run.items()
-    }
-    dyn_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in dyn_metrics_per_run.items()
-    }
-    hedge_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in hedge_metrics_per_run.items()
-    }
-    pivot_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in pivot_metrics_per_run.items()
-    }
-    wave_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in wave_metrics_per_run.items()
-    }
-    learn_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in learn_metrics_per_run.items()
-    }
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1871,12 +1451,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "talon_core_grid_h": talon_core_grid_h,
         "talon_core_grid_w": talon_core_grid_w,
         **graft_metric_means,
-        **cats_metric_means,
-        **dyn_metric_means,
-        **hedge_metric_means,
-        **pivot_metric_means,
-        **wave_metric_means,
-        **learn_metric_means,
     }
 
 
@@ -1931,10 +1505,6 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "error_traceback": None,
     }
     record.update({key: None for key in GRAFT_METRIC_KEYS})
-    record.update({key: None for key in CATS_METRIC_KEYS})
-    record.update({key: None for key in DYN_METRIC_KEYS})
-    record.update({key: None for key in HEDGE_METRIC_KEYS})
-    record.update({key: None for key in LEARN_METRIC_KEYS})
 
     try:
         if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
@@ -1993,10 +1563,6 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "talon_core_grid_h": result.get("talon_core_grid_h"),
                 "talon_core_grid_w": result.get("talon_core_grid_w"),
                 **{key: result.get(key) for key in GRAFT_METRIC_KEYS},
-                **{key: result.get(key) for key in CATS_METRIC_KEYS},
-                **{key: result.get(key) for key in DYN_METRIC_KEYS},
-                **{key: result.get(key) for key in HEDGE_METRIC_KEYS},
-                **{key: result.get(key) for key in LEARN_METRIC_KEYS},
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -2285,30 +1851,6 @@ def _summarize_phase(records: list[dict[str, Any]]):
         key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
         for key in GRAFT_METRIC_KEYS
     }
-    cats_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in CATS_METRIC_KEYS
-    }
-    dyn_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in DYN_METRIC_KEYS
-    }
-    hedge_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in HEDGE_METRIC_KEYS
-    }
-    pivot_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in PIVOT_METRIC_KEYS
-    }
-    wave_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in WAVE_METRIC_KEYS
-    }
-    learn_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in LEARN_METRIC_KEYS
-    }
 
     return {
         "num_samples": len(records),
@@ -2351,12 +1893,6 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "talon_core_grid_h": _stats(talon_core_grid_h),
         "talon_core_grid_w": _stats(talon_core_grid_w),
         **graft_stats,
-        **cats_stats,
-        **dyn_stats,
-        **hedge_stats,
-        **pivot_stats,
-        **wave_stats,
-        **learn_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
     }
@@ -2441,7 +1977,6 @@ def _add_duration_breakdown(
     ours_phase_name: str = "ours",
     graphvid_records: Optional[list[dict[str, Any]]] = None,
     graftvid_records: Optional[list[dict[str, Any]]] = None,
-    cats_records: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     ours_phase_name = _canonical_method_name(ours_phase_name)
     records_by_phase = {
@@ -2450,7 +1985,6 @@ def _add_duration_breakdown(
         ours_phase_name: ours_records,
         "graphvid": graphvid_records,
         "graftvid": graftvid_records,
-        "cats": cats_records,
     }
     durations = ["short", "medium", "long"]
     breakdown: dict[str, Any] = {}
@@ -2501,13 +2035,6 @@ def _add_duration_breakdown(
                 phase_records["graftvid"],
                 anchor_name="flashvid",
                 target_name="graftvid",
-            )
-        if "flashvid" in phase_records and "cats" in phase_records:
-            bucket["comparison"]["flashvid_vs_cats"] = _summarize_pairwise_comparison(
-                phase_records["flashvid"],
-                phase_records["cats"],
-                anchor_name="flashvid",
-                target_name="cats",
             )
         breakdown[duration] = bucket
     summary["duration_breakdown"] = breakdown
@@ -2588,39 +2115,6 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
         graft_long_scene_threshold=args.graft_long_scene_threshold,
-        hedge_stable_floor_ratio=args.hedge_stable_floor_ratio,
-        hedge_diversity_weight=args.hedge_diversity_weight,
-        hedge_stable_bias=args.hedge_stable_bias,
-        hedge_evidence_bias=args.hedge_evidence_bias,
-        hedge_max_mmr_candidates=args.hedge_max_mmr_candidates,
-        learn_selector_ckpt=args.learn_selector_ckpt,
-        learn_qaware=args.learn_qaware,
-        learn_stable_floor_ratio=args.learn_stable_floor_ratio,
-        learn_score_blend=args.learn_score_blend,
-        learn_q_relevance_weight=args.learn_q_relevance_weight,
-        learn_density_topk=args.learn_density_topk,
-        learn_collect_teacher=args.learn_collect_teacher,
-        pivot_alpha=args.pivot_alpha,
-        pivot_beta=args.pivot_beta,
-        pivot_gamma=args.pivot_gamma,
-        pivot_delta=args.pivot_delta,
-        pivot_lambda=args.pivot_lambda,
-        pivot_mu0=args.pivot_mu0,
-        pivot_tau=args.pivot_tau,
-        pivot_budget_scale=args.pivot_budget_scale,
-        pivot_candidate_factor=args.pivot_candidate_factor,
-        pivot_max_candidates=args.pivot_max_candidates,
-        pivot_surprise_topk=args.pivot_surprise_topk,
-        pivot_min_keep_per_frame=args.pivot_min_keep_per_frame,
-        pivot_use_fuse=args.pivot_use_fuse,
-        wave_anchor_ratio=args.wave_anchor_ratio,
-        wave_sim_threshold=args.wave_sim_threshold,
-        wave_budget_scale=args.wave_budget_scale,
-        wave_candidate_factor=args.wave_candidate_factor,
-        wave_max_candidates=args.wave_max_candidates,
-        wave_intrinsic_weight=args.wave_intrinsic_weight,
-        wave_vault_intrinsic_weight=args.wave_vault_intrinsic_weight,
-        wave_q_floor=args.wave_q_floor,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2884,11 +2378,6 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
         graft_long_scene_threshold=args.graft_long_scene_threshold,
-        hedge_stable_floor_ratio=args.hedge_stable_floor_ratio,
-        hedge_diversity_weight=args.hedge_diversity_weight,
-        hedge_stable_bias=args.hedge_stable_bias,
-        hedge_evidence_bias=args.hedge_evidence_bias,
-        hedge_max_mmr_candidates=args.hedge_max_mmr_candidates,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -2970,35 +2459,6 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
         graft_long_scene_threshold=args.graft_long_scene_threshold,
-        dyn_adaptive_adts_budget=args.dyn_adaptive_adts_budget,
-        dyn_budget_strength=args.dyn_budget_strength,
-        dyn_budget_temperature=args.dyn_budget_temperature,
-        dyn_frame_budget_min_ratio=args.dyn_frame_budget_min_ratio,
-        dyn_frame_budget_max_ratio=args.dyn_frame_budget_max_ratio,
-        dyn_boundary_boost=args.dyn_boundary_boost,
-        dyn_adts_beta=args.dyn_adts_beta,
-        dyn_attn_weight=args.dyn_attn_weight,
-        dyn_event_weight=args.dyn_event_weight,
-        dyn_novelty_weight=args.dyn_novelty_weight,
-        dyn_detail_weight=args.dyn_detail_weight,
-        dyn_density_weight=args.dyn_density_weight,
-        dyn_density_topk=args.dyn_density_topk,
-        dyn_event_chunk_radius=args.dyn_event_chunk_radius,
-        dyn_frame_event_weight=args.dyn_frame_event_weight,
-        dyn_frame_novelty_weight=args.dyn_frame_novelty_weight,
-        dyn_frame_attn_weight=args.dyn_frame_attn_weight,
-        dyn_frame_density_weight=args.dyn_frame_density_weight,
-        dyn_frame_detail_weight=args.dyn_frame_detail_weight,
-        dyn_similarity_debias=args.dyn_similarity_debias,
-        dyn_debias_frame_weight=args.dyn_debias_frame_weight,
-        dyn_debias_global_weight=args.dyn_debias_global_weight,
-        dyn_sink_tstm=args.dyn_sink_tstm,
-        dyn_mutual_nn=args.dyn_mutual_nn,
-        dyn_margin_threshold=args.dyn_margin_threshold,
-        dyn_high_conf_bonus=args.dyn_high_conf_bonus,
-        dyn_weighted_merge=args.dyn_weighted_merge,
-        dyn_confidence_attn_weight=args.dyn_confidence_attn_weight,
-        dyn_confidence_sim_weight=args.dyn_confidence_sim_weight,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3013,7 +2473,6 @@ def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
     )
 
 
-def _apply_cats(model, args: BenchmarkArgs, backend: str):
     from flashvid import flashvid
     pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
 
@@ -3027,25 +2486,12 @@ def _apply_cats(model, args: BenchmarkArgs, backend: str):
         token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
-        temporal_merge_mode="cats",
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
-        cats_adts_beta=args.cats_adts_beta,
-        cats_adts_mode=args.cats_adts_mode,
-        cats_margin_threshold=args.cats_margin_threshold,
-        cats_high_conf_bonus=args.cats_high_conf_bonus,
-        cats_mutual_nn=args.cats_mutual_nn,
-        cats_confidence_attn_weight=args.cats_confidence_attn_weight,
-        cats_confidence_sim_weight=args.cats_confidence_sim_weight,
-        cats_anchor_self_weight=args.cats_anchor_self_weight,
-        cats_adaptive_adts_budget=args.cats_adaptive_adts_budget,
-        cats_frame_budget_min=args.cats_frame_budget_min,
-        cats_frame_budget_temperature=args.cats_frame_budget_temperature,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
-        compression_variant="cats",
         question_aware_reweighting=False,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=False,
@@ -3123,63 +2569,6 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graft_long_split_radius_eps=args.graft_long_split_radius_eps,
         graft_long_spatial_penalty=args.graft_long_spatial_penalty,
         graft_long_scene_threshold=args.graft_long_scene_threshold,
-        dyn_adaptive_adts_budget=args.dyn_adaptive_adts_budget,
-        dyn_budget_strength=args.dyn_budget_strength,
-        dyn_budget_temperature=args.dyn_budget_temperature,
-        dyn_frame_budget_min_ratio=args.dyn_frame_budget_min_ratio,
-        dyn_frame_budget_max_ratio=args.dyn_frame_budget_max_ratio,
-        dyn_boundary_boost=args.dyn_boundary_boost,
-        dyn_adts_beta=args.dyn_adts_beta,
-        dyn_attn_weight=args.dyn_attn_weight,
-        dyn_event_weight=args.dyn_event_weight,
-        dyn_novelty_weight=args.dyn_novelty_weight,
-        dyn_detail_weight=args.dyn_detail_weight,
-        dyn_density_weight=args.dyn_density_weight,
-        dyn_density_topk=args.dyn_density_topk,
-        dyn_event_chunk_radius=args.dyn_event_chunk_radius,
-        dyn_frame_event_weight=args.dyn_frame_event_weight,
-        dyn_frame_novelty_weight=args.dyn_frame_novelty_weight,
-        dyn_frame_attn_weight=args.dyn_frame_attn_weight,
-        dyn_frame_density_weight=args.dyn_frame_density_weight,
-        dyn_frame_detail_weight=args.dyn_frame_detail_weight,
-        dyn_similarity_debias=args.dyn_similarity_debias,
-        dyn_debias_frame_weight=args.dyn_debias_frame_weight,
-        dyn_debias_global_weight=args.dyn_debias_global_weight,
-        dyn_sink_tstm=args.dyn_sink_tstm,
-        dyn_mutual_nn=args.dyn_mutual_nn,
-        dyn_margin_threshold=args.dyn_margin_threshold,
-        dyn_high_conf_bonus=args.dyn_high_conf_bonus,
-        dyn_weighted_merge=args.dyn_weighted_merge,
-        dyn_confidence_attn_weight=args.dyn_confidence_attn_weight,
-        dyn_confidence_sim_weight=args.dyn_confidence_sim_weight,
-        learn_selector_ckpt=args.learn_selector_ckpt,
-        learn_qaware=args.learn_qaware,
-        learn_stable_floor_ratio=args.learn_stable_floor_ratio,
-        learn_score_blend=args.learn_score_blend,
-        learn_q_relevance_weight=args.learn_q_relevance_weight,
-        learn_density_topk=args.learn_density_topk,
-        learn_collect_teacher=args.learn_collect_teacher,
-        pivot_alpha=args.pivot_alpha,
-        pivot_beta=args.pivot_beta,
-        pivot_gamma=args.pivot_gamma,
-        pivot_delta=args.pivot_delta,
-        pivot_lambda=args.pivot_lambda,
-        pivot_mu0=args.pivot_mu0,
-        pivot_tau=args.pivot_tau,
-        pivot_budget_scale=args.pivot_budget_scale,
-        pivot_candidate_factor=args.pivot_candidate_factor,
-        pivot_max_candidates=args.pivot_max_candidates,
-        pivot_surprise_topk=args.pivot_surprise_topk,
-        pivot_min_keep_per_frame=args.pivot_min_keep_per_frame,
-        pivot_use_fuse=args.pivot_use_fuse,
-        wave_anchor_ratio=args.wave_anchor_ratio,
-        wave_sim_threshold=args.wave_sim_threshold,
-        wave_budget_scale=args.wave_budget_scale,
-        wave_candidate_factor=args.wave_candidate_factor,
-        wave_max_candidates=args.wave_max_candidates,
-        wave_intrinsic_weight=args.wave_intrinsic_weight,
-        wave_vault_intrinsic_weight=args.wave_vault_intrinsic_weight,
-        wave_q_floor=args.wave_q_floor,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -3400,7 +2789,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
         f"{ours_phase_name}={args.run_ours}, graphvid={args.run_graphvid}, "
-        f"graftvid={args.run_graftvid}, cats={args.run_cats}"
+        f"graftvid={args.run_graftvid}"
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
@@ -3419,49 +2808,6 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"event_cap={args.talon_event_budget_ratio:.2f}, "
             f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
-        if ours_phase_name == "dynflashvid":
-            print(
-                "DynFlash allocator: "
-                f"strength={args.dyn_budget_strength:.2f}, temp={args.dyn_budget_temperature:.2f}, "
-                f"minmax={args.dyn_frame_budget_min_ratio:.2f}/{args.dyn_frame_budget_max_ratio:.2f}, "
-                f"token_w=a{args.dyn_attn_weight:.2f}/e{args.dyn_event_weight:.2f}/"
-                f"n{args.dyn_novelty_weight:.2f}/d{args.dyn_detail_weight:.2f}/"
-                f"rho{args.dyn_density_weight:.2f}, "
-                f"frame_w=event{args.dyn_frame_event_weight:.2f}/nov{args.dyn_frame_novelty_weight:.2f}/"
-                f"attn{args.dyn_frame_attn_weight:.2f}/rho{args.dyn_frame_density_weight:.2f}/"
-                f"detail{args.dyn_frame_detail_weight:.2f}, "
-                f"density_topk={args.dyn_density_topk}, event_radius={args.dyn_event_chunk_radius}"
-            )
-        if ours_phase_name == "learnflashvid":
-            print(
-                "LearnFlash selector: "
-                f"ckpt={args.learn_selector_ckpt or '<heuristic>'}, qaware={args.learn_qaware}, "
-                f"stable_floor={args.learn_stable_floor_ratio:.2f}, blend={args.learn_score_blend:.2f}, "
-                f"q_weight={args.learn_q_relevance_weight:.2f}, density_topk={args.learn_density_topk}, "
-                f"collect_teacher={args.learn_collect_teacher}"
-            )
-        if ours_phase_name == "pivotfuse":
-            print(
-                "PIVOT-FUSE config: "
-                f"w=a{args.pivot_alpha:.2f}/b{args.pivot_beta:.2f}/u{args.pivot_gamma:.2f}/g{args.pivot_delta:.2f}, "
-                f"lambda={args.pivot_lambda:.2f}, mu0={args.pivot_mu0:.2f}, tau={args.pivot_tau:.2f}, "
-                f"budget_scale={args.pivot_budget_scale:.3f}, cand={args.pivot_candidate_factor:.1f}x/"
-                f"{args.pivot_max_candidates}, surprise_topk={args.pivot_surprise_topk}, "
-                f"minpf={args.pivot_min_keep_per_frame}, fuse={args.pivot_use_fuse}"
-            )
-        if ours_phase_name == "wavevault":
-            print(
-                "WAVE-VAULT config: "
-                f"anchor={args.wave_anchor_ratio:.2f}, sim_thr={args.wave_sim_threshold:.2f}, "
-                f"budget_scale={args.wave_budget_scale:.3f}, cand={args.wave_candidate_factor:.1f}x/"
-                f"{args.wave_max_candidates}, intrinsic={args.wave_intrinsic_weight:.3f}/"
-                f"{args.wave_vault_intrinsic_weight:.3f}, q_floor={args.wave_q_floor:.3f}, drift=0"
-            )
-            print(
-                "WAVE learned value: "
-                f"ckpt={args.learn_selector_ckpt or '<off>'}, blend={args.learn_score_blend:.2f}, "
-                f"qaware={args.learn_qaware}, density_topk={args.learn_density_topk}"
-            )
     if args.run_graphvid:
         print(
             "GraphVID config: "
@@ -3491,16 +2837,6 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"scene_thr={args.graft_scene_threshold:.2f}, minpf={args.graft_min_tokens_per_frame}, "
             f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}, "
             f"score={args.graft_score_preset}, dur_aware={args.graft_duration_aware}"
-        )
-    if args.run_cats:
-        print(
-            "CATS config  : "
-            f"adts={args.cats_adts_mode}, beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
-            f"high_bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
-            f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
-            f"anchor_w={args.cats_anchor_self_weight:.2f}, "
-            f"adaptive_budget={args.cats_adaptive_adts_budget}, minpf={args.cats_frame_budget_min}, "
-            f"temp={args.cats_frame_budget_temperature:.2f}"
         )
     print(SEPARATOR)
 
@@ -3570,81 +2906,6 @@ def _print_summary(summary: dict[str, Any]):
         graft_radius_rej_mean = phase.get("graft_radius_rejected", {}).get("mean")
         graft_capacity_rej_mean = phase.get("graft_capacity_rejected", {}).get("mean")
         graft_same_frame_rej_mean = phase.get("graft_same_frame_rejected", {}).get("mean")
-        cats_selected_mean = phase.get("cats_selected_tokens", {}).get("mean")
-        cats_sink_mean = phase.get("cats_sink_merges", {}).get("mean")
-        cats_residual_mean = phase.get("cats_residual_merges", {}).get("mean")
-        cats_mutual_rej_mean = phase.get("cats_mutual_rejected", {}).get("mean")
-        cats_margin_rej_mean = phase.get("cats_margin_rejected", {}).get("mean")
-        cats_threshold_rej_mean = phase.get("cats_threshold_rejected", {}).get("mean")
-        cats_retained_mean = phase.get("cats_retained_residual_tokens", {}).get("mean")
-        cats_before_mean = phase.get("cats_spatial_tokens_before", {}).get("mean")
-        cats_after_mean = phase.get("cats_spatial_tokens_after", {}).get("mean")
-        cats_sim_mean = phase.get("cats_mean_merge_sim", {}).get("mean")
-        cats_margin_mean = phase.get("cats_mean_margin", {}).get("mean")
-        dyn_selected_mean = phase.get("dyn_selected_tokens", {}).get("mean")
-        dyn_budget_min_mean = phase.get("dyn_budget_min", {}).get("mean")
-        dyn_budget_max_mean = phase.get("dyn_budget_max", {}).get("mean")
-        dyn_budget_std_mean = phase.get("dyn_budget_std", {}).get("mean")
-        dyn_sink_mean = phase.get("dyn_sink_merges", {}).get("mean")
-        dyn_residual_mean = phase.get("dyn_residual_merges", {}).get("mean")
-        dyn_retained_mean = phase.get("dyn_retained_residual_tokens", {}).get("mean")
-        dyn_before_mean = phase.get("dyn_spatial_tokens_before", {}).get("mean")
-        dyn_after_mean = phase.get("dyn_spatial_tokens_after", {}).get("mean")
-        dyn_sim_mean = phase.get("dyn_mean_merge_sim", {}).get("mean")
-        dyn_debias_mean = phase.get("dyn_similarity_debias_active", {}).get("mean")
-        dyn_sink_active_mean = phase.get("dyn_sink_active", {}).get("mean")
-        dyn_weighted_mean = phase.get("dyn_weighted_active", {}).get("mean")
-        dyn_density_frame_mean = phase.get("dyn_density_frame_mean", {}).get("mean")
-        dyn_event_chunk_mean = phase.get("dyn_event_chunk_mean", {}).get("mean")
-        dyn_motion_frame_mean = phase.get("dyn_motion_frame_mean", {}).get("mean")
-        hedge_budget_mean = phase.get("hedge_residual_budget", {}).get("mean")
-        hedge_stable_cand_mean = phase.get("hedge_stable_candidates", {}).get("mean")
-        hedge_evidence_cand_mean = phase.get("hedge_evidence_candidates", {}).get("mean")
-        hedge_stable_sel_mean = phase.get("hedge_stable_selected", {}).get("mean")
-        hedge_evidence_sel_mean = phase.get("hedge_evidence_selected", {}).get("mean")
-        hedge_floor_mean = phase.get("hedge_stable_floor_ratio", {}).get("mean")
-        hedge_div_mean = phase.get("hedge_diversity_weight", {}).get("mean")
-        pivot_target_mean = phase.get("pivot_target_tokens", {}).get("mean")
-        pivot_selected_mean = phase.get("pivot_selected_tokens", {}).get("mean")
-        pivot_candidate_mean = phase.get("pivot_candidate_count", {}).get("mean")
-        pivot_fuse_mean = phase.get("pivot_use_fuse", {}).get("mean")
-        pivot_scale_mean = phase.get("pivot_budget_scale", {}).get("mean")
-        pivot_avg_cluster_mean = phase.get("pivot_avg_cluster_size", {}).get("mean")
-        pivot_max_cluster_mean = phase.get("pivot_max_cluster_size", {}).get("mean")
-        pivot_coverage_mean = phase.get("pivot_coverage_mean", {}).get("mean")
-        pivot_utility_mean = phase.get("pivot_selected_utility_mean", {}).get("mean")
-        pivot_bridge_mean = phase.get("pivot_bridge_mean", {}).get("mean")
-        pivot_surprise_mean = phase.get("pivot_surprise_mean", {}).get("mean")
-        pivot_background_mean = phase.get("pivot_background_mean", {}).get("mean")
-        wave_target_mean = phase.get("wave_target_tokens", {}).get("mean")
-        wave_anchor_mean = phase.get("wave_anchor_tokens", {}).get("mean")
-        wave_vault_mean = phase.get("wave_vault_tokens", {}).get("mean")
-        wave_candidate_mean = phase.get("wave_candidate_count", {}).get("mean")
-        wave_anchor_ratio_mean = phase.get("wave_anchor_ratio", {}).get("mean")
-        wave_thr_mean = phase.get("wave_sim_threshold", {}).get("mean")
-        wave_scale_mean = phase.get("wave_budget_scale", {}).get("mean")
-        wave_intrinsic_mean = phase.get("wave_intrinsic_weight", {}).get("mean")
-        wave_vault_intrinsic_mean = phase.get("wave_vault_intrinsic_weight", {}).get("mean")
-        wave_q_floor_mean = phase.get("wave_q_floor", {}).get("mean")
-        wave_coverage_mean = phase.get("wave_coverage_mean", {}).get("mean")
-        wave_residual_mean = phase.get("wave_residual_mean", {}).get("mean")
-        wave_anchor_utility_mean = phase.get("wave_anchor_utility_mean", {}).get("mean")
-        wave_vault_residual_mean = phase.get("wave_vault_residual_mean", {}).get("mean")
-        wave_drift_mean = phase.get("wave_anchor_drift", {}).get("mean")
-        wave_learn_active_mean = phase.get("wave_learn_active", {}).get("mean")
-        wave_learn_blend_mean = phase.get("wave_learn_blend", {}).get("mean")
-        wave_learn_score_mean = phase.get("wave_learn_score_mean", {}).get("mean")
-        wave_learn_score_std_mean = phase.get("wave_learn_score_std", {}).get("mean")
-        learn_selected_mean = phase.get("learn_selected_tokens", {}).get("mean")
-        learn_stable_mean = phase.get("learn_stable_tokens", {}).get("mean")
-        learn_selector_mean = phase.get("learn_selector_tokens", {}).get("mean")
-        learn_qaware_mean = phase.get("learn_qaware_active", {}).get("mean")
-        learn_score_mean = phase.get("learn_score_mean", {}).get("mean")
-        learn_score_std_mean = phase.get("learn_score_std", {}).get("mean")
-        learn_question_mean = phase.get("learn_question_mean", {}).get("mean")
-        learn_question_topk_mean = phase.get("learn_question_topk_mean", {}).get("mean")
-        learn_question_contrast_mean = phase.get("learn_question_contrast_mean", {}).get("mean")
-        learn_teacher_keep_mean = phase.get("learn_teacher_keep_ratio", {}).get("mean")
         red_mean = phase["visual_token_reduction_ratio"]["mean"]
         vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
@@ -3730,109 +2991,6 @@ def _print_summary(summary: dict[str, Any]):
                 f"{(graft_mutual_rej_mean or 0.0):.2f}/{(graft_radius_rej_mean or 0.0):.2f}/"
                 f"{(graft_capacity_rej_mean or 0.0):.2f}/{(graft_same_frame_rej_mean or 0.0):.2f}"
             )
-        if cats_selected_mean is not None:
-            print(
-                "  cats selected/sink/residual/retained mean: "
-                f"{cats_selected_mean:.2f}/{(cats_sink_mean or 0.0):.2f}/"
-                f"{(cats_residual_mean or 0.0):.2f}/{(cats_retained_mean or 0.0):.2f}"
-            )
-            print(
-                "  cats reject thr/mutual/margin and spatial pre-post mean: "
-                f"{(cats_threshold_rej_mean or 0.0):.2f}/{(cats_mutual_rej_mean or 0.0):.2f}/"
-                f"{(cats_margin_rej_mean or 0.0):.2f} "
-                f"{(cats_before_mean or 0.0):.2f}->{(cats_after_mean or 0.0):.2f}"
-            )
-        if cats_sim_mean is not None:
-            print(f"  cats merge sim/margin mean: {cats_sim_mean:.4f}/{(cats_margin_mean or 0.0):.4f}")
-        if dyn_selected_mean is not None:
-            print(
-                "  dyn selected/budget min-max-std mean: "
-                f"{dyn_selected_mean:.2f}/{(dyn_budget_min_mean or 0.0):.2f}-"
-                f"{(dyn_budget_max_mean or 0.0):.2f}-{(dyn_budget_std_mean or 0.0):.2f}"
-            )
-            if dyn_density_frame_mean is not None:
-                print(
-                    "  dyn density/event/motion frame score mean: "
-                    f"{dyn_density_frame_mean:.3f}/{(dyn_event_chunk_mean or 0.0):.3f}/"
-                    f"{(dyn_motion_frame_mean or 0.0):.3f}"
-                )
-            print(
-                "  dyn sink/residual/retained and spatial pre-post mean: "
-                f"{(dyn_sink_mean or 0.0):.2f}/{(dyn_residual_mean or 0.0):.2f}/"
-                f"{(dyn_retained_mean or 0.0):.2f} "
-                f"{(dyn_before_mean or 0.0):.2f}->{(dyn_after_mean or 0.0):.2f}"
-            )
-            print(
-                "  dyn debias/sink/weighted active and merge sim mean: "
-                f"{(dyn_debias_mean or 0.0):.2f}/{(dyn_sink_active_mean or 0.0):.2f}/"
-                f"{(dyn_weighted_mean or 0.0):.2f}/{(dyn_sim_mean or 0.0):.4f}"
-            )
-        if hedge_budget_mean is not None:
-            print(
-                "  hedge residual budget/candidates stable+evidence/selected stable+evidence mean: "
-                f"{hedge_budget_mean:.2f}/{(hedge_stable_cand_mean or 0.0):.2f}+"
-                f"{(hedge_evidence_cand_mean or 0.0):.2f}/{(hedge_stable_sel_mean or 0.0):.2f}+"
-                f"{(hedge_evidence_sel_mean or 0.0):.2f}"
-            )
-            print(
-                "  hedge floor/diversity mean: "
-                f"{(hedge_floor_mean or 0.0):.2f}/{(hedge_div_mean or 0.0):.2f}"
-            )
-        if pivot_target_mean is not None:
-            print(
-                "  pivot target/selected/candidates/fuse/scale mean: "
-                f"{pivot_target_mean:.2f}/{(pivot_selected_mean or 0.0):.2f}/"
-                f"{(pivot_candidate_mean or 0.0):.2f}/{(pivot_fuse_mean or 0.0):.2f}/"
-                f"{(pivot_scale_mean or 0.0):.3f}"
-            )
-            print(
-                "  pivot cluster/coverage/utility/bridge-surprise-bg mean: "
-                f"{(pivot_avg_cluster_mean or 0.0):.2f}/{(pivot_max_cluster_mean or 0.0):.2f}/"
-                f"{(pivot_coverage_mean or 0.0):.4f}/{(pivot_utility_mean or 0.0):.4f}/"
-                f"{(pivot_bridge_mean or 0.0):.4f}-{(pivot_surprise_mean or 0.0):.4f}-"
-                f"{(pivot_background_mean or 0.0):.4f}"
-            )
-        if wave_target_mean is not None:
-            print(
-                "  wave target/anchors/vault/candidates mean: "
-                f"{wave_target_mean:.2f}/{(wave_anchor_mean or 0.0):.2f}/"
-                f"{(wave_vault_mean or 0.0):.2f}/{(wave_candidate_mean or 0.0):.2f}"
-            )
-            print(
-                "  wave ratio/thr/scale/coverage/residual/drift mean: "
-                f"{(wave_anchor_ratio_mean or 0.0):.2f}/{(wave_thr_mean or 0.0):.2f}/"
-                f"{(wave_scale_mean or 0.0):.3f}/{(wave_coverage_mean or 0.0):.4f}/"
-                f"{(wave_residual_mean or 0.0):.4f}/{(wave_drift_mean or 0.0):.4f}"
-            )
-            print(
-                "  wave intrinsic/vault_intrinsic/q_floor mean: "
-                f"{(wave_intrinsic_mean or 0.0):.4f}/{(wave_vault_intrinsic_mean or 0.0):.4f}/"
-                f"{(wave_q_floor_mean or 0.0):.4f}"
-            )
-            print(
-                "  wave anchor utility/vault residual mean: "
-                f"{(wave_anchor_utility_mean or 0.0):.4f}/{(wave_vault_residual_mean or 0.0):.6f}"
-            )
-            print(
-                "  wave learned active/blend/score mean-std: "
-                f"{(wave_learn_active_mean or 0.0):.2f}/{(wave_learn_blend_mean or 0.0):.2f}/"
-                f"{(wave_learn_score_mean or 0.0):.4f}-{(wave_learn_score_std_mean or 0.0):.4f}"
-            )
-        if learn_selected_mean is not None:
-            print(
-                "  learn selected stable/selector/qaware score mean/std: "
-                f"{learn_selected_mean:.2f}/{(learn_stable_mean or 0.0):.2f}/"
-                f"{(learn_selector_mean or 0.0):.2f}/{(learn_qaware_mean or 0.0):.2f} "
-                f"{(learn_score_mean or 0.0):.4f}/{(learn_score_std_mean or 0.0):.4f}"
-            )
-            if learn_question_mean is not None:
-                print(
-                    "  learn question/topk/contrast mean: "
-                    f"{learn_question_mean:.4f}/{(learn_question_topk_mean or 0.0):.4f}/"
-                    f"{(learn_question_contrast_mean or 0.0):.4f}"
-                )
-        if learn_teacher_keep_mean is not None:
-            print(f"  learn teacher keep ratio mean: {learn_teacher_keep_mean:.4f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -3941,16 +3099,13 @@ def _print_summary(summary: dict[str, Any]):
 
 
 def run(args: BenchmarkArgs):
-    if args.run_dynflashvid:
-        args.run_ours = True
-        args.compression_variant = "dynflashvid"
     ours_phase_name = _ours_phase_key(args)
     ours_output_path = _ours_output_path(args, ours_phase_name)
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
-    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid or args.run_graftvid or args.run_cats):
-        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid/run_graftvid/run_cats")
+    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid or args.run_graftvid):
+        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid/run_graftvid")
 
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
@@ -3978,7 +3133,6 @@ def run(args: BenchmarkArgs):
         + int(args.run_ours)
         + int(args.run_graphvid)
         + int(args.run_graftvid)
-        + int(args.run_cats)
     )
     phase_idx = 1
     def _acquire_phase_bundle():
@@ -4100,32 +3254,6 @@ def run(args: BenchmarkArgs):
             _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
-    if args.run_cats:
-        print(f"\nPhase {phase_idx}/{total_phases}: CATS-FlashVID ...")
-        print(
-            "[cats-active] "
-            f"adts={args.cats_adts_mode}, beta={args.cats_adts_beta:.3f}, margin={args.cats_margin_threshold:.3f}, "
-            f"bonus={args.cats_high_conf_bonus:.3f}, mutual={args.cats_mutual_nn}, "
-            f"attn_w={args.cats_confidence_attn_weight:.2f}, sim_w={args.cats_confidence_sim_weight:.2f}, "
-            f"anchor_w={args.cats_anchor_self_weight:.2f}, "
-            f"adaptive_budget={args.cats_adaptive_adts_budget}"
-        )
-        phase_bundle = _acquire_phase_bundle()
-        phase_backend = phase_bundle["backend"]
-        phase_bundle["model"] = _apply_cats(phase_bundle["model"], args, phase_backend)
-        try:
-            _run_phase(
-                model_bundle=phase_bundle,
-                args=args,
-                samples=samples,
-                phase_name="CATS",
-                use_acceleration=True,
-                output_path=args.cats_output,
-            )
-        finally:
-            _release_phase_bundle(phase_bundle)
-        phase_idx += 1
-
     if args.run_ours:
         ours_display_name = _phase_display_name(ours_phase_name)
         print(f"\nPhase {phase_idx}/{total_phases}: {ours_display_name} ...")
@@ -4162,7 +3290,6 @@ def run(args: BenchmarkArgs):
     ours_records = None
     graphvid_records = None
     graftvid_records = None
-    cats_records = None
     if args.run_baseline:
         baseline_records = _read_jsonl(args.baseline_output)
         summary["baseline"] = _summarize_phase(baseline_records)
@@ -4178,9 +3305,6 @@ def run(args: BenchmarkArgs):
     if args.run_graftvid:
         graftvid_records = _read_jsonl(args.graftvid_output)
         summary["graftvid"] = _summarize_phase(graftvid_records)
-    if args.run_cats:
-        cats_records = _read_jsonl(args.cats_output)
-        summary["cats"] = _summarize_phase(cats_records)
 
     if baseline_records is not None and flashvid_records is not None:
         summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
@@ -4217,13 +3341,6 @@ def run(args: BenchmarkArgs):
             anchor_name="flashvid",
             target_name="graftvid",
         )
-    if flashvid_records is not None and cats_records is not None:
-        summary["comparison"]["flashvid_vs_cats"] = _summarize_pairwise_comparison(
-            flashvid_records,
-            cats_records,
-            anchor_name="flashvid",
-            target_name="cats",
-        )
     _add_duration_breakdown(
         summary,
         baseline_records=baseline_records,
@@ -4232,7 +3349,6 @@ def run(args: BenchmarkArgs):
         ours_phase_name=ours_phase_name,
         graphvid_records=graphvid_records,
         graftvid_records=graftvid_records,
-        cats_records=cats_records,
     )
 
     summary_path = Path(args.summary_output_json)

@@ -154,79 +154,6 @@ def flashvid(
     graft_long_split_radius_eps: Optional[float] = None,
     graft_long_spatial_penalty: Optional[float] = None,
     graft_long_scene_threshold: Optional[float] = None,
-    cats_adts_mode: str = "cats",
-    cats_adts_beta: float = 0.05,
-    cats_margin_threshold: float = 0.03,
-    cats_high_conf_bonus: float = 0.05,
-    cats_mutual_nn: bool = True,
-    cats_confidence_attn_weight: float = 0.75,
-    cats_confidence_sim_weight: float = 1.0,
-    cats_anchor_self_weight: float = 1.0,
-    cats_adaptive_adts_budget: bool = False,
-    cats_frame_budget_min: int = 1,
-    cats_frame_budget_temperature: float = 0.7,
-    dyn_adaptive_adts_budget: bool = True,
-    dyn_budget_strength: float = 0.45,
-    dyn_budget_temperature: float = 0.75,
-    dyn_frame_budget_min_ratio: float = 0.50,
-    dyn_frame_budget_max_ratio: float = 1.75,
-    dyn_boundary_boost: float = 0.08,
-    dyn_adts_beta: float = 0.05,
-    dyn_attn_weight: float = 0.50,
-    dyn_event_weight: float = 0.30,
-    dyn_novelty_weight: float = 0.15,
-    dyn_detail_weight: float = 0.05,
-    dyn_density_weight: float = 0.15,
-    dyn_density_topk: int = 8,
-    dyn_event_chunk_radius: int = 2,
-    dyn_frame_event_weight: float = 0.30,
-    dyn_frame_novelty_weight: float = 0.25,
-    dyn_frame_attn_weight: float = 0.20,
-    dyn_frame_density_weight: float = 0.20,
-    dyn_frame_detail_weight: float = 0.05,
-    dyn_similarity_debias: bool = True,
-    dyn_debias_frame_weight: float = 0.35,
-    dyn_debias_global_weight: float = 0.20,
-    dyn_sink_tstm: bool = False,
-    dyn_mutual_nn: bool = False,
-    dyn_margin_threshold: float = 0.0,
-    dyn_high_conf_bonus: float = 0.05,
-    dyn_weighted_merge: bool = False,
-    dyn_confidence_attn_weight: float = 0.50,
-    dyn_confidence_sim_weight: float = 0.50,
-    learn_selector_ckpt: str = "",
-    learn_qaware: bool = True,
-    learn_stable_floor_ratio: float = 0.75,
-    learn_score_blend: float = 0.35,
-    learn_q_relevance_weight: float = 0.35,
-    learn_density_topk: int = 8,
-    learn_collect_teacher: bool = False,
-    hedge_stable_floor_ratio: float = 0.85,
-    hedge_diversity_weight: float = 0.04,
-    hedge_stable_bias: float = 0.05,
-    hedge_evidence_bias: float = 0.0,
-    hedge_max_mmr_candidates: int = 2048,
-    pivot_alpha: float = 0.35,
-    pivot_beta: float = 0.25,
-    pivot_gamma: float = 0.30,
-    pivot_delta: float = 0.10,
-    pivot_lambda: float = 0.40,
-    pivot_mu0: float = 1.0,
-    pivot_tau: float = 1.0,
-    pivot_budget_scale: float = 1.0,
-    pivot_candidate_factor: float = 4.0,
-    pivot_max_candidates: int = 2048,
-    pivot_surprise_topk: int = 8,
-    pivot_min_keep_per_frame: int = 0,
-    pivot_use_fuse: bool = True,
-    wave_anchor_ratio: float = 0.80,
-    wave_sim_threshold: float = 0.55,
-    wave_budget_scale: float = 1.0,
-    wave_candidate_factor: float = 2.0,
-    wave_max_candidates: int = 1024,
-    wave_intrinsic_weight: float = 0.01,
-    wave_vault_intrinsic_weight: float = 0.0,
-    wave_q_floor: float = 0.03,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -452,11 +379,6 @@ def flashvid(
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
-            "dynflashvid" keeps FlashVID's budget but redistributes ADTS tokens and debiases TSTM;
-            "learnflashvid" keeps FlashVID's merge path but fills part of ADTS with a learned QA-aware selector;
-            "hedgevid" freezes FlashVID ADTS and selects residuals from stable/evidence pools;
-            "pivotfuse" selects evidence pivots and fuses residual evidence into them;
-            "wavevault" selects invariant anchors and residual vault tokens without drift;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -589,22 +511,12 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse|wavevault")
+    if variant not in ("flashvid", "talon", "graphvid", "graftvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|graftvid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
         temporal_merge_mode = "graft"
-    elif variant == "cats":
-        temporal_merge_mode = "cats"
-    elif variant == "dynflashvid":
-        temporal_merge_mode = "dynflashvid"
-    elif variant == "learnflashvid":
-        temporal_merge_mode = "learnflashvid"
-    elif variant == "pivotfuse":
-        temporal_merge_mode = "pivotfuse"
-    elif variant == "wavevault":
-        temporal_merge_mode = "wavevault"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -677,79 +589,6 @@ def flashvid(
         graft_long_split_radius_eps=graft_long_split_radius_eps,
         graft_long_spatial_penalty=graft_long_spatial_penalty,
         graft_long_scene_threshold=graft_long_scene_threshold,
-        cats_adts_mode=cats_adts_mode,
-        cats_adts_beta=cats_adts_beta,
-        cats_margin_threshold=cats_margin_threshold,
-        cats_high_conf_bonus=cats_high_conf_bonus,
-        cats_mutual_nn=cats_mutual_nn,
-        cats_confidence_attn_weight=cats_confidence_attn_weight,
-        cats_confidence_sim_weight=cats_confidence_sim_weight,
-        cats_anchor_self_weight=cats_anchor_self_weight,
-        cats_adaptive_adts_budget=cats_adaptive_adts_budget,
-        cats_frame_budget_min=cats_frame_budget_min,
-        cats_frame_budget_temperature=cats_frame_budget_temperature,
-        dyn_adaptive_adts_budget=dyn_adaptive_adts_budget,
-        dyn_budget_strength=dyn_budget_strength,
-        dyn_budget_temperature=dyn_budget_temperature,
-        dyn_frame_budget_min_ratio=dyn_frame_budget_min_ratio,
-        dyn_frame_budget_max_ratio=dyn_frame_budget_max_ratio,
-        dyn_boundary_boost=dyn_boundary_boost,
-        dyn_adts_beta=dyn_adts_beta,
-        dyn_attn_weight=dyn_attn_weight,
-        dyn_event_weight=dyn_event_weight,
-        dyn_novelty_weight=dyn_novelty_weight,
-        dyn_detail_weight=dyn_detail_weight,
-        dyn_density_weight=dyn_density_weight,
-        dyn_density_topk=dyn_density_topk,
-        dyn_event_chunk_radius=dyn_event_chunk_radius,
-        dyn_frame_event_weight=dyn_frame_event_weight,
-        dyn_frame_novelty_weight=dyn_frame_novelty_weight,
-        dyn_frame_attn_weight=dyn_frame_attn_weight,
-        dyn_frame_density_weight=dyn_frame_density_weight,
-        dyn_frame_detail_weight=dyn_frame_detail_weight,
-        dyn_similarity_debias=dyn_similarity_debias,
-        dyn_debias_frame_weight=dyn_debias_frame_weight,
-        dyn_debias_global_weight=dyn_debias_global_weight,
-        dyn_sink_tstm=dyn_sink_tstm,
-        dyn_mutual_nn=dyn_mutual_nn,
-        dyn_margin_threshold=dyn_margin_threshold,
-        dyn_high_conf_bonus=dyn_high_conf_bonus,
-        dyn_weighted_merge=dyn_weighted_merge,
-        dyn_confidence_attn_weight=dyn_confidence_attn_weight,
-        dyn_confidence_sim_weight=dyn_confidence_sim_weight,
-        learn_selector_ckpt=learn_selector_ckpt,
-        learn_qaware=learn_qaware,
-        learn_stable_floor_ratio=learn_stable_floor_ratio,
-        learn_score_blend=learn_score_blend,
-        learn_q_relevance_weight=learn_q_relevance_weight,
-        learn_density_topk=learn_density_topk,
-        learn_collect_teacher=learn_collect_teacher,
-        hedge_stable_floor_ratio=hedge_stable_floor_ratio,
-        hedge_diversity_weight=hedge_diversity_weight,
-        hedge_stable_bias=hedge_stable_bias,
-        hedge_evidence_bias=hedge_evidence_bias,
-        hedge_max_mmr_candidates=hedge_max_mmr_candidates,
-        pivot_alpha=pivot_alpha,
-        pivot_beta=pivot_beta,
-        pivot_gamma=pivot_gamma,
-        pivot_delta=pivot_delta,
-        pivot_lambda=pivot_lambda,
-        pivot_mu0=pivot_mu0,
-        pivot_tau=pivot_tau,
-        pivot_budget_scale=pivot_budget_scale,
-        pivot_candidate_factor=pivot_candidate_factor,
-        pivot_max_candidates=pivot_max_candidates,
-        pivot_surprise_topk=pivot_surprise_topk,
-        pivot_min_keep_per_frame=pivot_min_keep_per_frame,
-        pivot_use_fuse=pivot_use_fuse,
-        wave_anchor_ratio=wave_anchor_ratio,
-        wave_sim_threshold=wave_sim_threshold,
-        wave_budget_scale=wave_budget_scale,
-        wave_candidate_factor=wave_candidate_factor,
-        wave_max_candidates=wave_max_candidates,
-        wave_intrinsic_weight=wave_intrinsic_weight,
-        wave_vault_intrinsic_weight=wave_vault_intrinsic_weight,
-        wave_q_floor=wave_q_floor,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

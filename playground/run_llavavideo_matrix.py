@@ -38,22 +38,7 @@ def _parse_methods(text: str) -> set[str]:
         "graphvid": "graphvid",
         "graft": "graftvid",
         "graftvid": "graftvid",
-        "cats": "cats",
-        "catsvid": "cats",
-        "dyn": "dynflashvid",
-        "dynflash": "dynflashvid",
-        "dynflashvid": "dynflashvid",
-        "learn": "learnflashvid",
-        "learnflash": "learnflashvid",
-        "learnflashvid": "learnflashvid",
-        "hedge": "hedgevid",
-        "hedgevid": "hedgevid",
-        "pivot": "pivotfuse",
-        "pivotfuse": "pivotfuse",
-        "pivot-fuse": "pivotfuse",
-        "wave": "wavevault",
-        "wavevault": "wavevault",
-        "wave-vault": "wavevault",
+        "talon": "talon",
     }
     methods: set[str] = set()
     for part in str(text).split(","):
@@ -165,9 +150,6 @@ def _build_command(
     total_limit: int,
     methods: set[str],
 ) -> tuple[list[str], Path]:
-    ours_like = sorted(methods & {"hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"})
-    if len(ours_like) > 1:
-        raise ValueError(f"Only one run_ours-style method can be launched at once; got {ours_like}")
     run_tag = f"{args.tag}_r{rate_label}_videomme{total_limit}"
     summary_path = REPO_ROOT / "logs" / "efficiency" / "parallel" / run_tag / f"{run_tag}_summary.json"
     cmd = [
@@ -204,7 +186,7 @@ def _build_command(
         str(args.gpu_cap),
         "--tag",
         run_tag,
-        "--run_ours" if ("hedgevid" in methods or "dynflashvid" in methods or "learnflashvid" in methods or "pivotfuse" in methods or "wavevault" in methods) else "--no-run_ours",
+        "--run_ours" if "talon" in methods else "--no-run_ours",
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -251,17 +233,8 @@ def _build_command(
     cmd.append("--run_flashvid" if "flashvid" in methods else "--no-run_flashvid")
     cmd.append("--run_graphvid" if "graphvid" in methods else "--no-run_graphvid")
     cmd.append("--run_graftvid" if "graftvid" in methods else "--no-run_graftvid")
-    cmd.append("--run_cats" if "cats" in methods else "--no-run_cats")
-    if "hedgevid" in methods:
-        cmd.extend(["--compression_variant", "hedgevid"])
-    if "dynflashvid" in methods:
-        cmd.extend(["--compression_variant", "dynflashvid"])
-    if "learnflashvid" in methods:
-        cmd.extend(["--compression_variant", "learnflashvid"])
-    if "pivotfuse" in methods:
-        cmd.extend(["--compression_variant", "pivotfuse"])
-    if "wavevault" in methods:
-        cmd.extend(["--compression_variant", "wavevault"])
+    if "talon" in methods:
+        cmd.extend(["--compression_variant", "talon"])
     cmd.extend(
         [
             "--graft_temporal_topk",
@@ -315,101 +288,6 @@ def _build_command(
     cmd.append("--graft_adaptive_aggregation" if args.graft_adaptive_aggregation else "--no-graft_adaptive_aggregation")
     cmd.append("--graft_budget_correction" if args.graft_budget_correction else "--no-graft_budget_correction")
     cmd.append("--graft_input_is_residual" if args.graft_input_is_residual else "--no-graft_input_is_residual")
-    cmd.extend(
-        [
-            "--cats_adts_beta",
-            str(args.cats_adts_beta),
-            "--cats_adts_mode",
-            str(args.cats_adts_mode),
-            "--cats_margin_threshold",
-            str(args.cats_margin_threshold),
-            "--cats_high_conf_bonus",
-            str(args.cats_high_conf_bonus),
-            "--cats_confidence_attn_weight",
-            str(args.cats_confidence_attn_weight),
-            "--cats_confidence_sim_weight",
-            str(args.cats_confidence_sim_weight),
-            "--cats_anchor_self_weight",
-            str(args.cats_anchor_self_weight),
-            "--cats_frame_budget_min",
-            str(args.cats_frame_budget_min),
-            "--cats_frame_budget_temperature",
-            str(args.cats_frame_budget_temperature),
-        ]
-    )
-    cmd.append("--cats_mutual_nn" if args.cats_mutual_nn else "--no-cats_mutual_nn")
-    cmd.append("--cats_adaptive_adts_budget" if args.cats_adaptive_adts_budget else "--no-cats_adaptive_adts_budget")
-    cmd.extend(
-        [
-            "--hedge_stable_floor_ratio",
-            str(args.hedge_stable_floor_ratio),
-            "--hedge_diversity_weight",
-            str(args.hedge_diversity_weight),
-            "--hedge_stable_bias",
-            str(args.hedge_stable_bias),
-            "--hedge_evidence_bias",
-            str(args.hedge_evidence_bias),
-            "--hedge_max_mmr_candidates",
-            str(args.hedge_max_mmr_candidates),
-            "--pivot_alpha",
-            str(args.pivot_alpha),
-            "--pivot_beta",
-            str(args.pivot_beta),
-            "--pivot_gamma",
-            str(args.pivot_gamma),
-            "--pivot_delta",
-            str(args.pivot_delta),
-            "--pivot_lambda",
-            str(args.pivot_lambda),
-            "--pivot_mu0",
-            str(args.pivot_mu0),
-            "--pivot_tau",
-            str(args.pivot_tau),
-            "--pivot_budget_scale",
-            str(args.pivot_budget_scale),
-            "--pivot_candidate_factor",
-            str(args.pivot_candidate_factor),
-            "--pivot_max_candidates",
-            str(args.pivot_max_candidates),
-            "--pivot_surprise_topk",
-            str(args.pivot_surprise_topk),
-            "--pivot_min_keep_per_frame",
-            str(args.pivot_min_keep_per_frame),
-            "--wave_anchor_ratio",
-            str(args.wave_anchor_ratio),
-            "--wave_sim_threshold",
-            str(args.wave_sim_threshold),
-            "--wave_budget_scale",
-            str(args.wave_budget_scale),
-            "--wave_candidate_factor",
-            str(args.wave_candidate_factor),
-            "--wave_max_candidates",
-            str(args.wave_max_candidates),
-            "--wave_intrinsic_weight",
-            str(args.wave_intrinsic_weight),
-            "--wave_vault_intrinsic_weight",
-            str(args.wave_vault_intrinsic_weight),
-            "--wave_q_floor",
-            str(args.wave_q_floor),
-        ]
-    )
-    cmd.append("--pivot_use_fuse" if args.pivot_use_fuse else "--no-pivot_use_fuse")
-    cmd.extend(
-        [
-            "--learn_selector_ckpt",
-            str(args.learn_selector_ckpt),
-            "--learn_stable_floor_ratio",
-            str(args.learn_stable_floor_ratio),
-            "--learn_score_blend",
-            str(args.learn_score_blend),
-            "--learn_q_relevance_weight",
-            str(args.learn_q_relevance_weight),
-            "--learn_density_topk",
-            str(args.learn_density_topk),
-        ]
-    )
-    cmd.append("--learn_qaware" if args.learn_qaware else "--no-learn_qaware")
-    cmd.append("--learn_collect_teacher" if args.learn_collect_teacher else "--no-learn_collect_teacher")
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
     cmd.extend(args.extra_args)
@@ -427,101 +305,46 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     flash_tokens = _mean(summary, "flashvid", "compressed_visual_tokens")
     graph_tokens = _mean(summary, "graphvid", "compressed_visual_tokens")
     graft_tokens = _mean(summary, "graftvid", "compressed_visual_tokens")
-    cats_tokens = _mean(summary, "cats", "compressed_visual_tokens")
-    hedge_tokens = _first_not_none(_mean(summary, "hedgevid", "compressed_visual_tokens"), _mean(summary, "ours", "compressed_visual_tokens"))
-    dyn_tokens = _mean(summary, "dynflashvid", "compressed_visual_tokens")
-    learn_tokens = _mean(summary, "learnflashvid", "compressed_visual_tokens")
-    pivot_tokens = _mean(summary, "pivotfuse", "compressed_visual_tokens")
-    wave_tokens = _mean(summary, "wavevault", "compressed_visual_tokens")
+    talon_tokens = _mean(summary, "talon", "compressed_visual_tokens")
     flash_acc = _acc(summary, "flashvid")
     graph_acc = _acc(summary, "graphvid")
     graft_acc = _acc(summary, "graftvid")
-    cats_acc = _acc(summary, "cats")
-    hedge_acc = _first_not_none(_acc(summary, "hedgevid"), _acc(summary, "ours"))
-    dyn_acc = _acc(summary, "dynflashvid")
-    learn_acc = _acc(summary, "learnflashvid")
-    pivot_acc = _acc(summary, "pivotfuse")
-    wave_acc = _acc(summary, "wavevault")
+    talon_acc = _acc(summary, "talon")
     return {
         "retention_ratio": f"{rate_label.replace('p', '.')}%",
         "flashvid_acc": flash_acc,
         "graphvid_acc": graph_acc,
         "graftvid_acc": graft_acc,
-        "cats_acc": cats_acc,
-        "hedgevid_acc": hedge_acc,
-        "dynflashvid_acc": dyn_acc,
-        "learnflashvid_acc": learn_acc,
-        "pivotfuse_acc": pivot_acc,
-        "wavevault_acc": wave_acc,
+        "talon_acc": talon_acc,
         "acc_delta": None if flash_acc is None or graph_acc is None else graph_acc - flash_acc,
         "graft_acc_delta": None if flash_acc is None or graft_acc is None else graft_acc - flash_acc,
-        "cats_acc_delta": None if flash_acc is None or cats_acc is None else cats_acc - flash_acc,
-        "hedge_acc_delta": None if flash_acc is None or hedge_acc is None else hedge_acc - flash_acc,
-        "dyn_acc_delta": None if flash_acc is None or dyn_acc is None else dyn_acc - flash_acc,
-        "learn_acc_delta": None if flash_acc is None or learn_acc is None else learn_acc - flash_acc,
-        "pivot_acc_delta": None if flash_acc is None or pivot_acc is None else pivot_acc - flash_acc,
-        "wave_acc_delta": None if flash_acc is None or wave_acc is None else wave_acc - flash_acc,
+        "talon_acc_delta": None if flash_acc is None or talon_acc is None else talon_acc - flash_acc,
         "flashvid_short": _duration_acc(summary, "flashvid", "short"),
         "graphvid_short": _duration_acc(summary, "graphvid", "short"),
         "graftvid_short": _duration_acc(summary, "graftvid", "short"),
-        "cats_short": _duration_acc(summary, "cats", "short"),
-        "hedgevid_short": _first_not_none(_duration_acc(summary, "hedgevid", "short"), _duration_acc(summary, "ours", "short")),
-        "dynflashvid_short": _duration_acc(summary, "dynflashvid", "short"),
-        "learnflashvid_short": _duration_acc(summary, "learnflashvid", "short"),
-        "pivotfuse_short": _duration_acc(summary, "pivotfuse", "short"),
-        "wavevault_short": _duration_acc(summary, "wavevault", "short"),
+        "talon_short": _duration_acc(summary, "talon", "short"),
         "flashvid_medium": _duration_acc(summary, "flashvid", "medium"),
         "graphvid_medium": _duration_acc(summary, "graphvid", "medium"),
         "graftvid_medium": _duration_acc(summary, "graftvid", "medium"),
-        "cats_medium": _duration_acc(summary, "cats", "medium"),
-        "hedgevid_medium": _first_not_none(_duration_acc(summary, "hedgevid", "medium"), _duration_acc(summary, "ours", "medium")),
-        "dynflashvid_medium": _duration_acc(summary, "dynflashvid", "medium"),
-        "learnflashvid_medium": _duration_acc(summary, "learnflashvid", "medium"),
-        "pivotfuse_medium": _duration_acc(summary, "pivotfuse", "medium"),
-        "wavevault_medium": _duration_acc(summary, "wavevault", "medium"),
+        "talon_medium": _duration_acc(summary, "talon", "medium"),
         "flashvid_long": _duration_acc(summary, "flashvid", "long"),
         "graphvid_long": _duration_acc(summary, "graphvid", "long"),
         "graftvid_long": _duration_acc(summary, "graftvid", "long"),
-        "cats_long": _duration_acc(summary, "cats", "long"),
-        "hedgevid_long": _first_not_none(_duration_acc(summary, "hedgevid", "long"), _duration_acc(summary, "ours", "long")),
-        "dynflashvid_long": _duration_acc(summary, "dynflashvid", "long"),
-        "learnflashvid_long": _duration_acc(summary, "learnflashvid", "long"),
-        "pivotfuse_long": _duration_acc(summary, "pivotfuse", "long"),
-        "wavevault_long": _duration_acc(summary, "wavevault", "long"),
+        "talon_long": _duration_acc(summary, "talon", "long"),
         "flashvid_tokens": flash_tokens,
         "graphvid_tokens": graph_tokens,
         "graftvid_tokens": graft_tokens,
-        "cats_tokens": cats_tokens,
-        "hedgevid_tokens": hedge_tokens,
-        "dynflashvid_tokens": dyn_tokens,
-        "learnflashvid_tokens": learn_tokens,
-        "pivotfuse_tokens": pivot_tokens,
-        "wavevault_tokens": wave_tokens,
+        "talon_tokens": talon_tokens,
         "token_reduction": _comparison(summary, "visual_token_reduction"),
         "graft_token_reduction": _comparison(summary, "visual_token_reduction", target="graftvid"),
-        "cats_token_reduction": _comparison(summary, "visual_token_reduction", target="cats"),
-        "hedge_token_reduction": _comparison_any(summary, "visual_token_reduction", "hedgevid", "ours"),
-        "dyn_token_reduction": _comparison(summary, "visual_token_reduction", target="dynflashvid"),
-        "learn_token_reduction": _comparison(summary, "visual_token_reduction", target="learnflashvid"),
-        "pivot_token_reduction": _comparison(summary, "visual_token_reduction", target="pivotfuse"),
-        "wave_token_reduction": _comparison(summary, "visual_token_reduction", target="wavevault"),
+        "talon_token_reduction": _comparison(summary, "visual_token_reduction", target="talon"),
         "flashvid_latency_ms": _mean(summary, "flashvid", "latency_ms"),
         "graphvid_latency_ms": _mean(summary, "graphvid", "latency_ms"),
         "graftvid_latency_ms": _mean(summary, "graftvid", "latency_ms"),
-        "cats_latency_ms": _mean(summary, "cats", "latency_ms"),
-        "hedgevid_latency_ms": _first_not_none(_mean(summary, "hedgevid", "latency_ms"), _mean(summary, "ours", "latency_ms")),
-        "dynflashvid_latency_ms": _mean(summary, "dynflashvid", "latency_ms"),
-        "learnflashvid_latency_ms": _mean(summary, "learnflashvid", "latency_ms"),
-        "pivotfuse_latency_ms": _mean(summary, "pivotfuse", "latency_ms"),
-        "wavevault_latency_ms": _mean(summary, "wavevault", "latency_ms"),
+        "talon_latency_ms": _mean(summary, "talon", "latency_ms"),
         "latency_speedup": _comparison(summary, "latency_speedup"),
         "graft_latency_speedup": _comparison(summary, "latency_speedup", target="graftvid"),
-        "cats_latency_speedup": _comparison(summary, "latency_speedup", target="cats"),
-        "hedge_latency_speedup": _comparison_any(summary, "latency_speedup", "hedgevid", "ours"),
-        "dyn_latency_speedup": _comparison(summary, "latency_speedup", target="dynflashvid"),
-        "learn_latency_speedup": _comparison(summary, "latency_speedup", target="learnflashvid"),
-        "pivot_latency_speedup": _comparison(summary, "latency_speedup", target="pivotfuse"),
-        "wave_latency_speedup": _comparison(summary, "latency_speedup", target="wavevault"),
+        "talon_latency_speedup": _comparison(summary, "latency_speedup", target="talon"),
     }
 
 
@@ -535,81 +358,36 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "flashvid_acc",
         "graphvid_acc",
         "graftvid_acc",
-        "cats_acc",
-        "hedgevid_acc",
-        "dynflashvid_acc",
-        "learnflashvid_acc",
-        "pivotfuse_acc",
-        "wavevault_acc",
+        "talon_acc",
         "acc_delta",
         "graft_acc_delta",
-        "cats_acc_delta",
-        "hedge_acc_delta",
-        "dyn_acc_delta",
-        "learn_acc_delta",
-        "pivot_acc_delta",
-        "wave_acc_delta",
+        "talon_acc_delta",
         "flashvid_short",
         "graphvid_short",
         "graftvid_short",
-        "cats_short",
-        "hedgevid_short",
-        "dynflashvid_short",
-        "learnflashvid_short",
-        "pivotfuse_short",
-        "wavevault_short",
+        "talon_short",
         "flashvid_medium",
         "graphvid_medium",
         "graftvid_medium",
-        "cats_medium",
-        "hedgevid_medium",
-        "dynflashvid_medium",
-        "learnflashvid_medium",
-        "pivotfuse_medium",
-        "wavevault_medium",
+        "talon_medium",
         "flashvid_long",
         "graphvid_long",
         "graftvid_long",
-        "cats_long",
-        "hedgevid_long",
-        "dynflashvid_long",
-        "learnflashvid_long",
-        "pivotfuse_long",
-        "wavevault_long",
+        "talon_long",
         "flashvid_tokens",
         "graphvid_tokens",
         "graftvid_tokens",
-        "cats_tokens",
-        "hedgevid_tokens",
-        "dynflashvid_tokens",
-        "learnflashvid_tokens",
-        "pivotfuse_tokens",
-        "wavevault_tokens",
+        "talon_tokens",
         "token_reduction",
         "graft_token_reduction",
-        "cats_token_reduction",
-        "hedge_token_reduction",
-        "dyn_token_reduction",
-        "learn_token_reduction",
-        "pivot_token_reduction",
-        "wave_token_reduction",
+        "talon_token_reduction",
         "flashvid_latency_ms",
         "graphvid_latency_ms",
         "graftvid_latency_ms",
-        "cats_latency_ms",
-        "hedgevid_latency_ms",
-        "dynflashvid_latency_ms",
-        "learnflashvid_latency_ms",
-        "pivotfuse_latency_ms",
-        "wavevault_latency_ms",
+        "talon_latency_ms",
         "latency_speedup",
         "graft_latency_speedup",
-        "cats_latency_speedup",
-        "hedge_latency_speedup",
-        "dyn_latency_speedup",
-        "learn_latency_speedup",
-        "pivot_latency_speedup",
-        "wave_latency_speedup",
+        "talon_latency_speedup",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -620,77 +398,52 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
     lines = [
-        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | CATS Acc | HEDGE Acc | DYN Acc | WAVE Acc | G Delta | GRAFT Delta | CATS Delta | HEDGE Delta | DYN Delta | WAVE Delta | F Short | G Short | GRAFT Short | CATS Short | HEDGE Short | DYN Short | F Medium | G Medium | GRAFT Medium | CATS Medium | HEDGE Medium | DYN Medium | F Long | G Long | GRAFT Long | CATS Long | HEDGE Long | DYN Long | F Tokens | G Tokens | GRAFT Tokens | CATS Tokens | HEDGE Tokens | DYN Tokens | WAVE Tokens | G Token Red. | GRAFT Token Red. | CATS Token Red. | HEDGE Token Red. | DYN Token Red. | WAVE Token Red. | F Lat. | G Lat. | GRAFT Lat. | CATS Lat. | HEDGE Lat. | DYN Lat. | WAVE Lat. | G Speedup | GRAFT Speedup | CATS Speedup | HEDGE Speedup | DYN Speedup | WAVE Speedup |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | TALON Acc | G Delta | GRAFT Delta | TALON Delta | F Short | G Short | GRAFT Short | TALON Short | F Medium | G Medium | GRAFT Medium | TALON Medium | F Long | G Long | GRAFT Long | TALON Long | F Tokens | G Tokens | GRAFT Tokens | TALON Tokens | G Token Red. | GRAFT Token Red. | TALON Token Red. | F Lat. | G Lat. | GRAFT Lat. | TALON Lat. | G Speedup | GRAFT Speedup | TALON Speedup |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {r} | {fa} | {ga} | {gfa} | {ca} | {ha} | {da} | {wa} | {d} | {gd} | {cd} | {hd} | {dd} | {wd} | {fs} | {gs} | {gfs} | {cs} | {hs} | {ds} | {fm} | {gm} | {gfm} | {cm} | {hm} | {dm} | {fl} | {gl} | {gfl} | {cl} | {hl} | {dl} | {ft} | {gt} | {gft} | {ct} | {ht} | {dt} | {wt} | {tr} | {gtr} | {ctr} | {htr} | {dtr} | {wtr} | {flat} | {glat} | {gflat} | {clat} | {hlat} | {dlat} | {wlat} | {sp} | {gsp} | {csp} | {hsp} | {dsp} | {wsp} |".format(
+            "| {r} | {fa} | {ga} | {gfa} | {ta} | {d} | {gd} | {td} | {fs} | {gs} | {gfs} | {ts} | {fm} | {gm} | {gfm} | {tm} | {fl} | {gl} | {gfl} | {tl} | {ft} | {gt} | {gft} | {tt} | {tr} | {gtr} | {ttr} | {flat} | {glat} | {gflat} | {tlat} | {sp} | {gsp} | {tsp} |".format(
                 r=row["retention_ratio"],
                 fa=_fmt(row.get("flashvid_acc")),
                 ga=_fmt(row.get("graphvid_acc")),
                 gfa=_fmt(row.get("graftvid_acc")),
-                ca=_fmt(row.get("cats_acc")),
-                ha=_fmt(row.get("hedgevid_acc")),
-                da=_fmt(row.get("dynflashvid_acc")),
-                wa=_fmt(row.get("wavevault_acc")),
+                ta=_fmt(row.get("talon_acc")),
                 d=_fmt(row.get("acc_delta")),
                 gd=_fmt(row.get("graft_acc_delta")),
-                cd=_fmt(row.get("cats_acc_delta")),
-                hd=_fmt(row.get("hedge_acc_delta")),
-                dd=_fmt(row.get("dyn_acc_delta")),
-                wd=_fmt(row.get("wave_acc_delta")),
+                td=_fmt(row.get("talon_acc_delta")),
                 fs=_fmt(row.get("flashvid_short")),
                 gs=_fmt(row.get("graphvid_short")),
                 gfs=_fmt(row.get("graftvid_short")),
-                cs=_fmt(row.get("cats_short")),
-                hs=_fmt(row.get("hedgevid_short")),
-                ds=_fmt(row.get("dynflashvid_short")),
+                ts=_fmt(row.get("talon_short")),
                 fm=_fmt(row.get("flashvid_medium")),
                 gm=_fmt(row.get("graphvid_medium")),
                 gfm=_fmt(row.get("graftvid_medium")),
-                cm=_fmt(row.get("cats_medium")),
-                hm=_fmt(row.get("hedgevid_medium")),
-                dm=_fmt(row.get("dynflashvid_medium")),
+                tm=_fmt(row.get("talon_medium")),
                 fl=_fmt(row.get("flashvid_long")),
                 gl=_fmt(row.get("graphvid_long")),
                 gfl=_fmt(row.get("graftvid_long")),
-                cl=_fmt(row.get("cats_long")),
-                hl=_fmt(row.get("hedgevid_long")),
-                dl=_fmt(row.get("dynflashvid_long")),
+                tl=_fmt(row.get("talon_long")),
                 ft=_fmt(row.get("flashvid_tokens")),
                 gt=_fmt(row.get("graphvid_tokens")),
                 gft=_fmt(row.get("graftvid_tokens")),
-                ct=_fmt(row.get("cats_tokens")),
-                ht=_fmt(row.get("hedgevid_tokens")),
-                dt=_fmt(row.get("dynflashvid_tokens")),
-                wt=_fmt(row.get("wavevault_tokens")),
+                tt=_fmt(row.get("talon_tokens")),
                 tr=_fmt(row.get("token_reduction")),
                 gtr=_fmt(row.get("graft_token_reduction")),
-                ctr=_fmt(row.get("cats_token_reduction")),
-                htr=_fmt(row.get("hedge_token_reduction")),
-                dtr=_fmt(row.get("dyn_token_reduction")),
-                wtr=_fmt(row.get("wave_token_reduction")),
+                ttr=_fmt(row.get("talon_token_reduction")),
                 flat=_fmt(row.get("flashvid_latency_ms")),
                 glat=_fmt(row.get("graphvid_latency_ms")),
                 gflat=_fmt(row.get("graftvid_latency_ms")),
-                clat=_fmt(row.get("cats_latency_ms")),
-                hlat=_fmt(row.get("hedgevid_latency_ms")),
-                dlat=_fmt(row.get("dynflashvid_latency_ms")),
-                wlat=_fmt(row.get("wavevault_latency_ms")),
+                tlat=_fmt(row.get("talon_latency_ms")),
                 sp=_fmt(row.get("latency_speedup"), 3),
                 gsp=_fmt(row.get("graft_latency_speedup"), 3),
-                csp=_fmt(row.get("cats_latency_speedup"), 3),
-                hsp=_fmt(row.get("hedge_latency_speedup"), 3),
-                dsp=_fmt(row.get("dyn_latency_speedup"), 3),
-                wsp=_fmt(row.get("wave_latency_speedup"), 3),
+                tsp=_fmt(row.get("talon_latency_speedup"), 3),
             )
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[matrix] csv={csv_path}")
     print(f"[matrix] md={md_path}")
     print(f"[matrix] json={json_path}")
-
 
 def main() -> None:
     hf_home = os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home")
@@ -699,7 +452,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
-    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,cats,dynflashvid,learnflashvid,hedgevid,pivotfuse,wavevault.")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,talon.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")
@@ -761,50 +514,6 @@ def main() -> None:
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
-    parser.add_argument("--cats_adts_mode", default="cats", choices=["cats", "flashvid"])
-    parser.add_argument("--cats_adts_beta", type=float, default=0.05)
-    parser.add_argument("--cats_margin_threshold", type=float, default=0.03)
-    parser.add_argument("--cats_high_conf_bonus", type=float, default=0.05)
-    parser.add_argument("--cats_mutual_nn", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--cats_confidence_attn_weight", type=float, default=0.75)
-    parser.add_argument("--cats_confidence_sim_weight", type=float, default=1.0)
-    parser.add_argument("--cats_anchor_self_weight", type=float, default=1.0)
-    parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--cats_frame_budget_min", type=int, default=1)
-    parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)
-    parser.add_argument("--hedge_stable_floor_ratio", type=float, default=0.85)
-    parser.add_argument("--hedge_diversity_weight", type=float, default=0.04)
-    parser.add_argument("--hedge_stable_bias", type=float, default=0.05)
-    parser.add_argument("--hedge_evidence_bias", type=float, default=0.0)
-    parser.add_argument("--hedge_max_mmr_candidates", type=int, default=2048)
-    parser.add_argument("--pivot_alpha", type=float, default=0.35)
-    parser.add_argument("--pivot_beta", type=float, default=0.25)
-    parser.add_argument("--pivot_gamma", type=float, default=0.30)
-    parser.add_argument("--pivot_delta", type=float, default=0.10)
-    parser.add_argument("--pivot_lambda", type=float, default=0.40)
-    parser.add_argument("--pivot_mu0", type=float, default=1.0)
-    parser.add_argument("--pivot_tau", type=float, default=1.0)
-    parser.add_argument("--pivot_budget_scale", type=float, default=1.0)
-    parser.add_argument("--pivot_candidate_factor", type=float, default=4.0)
-    parser.add_argument("--pivot_max_candidates", type=int, default=2048)
-    parser.add_argument("--pivot_surprise_topk", type=int, default=8)
-    parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
-    parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
-    parser.add_argument("--wave_sim_threshold", type=float, default=0.55)
-    parser.add_argument("--wave_budget_scale", type=float, default=1.0)
-    parser.add_argument("--wave_candidate_factor", type=float, default=2.0)
-    parser.add_argument("--wave_max_candidates", type=int, default=1024)
-    parser.add_argument("--wave_intrinsic_weight", type=float, default=0.01)
-    parser.add_argument("--wave_vault_intrinsic_weight", type=float, default=0.0)
-    parser.add_argument("--wave_q_floor", type=float, default=0.03)
-    parser.add_argument("--learn_selector_ckpt", default="")
-    parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.75)
-    parser.add_argument("--learn_score_blend", type=float, default=0.35)
-    parser.add_argument("--learn_q_relevance_weight", type=float, default=0.35)
-    parser.add_argument("--learn_density_topk", type=int, default=8)
-    parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args, extra_args = parser.parse_known_args()

@@ -105,120 +105,6 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "0.25",
             "--adaptive_token_budget",
             "False",
-            "--dyn_adaptive_adts_budget",
-            _str_bool(args.dyn_adaptive_adts_budget),
-            "--dyn_budget_strength",
-            str(args.dyn_budget_strength),
-            "--dyn_budget_temperature",
-            str(args.dyn_budget_temperature),
-            "--dyn_frame_budget_min_ratio",
-            str(args.dyn_frame_budget_min_ratio),
-            "--dyn_frame_budget_max_ratio",
-            str(args.dyn_frame_budget_max_ratio),
-            "--dyn_boundary_boost",
-            str(args.dyn_boundary_boost),
-            "--dyn_adts_beta",
-            str(args.dyn_adts_beta),
-            "--dyn_attn_weight",
-            str(args.dyn_attn_weight),
-            "--dyn_event_weight",
-            str(args.dyn_event_weight),
-            "--dyn_novelty_weight",
-            str(args.dyn_novelty_weight),
-            "--dyn_detail_weight",
-            str(args.dyn_detail_weight),
-            "--dyn_density_weight",
-            str(args.dyn_density_weight),
-            "--dyn_density_topk",
-            str(args.dyn_density_topk),
-            "--dyn_event_chunk_radius",
-            str(args.dyn_event_chunk_radius),
-            "--dyn_frame_event_weight",
-            str(args.dyn_frame_event_weight),
-            "--dyn_frame_novelty_weight",
-            str(args.dyn_frame_novelty_weight),
-            "--dyn_frame_attn_weight",
-            str(args.dyn_frame_attn_weight),
-            "--dyn_frame_density_weight",
-            str(args.dyn_frame_density_weight),
-            "--dyn_frame_detail_weight",
-            str(args.dyn_frame_detail_weight),
-            "--dyn_similarity_debias",
-            _str_bool(args.dyn_similarity_debias),
-            "--dyn_debias_frame_weight",
-            str(args.dyn_debias_frame_weight),
-            "--dyn_debias_global_weight",
-            str(args.dyn_debias_global_weight),
-            "--dyn_sink_tstm",
-            _str_bool(args.dyn_sink_tstm),
-            "--dyn_mutual_nn",
-            _str_bool(args.dyn_mutual_nn),
-            "--dyn_margin_threshold",
-            str(args.dyn_margin_threshold),
-            "--dyn_high_conf_bonus",
-            str(args.dyn_high_conf_bonus),
-            "--dyn_weighted_merge",
-            _str_bool(args.dyn_weighted_merge),
-            "--dyn_confidence_attn_weight",
-            str(args.dyn_confidence_attn_weight),
-            "--dyn_confidence_sim_weight",
-            str(args.dyn_confidence_sim_weight),
-            "--learn_selector_ckpt",
-            args.learn_selector_ckpt,
-            "--learn_qaware",
-            _str_bool(args.learn_qaware),
-            "--learn_stable_floor_ratio",
-            str(args.learn_stable_floor_ratio),
-            "--learn_score_blend",
-            str(args.learn_score_blend),
-            "--learn_q_relevance_weight",
-            str(args.learn_q_relevance_weight),
-            "--learn_density_topk",
-            str(args.learn_density_topk),
-            "--learn_collect_teacher",
-            _str_bool(args.learn_collect_teacher),
-            "--pivot_alpha",
-            str(args.pivot_alpha),
-            "--pivot_beta",
-            str(args.pivot_beta),
-            "--pivot_gamma",
-            str(args.pivot_gamma),
-            "--pivot_delta",
-            str(args.pivot_delta),
-            "--pivot_lambda",
-            str(args.pivot_lambda),
-            "--pivot_mu0",
-            str(args.pivot_mu0),
-            "--pivot_tau",
-            str(args.pivot_tau),
-            "--pivot_budget_scale",
-            str(args.pivot_budget_scale),
-            "--pivot_candidate_factor",
-            str(args.pivot_candidate_factor),
-            "--pivot_max_candidates",
-            str(args.pivot_max_candidates),
-            "--pivot_surprise_topk",
-            str(args.pivot_surprise_topk),
-            "--pivot_min_keep_per_frame",
-            str(args.pivot_min_keep_per_frame),
-            "--pivot_use_fuse",
-            _str_bool(args.pivot_use_fuse),
-            "--wave_anchor_ratio",
-            str(args.wave_anchor_ratio),
-            "--wave_sim_threshold",
-            str(args.wave_sim_threshold),
-            "--wave_budget_scale",
-            str(args.wave_budget_scale),
-            "--wave_candidate_factor",
-            str(args.wave_candidate_factor),
-            "--wave_max_candidates",
-            str(args.wave_max_candidates),
-            "--wave_intrinsic_weight",
-            str(args.wave_intrinsic_weight),
-            "--wave_vault_intrinsic_weight",
-            str(args.wave_vault_intrinsic_weight),
-            "--wave_q_floor",
-            str(args.wave_q_floor),
             "--talon_adaptive_target_enabled",
             _str_bool(args.talon_adaptive_target_enabled),
             "--talon_target_mean_cap",
@@ -459,22 +345,6 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "keep",
         ]
     )
-    cmd.extend(
-        [
-            "--hedge_stable_floor_ratio",
-            str(args.hedge_stable_floor_ratio),
-            "--hedge_diversity_weight",
-            str(args.hedge_diversity_weight),
-            "--hedge_stable_bias",
-            str(args.hedge_stable_bias),
-            "--hedge_evidence_bias",
-            str(args.hedge_evidence_bias),
-            "--hedge_max_mmr_candidates",
-            str(args.hedge_max_mmr_candidates),
-        ]
-    )
-
-
 def _append_graphvid_args(cmd: list[str], args: argparse.Namespace) -> None:
     cmd.extend(
         [
@@ -600,40 +470,6 @@ def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
             cmd.extend([f"--{name}", str(value)])
 
 
-def _append_cats_args(cmd: list[str], args: argparse.Namespace) -> None:
-    _append_graphvid_args(cmd, args)
-    cmd.extend(
-        [
-            "--temporal_merge_mode",
-            "cats",
-            "--compression_variant",
-            "cats",
-            "--cats_adts_beta",
-            str(args.cats_adts_beta),
-            "--cats_adts_mode",
-            str(args.cats_adts_mode),
-            "--cats_margin_threshold",
-            str(args.cats_margin_threshold),
-            "--cats_high_conf_bonus",
-            str(args.cats_high_conf_bonus),
-            "--cats_mutual_nn",
-            _str_bool(args.cats_mutual_nn),
-            "--cats_confidence_attn_weight",
-            str(args.cats_confidence_attn_weight),
-            "--cats_confidence_sim_weight",
-            str(args.cats_confidence_sim_weight),
-            "--cats_anchor_self_weight",
-            str(args.cats_anchor_self_weight),
-            "--cats_adaptive_adts_budget",
-            _str_bool(args.cats_adaptive_adts_budget),
-            "--cats_frame_budget_min",
-            str(args.cats_frame_budget_min),
-            "--cats_frame_budget_temperature",
-            str(args.cats_frame_budget_temperature),
-        ]
-    )
-
-
 def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path) -> list[dict[str, object]]:
     ranges = _split_ranges(args.start_index, args.total_limit, len(gpu_ids))
     shard_dir = work_dir / "logs" / "efficiency" / "parallel" / args.tag
@@ -646,7 +482,6 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
         ours_out = shard_dir / f"{ours_phase}_shard{shard_idx:02d}.jsonl"
         graphvid_out = shard_dir / f"graphvid_shard{shard_idx:02d}.jsonl"
         graftvid_out = shard_dir / f"graftvid_shard{shard_idx:02d}.jsonl"
-        cats_out = shard_dir / f"cats_shard{shard_idx:02d}.jsonl"
         summary_out = shard_dir / f"summary_shard{shard_idx:02d}.json"
         log_out = shard_dir / f"run_shard{shard_idx:02d}.log"
 
@@ -693,27 +528,19 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             "--run_flashvid",
             _str_bool(args.run_flashvid),
             "--run_ours",
-            _str_bool(args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats),
+            _str_bool(args.run_ours and not args.run_graphvid and not args.run_graftvid),
             "--run_graphvid",
             _str_bool(args.run_graphvid),
             "--run_graftvid",
             _str_bool(args.run_graftvid),
-            "--run_cats",
-            _str_bool(args.run_cats),
             "--flashvid_output",
             str(flashvid_out),
             "--ours_output",
             str(ours_out),
-            "--dynflashvid_output",
-            str(ours_out if ours_phase == "dynflashvid" else shard_dir / f"dynflashvid_shard{shard_idx:02d}.jsonl"),
-            "--learnflashvid_output",
-            str(ours_out if ours_phase == "learnflashvid" else shard_dir / f"learnflashvid_shard{shard_idx:02d}.jsonl"),
             "--graphvid_output",
             str(graphvid_out),
             "--graftvid_output",
             str(graftvid_out),
-            "--cats_output",
-            str(cats_out),
             "--summary_output_json",
             str(summary_out),
         ]
@@ -721,9 +548,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             _append_graphvid_args(cmd, args)
         if args.run_graftvid:
             _append_graftvid_args(cmd, args)
-        if args.run_cats:
-            _append_cats_args(cmd, args)
-        if not args.run_graphvid and not args.run_graftvid and not args.run_cats:
+        if not args.run_graphvid and not args.run_graftvid:
             _append_common_talon_args(cmd, args)
 
         env = os.environ.copy()
@@ -754,7 +579,6 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
                 "ours_phase": ours_phase,
                 "graphvid_out": graphvid_out,
                 "graftvid_out": graftvid_out,
-                "cats_out": cats_out,
                 "summary_out": summary_out,
                 "log_out": log_out,
             }
@@ -842,7 +666,6 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     combined_ours = shard_dir / f"{args.tag}_{ours_phase}.jsonl"
     combined_graphvid = shard_dir / f"{args.tag}_graphvid.jsonl"
     combined_graftvid = shard_dir / f"{args.tag}_graftvid.jsonl"
-    combined_cats = shard_dir / f"{args.tag}_cats.jsonl"
     combined_summary = shard_dir / f"{args.tag}_summary.json"
 
     flashvid_records = []
@@ -851,14 +674,11 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     ours_records = []
     graphvid_records = []
     graftvid_records = []
-    cats_records = []
     if args.run_graphvid:
         graphvid_records = _combine_jsonl([Path(j["graphvid_out"]) for j in jobs], combined_graphvid)
     if args.run_graftvid:
         graftvid_records = _combine_jsonl([Path(j["graftvid_out"]) for j in jobs], combined_graftvid)
-    if args.run_cats:
-        cats_records = _combine_jsonl([Path(j["cats_out"]) for j in jobs], combined_cats)
-    if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
+    if args.run_ours and not args.run_graphvid and not args.run_graftvid:
         ours_records = _combine_jsonl([Path(j["ours_out"]) for j in jobs], combined_ours)
 
     summary: dict[str, object] = {"comparison": {}}
@@ -868,9 +688,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
         summary["graphvid"] = _summarize_phase(graphvid_records)
     if args.run_graftvid:
         summary["graftvid"] = _summarize_phase(graftvid_records)
-    if args.run_cats:
-        summary["cats"] = _summarize_phase(cats_records)
-    if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
+    if args.run_ours and not args.run_graphvid and not args.run_graftvid:
         summary[ours_phase] = _summarize_phase(ours_records)
     if args.run_flashvid and args.run_graphvid:
         summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
@@ -886,14 +704,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
             anchor_name="flashvid",
             target_name="graftvid",
         )
-    if args.run_flashvid and args.run_cats:
-        summary["comparison"]["flashvid_vs_cats"] = _summarize_pairwise_comparison(
-            flashvid_records,
-            cats_records,
-            anchor_name="flashvid",
-            target_name="cats",
-        )
-    if args.run_flashvid and args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
+    if args.run_flashvid and args.run_ours and not args.run_graphvid and not args.run_graftvid:
         summary["comparison"][f"flashvid_vs_{ours_phase}"] = _summarize_pairwise_comparison(
             flashvid_records,
             ours_records,
@@ -903,11 +714,10 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     _add_duration_breakdown(
         summary,
         flashvid_records=flashvid_records if args.run_flashvid else None,
-        ours_records=ours_records if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats else None,
+        ours_records=ours_records if args.run_ours and not args.run_graphvid and not args.run_graftvid else None,
         ours_phase_name=ours_phase,
         graphvid_records=graphvid_records if args.run_graphvid else None,
         graftvid_records=graftvid_records if args.run_graftvid else None,
-        cats_records=cats_records if args.run_cats else None,
     )
     with combined_summary.open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
@@ -915,9 +725,7 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
         print(f"[combined] graphvid={combined_graphvid}")
     if args.run_graftvid:
         print(f"[combined] graftvid={combined_graftvid}")
-    if args.run_cats:
-        print(f"[combined] cats={combined_cats}")
-    if args.run_ours and not args.run_graphvid and not args.run_graftvid and not args.run_cats:
+    if args.run_ours and not args.run_graphvid and not args.run_graftvid:
         print(f"[combined] {ours_phase}={combined_ours}")
     if args.run_flashvid:
         print(f"[combined] flashvid={combined_flashvid}")
@@ -949,7 +757,6 @@ def main() -> None:
     parser.add_argument("--run_ours", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--run_graftvid", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--run_cats", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--compression_variant", default="talon")
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
@@ -1017,79 +824,6 @@ def main() -> None:
     parser.add_argument("--graft_long_split_radius_eps", type=float, default=None)
     parser.add_argument("--graft_long_spatial_penalty", type=float, default=None)
     parser.add_argument("--graft_long_scene_threshold", type=float, default=None)
-    parser.add_argument("--cats_adts_mode", default="cats", choices=["cats", "flashvid"])
-    parser.add_argument("--cats_adts_beta", type=float, default=0.05)
-    parser.add_argument("--cats_margin_threshold", type=float, default=0.03)
-    parser.add_argument("--cats_high_conf_bonus", type=float, default=0.05)
-    parser.add_argument("--cats_mutual_nn", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--cats_confidence_attn_weight", type=float, default=0.75)
-    parser.add_argument("--cats_confidence_sim_weight", type=float, default=1.0)
-    parser.add_argument("--cats_anchor_self_weight", type=float, default=1.0)
-    parser.add_argument("--cats_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--cats_frame_budget_min", type=int, default=1)
-    parser.add_argument("--cats_frame_budget_temperature", type=float, default=0.7)
-    parser.add_argument("--dyn_adaptive_adts_budget", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--dyn_budget_strength", type=float, default=0.45)
-    parser.add_argument("--dyn_budget_temperature", type=float, default=0.75)
-    parser.add_argument("--dyn_frame_budget_min_ratio", type=float, default=0.50)
-    parser.add_argument("--dyn_frame_budget_max_ratio", type=float, default=1.75)
-    parser.add_argument("--dyn_boundary_boost", type=float, default=0.08)
-    parser.add_argument("--dyn_adts_beta", type=float, default=0.05)
-    parser.add_argument("--dyn_attn_weight", type=float, default=0.50)
-    parser.add_argument("--dyn_event_weight", type=float, default=0.30)
-    parser.add_argument("--dyn_novelty_weight", type=float, default=0.15)
-    parser.add_argument("--dyn_detail_weight", type=float, default=0.05)
-    parser.add_argument("--dyn_density_weight", type=float, default=0.15)
-    parser.add_argument("--dyn_density_topk", type=int, default=8)
-    parser.add_argument("--dyn_event_chunk_radius", type=int, default=2)
-    parser.add_argument("--dyn_frame_event_weight", type=float, default=0.30)
-    parser.add_argument("--dyn_frame_novelty_weight", type=float, default=0.25)
-    parser.add_argument("--dyn_frame_attn_weight", type=float, default=0.20)
-    parser.add_argument("--dyn_frame_density_weight", type=float, default=0.20)
-    parser.add_argument("--dyn_frame_detail_weight", type=float, default=0.05)
-    parser.add_argument("--dyn_similarity_debias", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--dyn_debias_frame_weight", type=float, default=0.35)
-    parser.add_argument("--dyn_debias_global_weight", type=float, default=0.20)
-    parser.add_argument("--dyn_sink_tstm", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--dyn_mutual_nn", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--dyn_margin_threshold", type=float, default=0.0)
-    parser.add_argument("--dyn_high_conf_bonus", type=float, default=0.05)
-    parser.add_argument("--dyn_weighted_merge", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--dyn_confidence_attn_weight", type=float, default=0.50)
-    parser.add_argument("--dyn_confidence_sim_weight", type=float, default=0.50)
-    parser.add_argument("--learn_selector_ckpt", default="")
-    parser.add_argument("--learn_qaware", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--learn_stable_floor_ratio", type=float, default=0.75)
-    parser.add_argument("--learn_score_blend", type=float, default=0.35)
-    parser.add_argument("--learn_q_relevance_weight", type=float, default=0.35)
-    parser.add_argument("--learn_density_topk", type=int, default=8)
-    parser.add_argument("--learn_collect_teacher", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--hedge_stable_floor_ratio", type=float, default=0.85)
-    parser.add_argument("--hedge_diversity_weight", type=float, default=0.04)
-    parser.add_argument("--hedge_stable_bias", type=float, default=0.05)
-    parser.add_argument("--hedge_evidence_bias", type=float, default=0.0)
-    parser.add_argument("--hedge_max_mmr_candidates", type=int, default=2048)
-    parser.add_argument("--pivot_alpha", type=float, default=0.35)
-    parser.add_argument("--pivot_beta", type=float, default=0.25)
-    parser.add_argument("--pivot_gamma", type=float, default=0.30)
-    parser.add_argument("--pivot_delta", type=float, default=0.10)
-    parser.add_argument("--pivot_lambda", type=float, default=0.40)
-    parser.add_argument("--pivot_mu0", type=float, default=1.0)
-    parser.add_argument("--pivot_tau", type=float, default=1.0)
-    parser.add_argument("--pivot_budget_scale", type=float, default=1.0)
-    parser.add_argument("--pivot_candidate_factor", type=float, default=4.0)
-    parser.add_argument("--pivot_max_candidates", type=int, default=2048)
-    parser.add_argument("--pivot_surprise_topk", type=int, default=8)
-    parser.add_argument("--pivot_min_keep_per_frame", type=int, default=0)
-    parser.add_argument("--pivot_use_fuse", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--wave_anchor_ratio", type=float, default=0.80)
-    parser.add_argument("--wave_sim_threshold", type=float, default=0.55)
-    parser.add_argument("--wave_budget_scale", type=float, default=1.0)
-    parser.add_argument("--wave_candidate_factor", type=float, default=2.0)
-    parser.add_argument("--wave_max_candidates", type=int, default=1024)
-    parser.add_argument("--wave_intrinsic_weight", type=float, default=0.01)
-    parser.add_argument("--wave_vault_intrinsic_weight", type=float, default=0.0)
-    parser.add_argument("--wave_q_floor", type=float, default=0.03)
     parser.add_argument("--talon_short_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_medium_target_tokens_per_frame", type=int, default=0)
     parser.add_argument("--talon_long_target_tokens_per_frame", type=int, default=0)

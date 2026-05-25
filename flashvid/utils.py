@@ -136,56 +136,12 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant not in ("flashvid", "graphvid", "graftvid", "cats", "hedgevid", "dynflashvid", "learnflashvid", "pivotfuse", "wavevault"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|cats|hedgevid|dynflashvid|learnflashvid|pivotfuse|wavevault|talon")
+    if compression_variant not in ("flashvid", "graphvid", "graftvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|talon")
     if compression_variant == "graftvid":
         from .graftvid import _reset_graft_metrics
 
         _reset_graft_metrics(flashvid_config)
-    if compression_variant == "cats":
-        from .cats import _reset_cats_metrics
-
-        _reset_cats_metrics(flashvid_config)
-    if compression_variant == "hedgevid":
-        from .hedgevid import _reset_hedge_metrics
-
-        _reset_hedge_metrics(flashvid_config)
-    if compression_variant == "dynflashvid":
-        from .dynflashvid import _reset_dyn_metrics
-
-        _reset_dyn_metrics(flashvid_config)
-    if compression_variant == "learnflashvid":
-        from .learnflashvid import _reset_learn_metrics
-
-        _reset_learn_metrics(flashvid_config)
-    if compression_variant == "pivotfuse":
-        from .pivotfuse import _reset_pivot_metrics
-
-        _reset_pivot_metrics(flashvid_config)
-    if compression_variant == "wavevault":
-        from .wavevault import _reset_wave_metrics
-
-        _reset_wave_metrics(flashvid_config)
-
-    if bool(getattr(flashvid_config, "learn_collect_teacher", False)):
-        from .learned_selector import LEARN_FEATURE_NAMES, build_scalar_token_features
-
-        teacher_features, _ = build_scalar_token_features(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            question_features=question_features,
-            density_topk=int(getattr(flashvid_config, "learn_density_topk", 8) or 8),
-        )
-        flashvid_config.last_learn_teacher_features = teacher_features.reshape(-1, teacher_features.shape[-1]).detach().float().cpu()
-        flashvid_config.last_learn_teacher_raw_indices = torch.arange(
-            num_frames * num_visual_tokens,
-            dtype=torch.long,
-            device=video_features.device,
-        ).detach().cpu()
-        flashvid_config.last_learn_teacher_labels = None
-        flashvid_config.last_learn_teacher_shape = (int(num_frames), int(num_visual_tokens))
-        flashvid_config.last_learn_teacher_feature_names = list(LEARN_FEATURE_NAMES)
-
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
         question_features=question_features,
@@ -242,8 +198,6 @@ def flashvid_compression(
     flashvid_config.vision_token_length = int(sorted_tokens.shape[0])
     flashvid_config.llm_token_length = None
     flashvid_config.visual_token_length = sorted_tokens.shape[0]
-    if bool(getattr(flashvid_config, "learn_collect_teacher", False)):
-        flashvid_config.last_learn_vision_global_indices = final_global_indices[sorted_indices].detach().cpu()
     # print(f"#Visual Tokens After Vision-Side Compression : {flashvid_config.visual_token_length}")
     return sorted_tokens, final_global_indices[sorted_indices]
 
@@ -268,63 +222,6 @@ def segment_compression(
     """
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
-    if compression_variant == "cats":
-        from .cats import cats_segment_compression
-
-        return cats_segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-        )
-    if compression_variant == "hedgevid":
-        from .hedgevid import hedge_segment_compression
-
-        return hedge_segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-        )
-    if compression_variant == "dynflashvid":
-        from .dynflashvid import dyn_segment_compression
-
-        return dyn_segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-        )
-    if compression_variant == "learnflashvid":
-        from .learnflashvid import learn_segment_compression
-
-        return learn_segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "pivotfuse":
-        from .pivotfuse import pivotfuse_segment_compression
-
-        return pivotfuse_segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-        )
-    if compression_variant == "wavevault":
-        from .wavevault import wavevault_segment_compression
-
-        return wavevault_segment_compression(
-            segment_features=segment_features,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-
     # 1. Apply Attention and Diversity-based Token Selection (ADTS).
     if flashvid_config.alpha > 0:
         additional_kwargs = {"cls_attention": cls_attention} if "attn" in flashvid_config.token_selection_method else {}
@@ -858,20 +755,6 @@ def fastv_prune(
     )
     topk_indices = topk_indices.squeeze(0)
     topk_indices = topk_indices.clamp(min=0, max=max(0, int(visual_global_indices.numel()) - 1))
-    if bool(getattr(flashvid_config, "learn_collect_teacher", False)):
-        seq_global = getattr(flashvid_config, "visual_seq_global_indices", None)
-        raw_indices = getattr(flashvid_config, "last_learn_teacher_raw_indices", None)
-        if seq_global is not None and raw_indices is not None:
-            seq_global = seq_global.to(device=device, dtype=torch.long)
-            valid_topk = topk_indices[topk_indices < seq_global.numel()]
-            kept_original = seq_global[valid_topk]
-            kept_original = kept_original[kept_original >= 0].detach().cpu().unique()
-            raw_cpu = raw_indices.detach().cpu().to(dtype=torch.long)
-            labels = torch.isin(raw_cpu, kept_original).to(dtype=torch.float32)
-            flashvid_config.last_learn_teacher_labels = labels
-            flashvid_config.last_learn_teacher_keep_indices = kept_original
-            flashvid_config.last_learn_teacher_keep_ratio = float(labels.mean().item()) if labels.numel() else 0.0
-            flashvid_config.last_learn_teacher_visual_keep_positions = valid_topk.detach().cpu()
     all_global_indices = [non_visual_global_indices, visual_global_indices[topk_indices]]
     keep_indices = torch.sort(torch.cat(all_global_indices).unique()).values
     keep_indices = keep_indices[keep_indices < seq_length]
