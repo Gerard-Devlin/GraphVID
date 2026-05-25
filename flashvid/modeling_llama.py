@@ -171,6 +171,14 @@ def LlamaAttention_forward(
     if self.config._attn_implementation != "eager":
         attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
+    want_attn_weights = bool(kwargs.get("output_attentions", False))
+    attention_kwargs = dict(kwargs)
+    # FlashAttention2 does not return attention weights. Keep fast kernels for
+    # the layer output, then compute the one-row teacher attention needed by
+    # FastV pruning below.
+    if want_attn_weights:
+        attention_kwargs["output_attentions"] = False
+
     attn_output, attn_weights = attention_interface(
         self,
         query_states,
@@ -179,13 +187,15 @@ def LlamaAttention_forward(
         attention_mask,
         dropout=0.0 if not self.training else self.attention_dropout,
         scaling=self.scaling,
-        **kwargs,
+        **attention_kwargs,
     )
 
-    if kwargs.get("output_attentions", False) and attn_weights is None:
+    if want_attn_weights:
         last_query = query_states[:, :, -1:, :]
-        key_states = repeat_kv(key_states, self.num_key_value_groups)
-        attn_weights = torch.matmul(last_query, key_states.transpose(2, 3)) * self.scaling
+        teacher_keys = repeat_kv(key_states, self.num_key_value_groups)
+        attn_weights = torch.matmul(last_query, teacher_keys.transpose(2, 3)) * self.scaling
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask[:, :, -1:, : teacher_keys.shape[-2]]
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
 
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
