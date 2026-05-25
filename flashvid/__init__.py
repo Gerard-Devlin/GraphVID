@@ -6,6 +6,11 @@ from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2DecoderLayer,
     Qwen2Model,
 )
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaDecoderLayer,
+    LlamaModel,
+)
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLAttention,
     Qwen2_5_VLForConditionalGeneration,
@@ -27,6 +32,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 
 from llava.model.llava_arch import LlavaMetaForCausalLM
+from llava.model.language_model.llava_llama import LlavaLlamaForCausalLM
 from llava.model.language_model.llava_qwen import LlavaQwenForCausalLM
 from llava.model.multimodal_encoder.siglip_encoder import (
     SigLipAttention,
@@ -42,6 +48,11 @@ from .modeling_qwen2 import (
     Qwen2Attention_forward,
     Qwen2DecoderLayer_forward,
     Qwen2Model_forward,
+)
+from .modeling_llama import (
+    LlamaAttention_forward,
+    LlamaDecoderLayer_forward,
+    LlamaModel_forward,
 )
 
 from .modeling_qwen2_5_vl import (
@@ -518,7 +529,7 @@ def flashvid(
     """
 
     # Replace with custom methods.
-    if type(model) is LlavaQwenForCausalLM:  ## For LLaVA-OneVision or LLaVA-Video
+    if type(model) in (LlavaQwenForCausalLM, LlavaLlamaForCausalLM):  ## For LLaVA-OneVision or LLaVA-Video
         LlavaMetaForCausalLM.encode_images = LlavaMetaForCausalLM_encode_images
         LlavaMetaForCausalLM.prepare_inputs_labels_for_multimodal = LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal
         SigLipAttention.forward = SigLipAttention_forward
@@ -527,9 +538,14 @@ def flashvid(
         # Keep the stable vision-only path by default, but re-enable the Qwen2
         # language-model hooks when a caller explicitly asks for inner pruning.
         if float(llm_retention_ratio) < 0.9999:
-            Qwen2Attention.forward = Qwen2Attention_forward
-            Qwen2DecoderLayer.forward = Qwen2DecoderLayer_forward
-            Qwen2Model.forward = Qwen2Model_forward
+            if type(model) is LlavaQwenForCausalLM:
+                Qwen2Attention.forward = Qwen2Attention_forward
+                Qwen2DecoderLayer.forward = Qwen2DecoderLayer_forward
+                Qwen2Model.forward = Qwen2Model_forward
+            else:
+                LlamaAttention.forward = LlamaAttention_forward
+                LlamaDecoderLayer.forward = LlamaDecoderLayer_forward
+                LlamaModel.forward = LlamaModel_forward
         model.get_vision_tower().vision_tower.vision_model.encoder.layers[-1].self_attn.is_last_layer = True
     elif type(model) is Qwen2_5_VLForConditionalGeneration:  ## For Qwen2.5-VL
         Qwen2_5_VLAttention.forward = Qwen2_5_VLAttention_forward
