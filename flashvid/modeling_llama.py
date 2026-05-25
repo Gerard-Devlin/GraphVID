@@ -53,7 +53,9 @@ def LlamaModel_forward(
     if position_ids is None:
         position_ids = cache_position.unsqueeze(0)
 
-    if not isinstance(causal_mask := attention_mask, torch.Tensor):
+    if isinstance(attention_mask, torch.Tensor) and attention_mask.dim() == 4:
+        causal_mask = attention_mask
+    else:
         causal_mask = create_causal_mask(
             config=self.config,
             input_embeds=inputs_embeds,
