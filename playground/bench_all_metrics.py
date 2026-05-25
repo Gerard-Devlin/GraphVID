@@ -934,11 +934,24 @@ def _load_llava_model(args: BenchmarkArgs):
         or "LLaVA-Video-7B-Qwen2" in normalized_model_path
         or "models--lmms-lab--LLaVA-Video-7B-Qwen2" in normalized_model_path
     )
+    normalized_model_path_lower = normalized_model_path.lower()
+    is_llava_onevision_qwen2 = (
+        normalized_model_path_lower == "lmms-lab/llava-onevision-qwen2-7b-ov"
+        or "llava-onevision-qwen2-7b-ov" in normalized_model_path_lower
+        or "models--lmms-lab--llava-onevision-qwen2-7b-ov" in normalized_model_path_lower
+    )
     if is_llava_video_qwen2:
         model_name = "LLaVA-Video-7B-Qwen2"
+    elif is_llava_onevision_qwen2:
+        # Snapshot paths end in a hash, so get_model_name_from_path() loses the
+        # qwen marker and the LLaVA builder falls back to LlavaLlamaForCausalLM.
+        # Keep the original repo name here so OneVision loads through LlavaQwen.
+        model_name = "llava-onevision-qwen2-7b-ov"
     overwrite_config = (
         {"mm_spatial_pool_mode": "average", "mm_newline_position": "frame"}
         if is_llava_video_qwen2
+        else {"mm_spatial_pool_mode": "bilinear"}
+        if is_llava_onevision_qwen2
         else {}
     )
     attn_impl = _resolve_attn_implementation(args.attn_implementation)
