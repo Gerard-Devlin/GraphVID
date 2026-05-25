@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "talon"}
+    allowed = {"graphvid", "graftvid", "flashvid"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -152,7 +152,7 @@ def _build_command(
     cmd = [
         sys.executable,
         "-u",
-        "playground/run_talon_parallel.py",
+        "playground/run_parallel.py",
         "--model_backend",
         args.model_backend,
         "--model_path",
@@ -296,23 +296,7 @@ def _build_command(
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
     else:
-        cmd.extend(
-            [
-                "--no-run_flashvid",
-                "--compression_variant",
-                "talon",
-                "--talon_target_tokens_per_frame",
-                str(args.talon_target_tokens_per_frame),
-                "--talon_question_recall_ratio",
-                str(args.talon_question_recall_ratio),
-                "--talon_question_recall_qweight",
-                str(args.talon_question_recall_qweight),
-                "--talon_question_pooling",
-                args.talon_question_pooling,
-                "--talon_question_pooling_topk",
-                str(args.talon_question_pooling_topk),
-            ]
-        )
+        raise ValueError(f"unsupported method={method!r}")
     cmd.extend(args.extra_args)
     return cmd, summary_path
 
@@ -327,8 +311,6 @@ def _load_summary(path: Path) -> dict[str, Any] | None:
 def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: str) -> dict[str, float | None]:
     phase_key = _phase_name(method)
     phase = summary.get(phase_key) if summary else None
-    if phase is None and method == "talon" and summary:
-        phase = summary.get("ours")
     result: dict[str, float | None] = {
         "acc": _safe_pct(phase.get("accuracy")) if phase else None,
         "tokens": _stat_mean(phase, "compressed_visual_tokens"),
@@ -338,8 +320,6 @@ def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: st
         for duration in ("short", "medium", "long"):
             bucket = by_duration.get(duration, {})
             sub_phase = bucket.get(phase_key)
-            if sub_phase is None and method == "talon":
-                sub_phase = bucket.get("ours")
             result[duration] = _safe_pct(sub_phase.get("accuracy")) if sub_phase else None
     return result
 
@@ -422,7 +402,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,flashvid.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -498,11 +478,6 @@ def main() -> None:
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
     parser.add_argument("--token_selection_method", default="attn_div_stable")
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_stable")
-    parser.add_argument("--talon_target_tokens_per_frame", type=int, default=22)
-    parser.add_argument("--talon_question_recall_ratio", type=float, default=0.08)
-    parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
-    parser.add_argument("--talon_question_pooling", default="topk")
-    parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

@@ -38,7 +38,6 @@ def _parse_methods(text: str) -> set[str]:
         "graphvid": "graphvid",
         "graft": "graftvid",
         "graftvid": "graftvid",
-        "talon": "talon",
     }
     methods: set[str] = set()
     for part in str(text).split(","):
@@ -155,7 +154,7 @@ def _build_command(
     cmd = [
         sys.executable,
         "-u",
-        "playground/run_talon_parallel.py",
+        "playground/run_parallel.py",
         "--model_backend",
         "llava",
         "--model_path",
@@ -186,7 +185,7 @@ def _build_command(
         str(args.gpu_cap),
         "--tag",
         run_tag,
-        "--run_ours" if "talon" in methods else "--no-run_ours",
+        "--no-run_ours",
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -233,8 +232,6 @@ def _build_command(
     cmd.append("--run_flashvid" if "flashvid" in methods else "--no-run_flashvid")
     cmd.append("--run_graphvid" if "graphvid" in methods else "--no-run_graphvid")
     cmd.append("--run_graftvid" if "graftvid" in methods else "--no-run_graftvid")
-    if "talon" in methods:
-        cmd.extend(["--compression_variant", "talon"])
     cmd.extend(
         [
             "--graft_temporal_topk",
@@ -305,46 +302,35 @@ def _row(rate_label: str, summary: dict[str, Any] | None) -> dict[str, Any]:
     flash_tokens = _mean(summary, "flashvid", "compressed_visual_tokens")
     graph_tokens = _mean(summary, "graphvid", "compressed_visual_tokens")
     graft_tokens = _mean(summary, "graftvid", "compressed_visual_tokens")
-    talon_tokens = _mean(summary, "talon", "compressed_visual_tokens")
     flash_acc = _acc(summary, "flashvid")
     graph_acc = _acc(summary, "graphvid")
     graft_acc = _acc(summary, "graftvid")
-    talon_acc = _acc(summary, "talon")
     return {
         "retention_ratio": f"{rate_label.replace('p', '.')}%",
         "flashvid_acc": flash_acc,
         "graphvid_acc": graph_acc,
         "graftvid_acc": graft_acc,
-        "talon_acc": talon_acc,
         "acc_delta": None if flash_acc is None or graph_acc is None else graph_acc - flash_acc,
         "graft_acc_delta": None if flash_acc is None or graft_acc is None else graft_acc - flash_acc,
-        "talon_acc_delta": None if flash_acc is None or talon_acc is None else talon_acc - flash_acc,
         "flashvid_short": _duration_acc(summary, "flashvid", "short"),
         "graphvid_short": _duration_acc(summary, "graphvid", "short"),
         "graftvid_short": _duration_acc(summary, "graftvid", "short"),
-        "talon_short": _duration_acc(summary, "talon", "short"),
         "flashvid_medium": _duration_acc(summary, "flashvid", "medium"),
         "graphvid_medium": _duration_acc(summary, "graphvid", "medium"),
         "graftvid_medium": _duration_acc(summary, "graftvid", "medium"),
-        "talon_medium": _duration_acc(summary, "talon", "medium"),
         "flashvid_long": _duration_acc(summary, "flashvid", "long"),
         "graphvid_long": _duration_acc(summary, "graphvid", "long"),
         "graftvid_long": _duration_acc(summary, "graftvid", "long"),
-        "talon_long": _duration_acc(summary, "talon", "long"),
         "flashvid_tokens": flash_tokens,
         "graphvid_tokens": graph_tokens,
         "graftvid_tokens": graft_tokens,
-        "talon_tokens": talon_tokens,
         "token_reduction": _comparison(summary, "visual_token_reduction"),
         "graft_token_reduction": _comparison(summary, "visual_token_reduction", target="graftvid"),
-        "talon_token_reduction": _comparison(summary, "visual_token_reduction", target="talon"),
         "flashvid_latency_ms": _mean(summary, "flashvid", "latency_ms"),
         "graphvid_latency_ms": _mean(summary, "graphvid", "latency_ms"),
         "graftvid_latency_ms": _mean(summary, "graftvid", "latency_ms"),
-        "talon_latency_ms": _mean(summary, "talon", "latency_ms"),
         "latency_speedup": _comparison(summary, "latency_speedup"),
         "graft_latency_speedup": _comparison(summary, "latency_speedup", target="graftvid"),
-        "talon_latency_speedup": _comparison(summary, "latency_speedup", target="talon"),
     }
 
 
@@ -358,36 +344,27 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         "flashvid_acc",
         "graphvid_acc",
         "graftvid_acc",
-        "talon_acc",
         "acc_delta",
         "graft_acc_delta",
-        "talon_acc_delta",
         "flashvid_short",
         "graphvid_short",
         "graftvid_short",
-        "talon_short",
         "flashvid_medium",
         "graphvid_medium",
         "graftvid_medium",
-        "talon_medium",
         "flashvid_long",
         "graphvid_long",
         "graftvid_long",
-        "talon_long",
         "flashvid_tokens",
         "graphvid_tokens",
         "graftvid_tokens",
-        "talon_tokens",
         "token_reduction",
         "graft_token_reduction",
-        "talon_token_reduction",
         "flashvid_latency_ms",
         "graphvid_latency_ms",
         "graftvid_latency_ms",
-        "talon_latency_ms",
         "latency_speedup",
         "graft_latency_speedup",
-        "talon_latency_speedup",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -398,46 +375,37 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
     lines = [
-        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | TALON Acc | G Delta | GRAFT Delta | TALON Delta | F Short | G Short | GRAFT Short | TALON Short | F Medium | G Medium | GRAFT Medium | TALON Medium | F Long | G Long | GRAFT Long | TALON Long | F Tokens | G Tokens | GRAFT Tokens | TALON Tokens | G Token Red. | GRAFT Token Red. | TALON Token Red. | F Lat. | G Lat. | GRAFT Lat. | TALON Lat. | G Speedup | GRAFT Speedup | TALON Speedup |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| R | FlashVID Acc | GraphVID Acc | GRAFT Acc | G Delta | GRAFT Delta | F Short | G Short | GRAFT Short | F Medium | G Medium | GRAFT Medium | F Long | G Long | GRAFT Long | F Tokens | G Tokens | GRAFT Tokens | G Token Red. | GRAFT Token Red. | F Lat. | G Lat. | GRAFT Lat. | G Speedup | GRAFT Speedup |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {r} | {fa} | {ga} | {gfa} | {ta} | {d} | {gd} | {td} | {fs} | {gs} | {gfs} | {ts} | {fm} | {gm} | {gfm} | {tm} | {fl} | {gl} | {gfl} | {tl} | {ft} | {gt} | {gft} | {tt} | {tr} | {gtr} | {ttr} | {flat} | {glat} | {gflat} | {tlat} | {sp} | {gsp} | {tsp} |".format(
+            "| {r} | {fa} | {ga} | {gfa} | {d} | {gd} | {fs} | {gs} | {gfs} | {fm} | {gm} | {gfm} | {fl} | {gl} | {gfl} | {ft} | {gt} | {gft} | {tr} | {gtr} | {flat} | {glat} | {gflat} | {sp} | {gsp} |".format(
                 r=row["retention_ratio"],
                 fa=_fmt(row.get("flashvid_acc")),
                 ga=_fmt(row.get("graphvid_acc")),
                 gfa=_fmt(row.get("graftvid_acc")),
-                ta=_fmt(row.get("talon_acc")),
                 d=_fmt(row.get("acc_delta")),
                 gd=_fmt(row.get("graft_acc_delta")),
-                td=_fmt(row.get("talon_acc_delta")),
                 fs=_fmt(row.get("flashvid_short")),
                 gs=_fmt(row.get("graphvid_short")),
                 gfs=_fmt(row.get("graftvid_short")),
-                ts=_fmt(row.get("talon_short")),
                 fm=_fmt(row.get("flashvid_medium")),
                 gm=_fmt(row.get("graphvid_medium")),
                 gfm=_fmt(row.get("graftvid_medium")),
-                tm=_fmt(row.get("talon_medium")),
                 fl=_fmt(row.get("flashvid_long")),
                 gl=_fmt(row.get("graphvid_long")),
                 gfl=_fmt(row.get("graftvid_long")),
-                tl=_fmt(row.get("talon_long")),
                 ft=_fmt(row.get("flashvid_tokens")),
                 gt=_fmt(row.get("graphvid_tokens")),
                 gft=_fmt(row.get("graftvid_tokens")),
-                tt=_fmt(row.get("talon_tokens")),
                 tr=_fmt(row.get("token_reduction")),
                 gtr=_fmt(row.get("graft_token_reduction")),
-                ttr=_fmt(row.get("talon_token_reduction")),
                 flat=_fmt(row.get("flashvid_latency_ms")),
                 glat=_fmt(row.get("graphvid_latency_ms")),
                 gflat=_fmt(row.get("graftvid_latency_ms")),
-                tlat=_fmt(row.get("talon_latency_ms")),
                 sp=_fmt(row.get("latency_speedup"), 3),
                 gsp=_fmt(row.get("graft_latency_speedup"), 3),
-                tsp=_fmt(row.get("talon_latency_speedup"), 3),
             )
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -452,7 +420,7 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default=hf_home)
     parser.add_argument("--rates", default="10,20")
-    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid,talon.")
+    parser.add_argument("--methods", default="flashvid,graphvid", help="Comma list: flashvid,graphvid,graftvid.")
     parser.add_argument("--tag", default="llavavideo_graphvid_vs_flashvid")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix/llavavideo")
     parser.add_argument("--total_limit", type=int, default=2700, help="0 means all rows in dataset_jsonl.")

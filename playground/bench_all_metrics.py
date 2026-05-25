@@ -54,14 +54,13 @@ def _phase_display_name(phase_key: str) -> str:
         "flashvid": "FlashVID",
         "graphvid": "GraphVID",
         "graftvid": "GraftVID",
-        "talon": "TALON",
         "ours": "Ours",
     }
     return labels.get(phase_key, phase_key)
 
 
 def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "talon", "ours", "graphvid", "graftvid"]
+    preferred = ["baseline", "flashvid", "graphvid", "graftvid", "ours"]
     if not summary:
         return preferred
     extras = [
@@ -156,7 +155,7 @@ class BenchmarkArgs:
     # Which phases to run
     run_baseline: bool = field(default=True)
     run_flashvid: bool = field(default=True)
-    run_ours: bool = field(default=True)
+    run_ours: bool = field(default=False)
     run_graphvid: bool = field(default=False)
     run_graftvid: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
@@ -230,203 +229,12 @@ class BenchmarkArgs:
     llm_retention_ratio: float = field(default=0.3)
 
     # New experimental knobs (optional)
-    compression_variant: str = field(default="talon")
     question_aware_reweighting: bool = field(default=False)
     question_reweight_beta: float = field(default=0.35)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
-    talon_core_target_tokens_per_frame: int = field(default=0)
-    talon_core_neighbor_radius: int = field(default=1)
-    talon_core_topk_neighbors: int = field(default=4)
-    talon_core_temperature: float = field(default=0.07)
-    talon_core_rank: int = field(default=4)
-    talon_core_anchor_ratio: float = field(default=0.35)
-    talon_core_relevance_weight: float = field(default=0.42)
-    talon_core_temporal_weight: float = field(default=0.33)
-    talon_core_lowrank_weight: float = field(default=0.25)
-    talon_core_frame_budget_mode: str = field(default="attention")
-    talon_core_min_keep_per_frame: int = field(default=1)
-    talon_adaptive_target_low: int = field(default=0)
-    talon_adaptive_target_mid: int = field(default=0)
-    talon_adaptive_target_high: int = field(default=0)
-    talon_complexity_floor: float = field(default=0.20)
-    talon_complexity_ceil: float = field(default=0.40)
-    talon_adaptive_gamma: float = field(default=1.0)
-    talon_adaptive_target_enabled: bool = field(default=False)
-    talon_force_fixed_target: bool = field(default=False)
-    talon_target_mean_cap: float = field(default=0.0)
-    talon_unified_selection: bool = field(default=False)
-    talon_low_budget_mode_threshold: int = field(default=20)
-    talon_low_budget_rank_cap: int = field(default=0)
-    talon_background_global_ratio: float = field(default=0.60)
-    talon_event_budget_ratio: float = field(default=0.30)
-    talon_memory_fused_weight: float = field(default=0.50)
-    talon_memory_residual_weight: float = field(default=0.35)
-    talon_memory_frame_weight: float = field(default=0.15)
-    talon_recall_memory_mode: str = field(default="raw")
-    talon_final_fused_weight: float = field(default=0.70)
-    talon_final_residual_weight: float = field(default=0.20)
-    talon_final_frame_weight: float = field(default=0.10)
-    talon_anchor_keep_bonus: float = field(default=0.10)
-    talon_recall_keep_bonus: float = field(default=0.08)
-    talon_event_keep_bonus: float = field(default=0.04)
-    talon_legacy_base_keep_ratio: float = field(default=0.85)
-    talon_prior_candidate_ratio: float = field(default=0.12)
-    talon_prior_keep_bonus: float = field(default=0.06)
-    talon_flash_prior_channel_ratio: float = field(default=0.12)
-    talon_flash_prior_channel_method: str = field(default="attn_div_v2")
-    talon_flash_prior_channel_min_per_frame: int = field(default=1)
-    talon_flash_prior_channel_max_per_frame: int = field(default=4)
-    talon_flash_prior_channel_bonus: float = field(default=0.06)
-    talon_final_anchor_min_ratio: float = field(default=0.24)
-    talon_final_recall_min_ratio: float = field(default=0.10)
-    talon_force_anchor_recall_quota: bool = field(default=True)
-    talon_global_topk_ratio: float = field(default=0.70)
-    talon_rescue_enabled: bool = field(default=True)
-    talon_rescue_ratio: float = field(default=0.08)
-    talon_rescue_from_memory_only: bool = field(default=True)
-    talon_rescue_fused_weight: float = field(default=0.55)
-    talon_rescue_residual_weight: float = field(default=0.35)
-    talon_rescue_frame_weight: float = field(default=0.10)
-    talon_rescue_global_ratio: float = field(default=0.85)
-    talon_rerank_with_flash_prior: bool = field(default=True)
-    talon_flash_prior_ratio: float = field(default=0.20)
-    talon_recall_semantic_ratio: float = field(default=0.50)
-    talon_recall_event_ratio: float = field(default=0.25)
-    talon_recall_frame_ratio: float = field(default=0.15)
-    talon_recall_global_ratio: float = field(default=0.55)
-    talon_duration_aware: bool = field(default=False)
-    talon_medium_anchor_safety_ratio: float = field(default=0.72)
-    talon_medium_event_budget_ratio: float = field(default=0.30)
-    talon_medium_global_topk_ratio: float = field(default=0.70)
-    talon_long_anchor_safety_ratio: float = field(default=0.80)
-    talon_long_event_budget_ratio: float = field(default=0.14)
-    talon_long_global_topk_ratio: float = field(default=0.85)
-    talon_task_aware_event: bool = field(default=False)
-    talon_task_event_attention_weight: float = field(default=0.82)
-    talon_task_event_qweight: float = field(default=0.30)
-    talon_visual_task_balance: bool = field(default=False)
-    talon_visual_task_anchor_ratio: float = field(default=0.84)
-    talon_visual_task_event_ratio: float = field(default=0.12)
-    talon_visual_task_recall_ratio: float = field(default=0.02)
-    talon_knowledge_visual_anchor_ratio: float = field(default=0.78)
-    talon_knowledge_visual_event_ratio: float = field(default=0.18)
-    talon_knowledge_visual_recall_ratio: float = field(default=0.06)
-    talon_adaptive_router: bool = field(default=False)
-    talon_router_apply_to_short: bool = field(default=False)
-    talon_router_visual_anchor_ratio: float = field(default=0.76)
-    talon_router_visual_event_ratio: float = field(default=0.24)
-    talon_router_visual_recall_ratio: float = field(default=0.06)
-    talon_router_temporal_anchor_ratio: float = field(default=0.66)
-    talon_router_temporal_event_ratio: float = field(default=0.34)
-    talon_router_temporal_recall_ratio: float = field(default=0.08)
-    talon_router_balanced_anchor_ratio: float = field(default=0.72)
-    talon_router_balanced_event_ratio: float = field(default=0.30)
-    talon_router_balanced_recall_ratio: float = field(default=0.08)
-    talon_router_visual_concentration_threshold: float = field(default=0.28)
-    talon_router_low_residual_threshold: float = field(default=0.30)
-    talon_router_temporal_entropy_threshold: float = field(default=0.95)
-    talon_router_temporal_residual_threshold: float = field(default=0.36)
-    talon_temporal_chunk_aware: bool = field(default=False)
-    talon_temporal_num_chunks: int = field(default=4)
-    talon_temporal_chunk_min_ratio: float = field(default=0.18)
-    talon_temporal_chunk_score: str = field(default="combined")
-    talon_track_aware: bool = field(default=False)
-    talon_track_budget_ratio: float = field(default=0.12)
-    talon_track_tokens_per_slot: int = field(default=1)
-    talon_track_score: str = field(default="combined")
-    talon_absorb_dropped_tokens: bool = field(default=False)
-    talon_absorb_ratio: float = field(default=0.35)
-    talon_absorb_alpha: float = field(default=0.25)
-    talon_absorb_score: str = field(default="combined")
-    talon_summary_replacement: bool = field(default=False)
-    talon_summary_raw_swap: bool = field(default=False)
-    talon_summary_ratio: float = field(default=0.08)
-    talon_summary_num_chunks: int = field(default=8)
-    talon_summary_pool_topk: int = field(default=12)
-    talon_summary_alpha: float = field(default=0.55)
-    talon_summary_score: str = field(default="combined")
-    talon_transport_radius: int = field(default=1)
-    talon_rank_ratio: float = field(default=0.40)
-    talon_rank_min: int = field(default=2)
-    talon_rank_max: int = field(default=32)
-    talon_budget_scale: float = field(default=0.60)
-    talon_target_tokens_per_frame: int = field(default=0)
-    talon_short_target_tokens_per_frame: int = field(default=0)
-    talon_medium_target_tokens_per_frame: int = field(default=0)
-    talon_long_target_tokens_per_frame: int = field(default=0)
-    talon_min_total_tokens: int = field(default=1)
-    talon_fast_rank_plan: bool = field(default=True)
-    talon_background_max_ratio: float = field(default=0.45)
-    talon_frame_balanced_selection: bool = field(default=True)
-    talon_basis_method: str = field(default="randomized")
-    talon_basis_oversample: int = field(default=4)
-    talon_innovation_attention_weight: float = field(default=0.45)
-    talon_motion_importance_weight: float = field(default=0.35)
-    talon_boundary_importance_weight: float = field(default=0.10)
-    talon_question_frame_weight: float = field(default=0.20)
-    talon_frame_balanced_memory: bool = field(default=True)
-    talon_memory_mode: str = field(default="raw")
-    talon_anchor_safety_ratio: float = field(default=0.28)
-    talon_anchor_diversity_weight: float = field(default=0.0)
-    talon_anchor_candidate_multiplier: float = field(default=4.0)
-    talon_spatial_anchor_coverage: bool = field(default=False)
-    talon_spatial_anchor_ratio: float = field(default=0.35)
-    talon_spatial_anchor_rows: int = field(default=3)
-    talon_spatial_anchor_cols: int = field(default=3)
-    talon_spatial_anchor_score: str = field(default="fused")
-    talon_spatial_anchor_apply_to_short: bool = field(default=False)
-    talon_frame_coverage_floor_ratio: float = field(default=0.65)
-    talon_frame_importance_pooling: str = field(default="mean")
-    talon_frame_importance_topk: int = field(default=6)
-    talon_medium_frame_coverage_floor_ratio: float = field(default=-1.0)
-    talon_long_frame_coverage_floor_ratio: float = field(default=-1.0)
-    talon_frame_local_budget_ratio: float = field(default=1.0)
-    talon_question_recall_ratio: float = field(default=0.06)
-    talon_question_recall_qweight: float = field(default=0.65)
-    talon_persistence_recall_ratio: float = field(default=0.0)
-    talon_persistence_recall_qweight: float = field(default=0.50)
-    talon_persistence_recall_pweight: float = field(default=0.35)
-    talon_persistence_apply_to_short: bool = field(default=False)
-    talon_persistence_apply_to_medium: bool = field(default=True)
-    talon_persistence_apply_to_long: bool = field(default=False)
-    talon_object_evidence_ratio: float = field(default=0.0)
-    talon_object_evidence_qweight: float = field(default=0.35)
-    talon_object_evidence_sweight: float = field(default=0.45)
-    talon_object_evidence_pweight: float = field(default=0.10)
-    talon_object_evidence_apply_to_short: bool = field(default=False)
-    talon_object_evidence_apply_to_medium: bool = field(default=True)
-    talon_object_evidence_apply_to_long: bool = field(default=False)
-    talon_question_pooling: str = field(default="mean")
-    talon_question_pooling_topk: int = field(default=4)
-    talon_question_contrast_weight: float = field(default=0.0)
-    talon_question_contrast_apply_to_short: bool = field(default=False)
-    talon_monotonic_base_tokens_per_frame: int = field(default=20)
-    talon_budget_strategy: str = field(default="marginal")
-    talon_budget_mode: str = field(default="attention")
-    talon_transport_mode: str = field(default="hard")
-    talon_transport_temperature: float = field(default=0.07)
-    talon_lite_enabled: bool = field(default=False)
-    talon_echo_temperature: float = field(default=0.07)
-    talon_echo_topk_neighbors: int = field(default=4)
-    talon_echo_residual_weight: float = field(default=0.0)
-    talon_echo_score_mode: str = field(default="mse")
-    talon_rd_spectral_weight: float = field(default=1.0)
-    talon_rd_innovation_weight: float = field(default=1.0)
-    talon_use_question_innovation: bool = field(default=True)
-    talon_innovation_qweight: float = field(default=0.25)
-    talon_output_mode: str = field(default="manifold")
-    talon_reconstruction_blend: float = field(default=0.0)
-    talon_anchor_score_weight: float = field(default=0.35)
-    talon_min_anchor_per_frame: int = field(default=2)
-    talon_passthrough_ratio: float = field(default=0.15)
-    talon_passthrough_min: int = field(default=2)
-    talon_use_segmentation: bool = field(default=True)
-    talon_disable_oversegmentation: bool = field(default=True)
-    talon_max_segments: int = field(default=4)
-    talon_deepstack_mode: str = field(default="keep")
     memory_token_ratio: float = field(default=0.10)
     memory_token_min: int = field(default=1)
     memory_token_max: int = field(default=16)
@@ -1078,112 +886,21 @@ def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: b
     return final_length, vision_length
 
 
-def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     if not hasattr(model, "flashvid_config"):
         return {
-            "talon_target_tokens_per_frame": None,
-            "talon_adaptive_retention_ratio": None,
-            "talon_complexity_score": None,
-            "talon_target_budget": None,
-            "talon_anchor_tokens": None,
-            "talon_rank_tokens": None,
-            "talon_event_tokens": None,
-            "talon_recall_tokens": None,
-            "talon_persistence_tokens": None,
-            "talon_object_tokens": None,
-            "talon_memory_tokens": None,
-            "talon_rank_cap": None,
-            "talon_chosen_rank": None,
-            "talon_duplicate_index_count": None,
-            "talon_question_aware_active": None,
-            "talon_router_mode_code": None,
-            "talon_router_fused_concentration": None,
-            "talon_router_residual_concentration": None,
-            "talon_router_question_concentration": None,
-            "talon_router_frame_entropy": None,
         }
     cfg = getattr(model, "flashvid_config")
-    target = getattr(cfg, "last_talon_target_tokens_per_frame", None)
     adaptive_ratio = getattr(cfg, "last_adaptive_retention_ratio", None)
-    complexity = getattr(cfg, "last_talon_complexity_score", None)
-    target_budget = getattr(cfg, "last_talon_target_budget", None)
-    anchor_tokens = getattr(cfg, "last_talon_anchor_tokens", None)
-    rank_tokens = getattr(cfg, "last_talon_rank_tokens", None)
-    event_tokens = getattr(cfg, "last_talon_event_tokens", None)
-    recall_tokens = getattr(cfg, "last_talon_recall_tokens", None)
-    persistence_tokens = getattr(cfg, "last_talon_persistence_tokens", None)
-    object_tokens = getattr(cfg, "last_talon_object_tokens", None)
-    memory_tokens = getattr(cfg, "last_talon_memory_tokens", None)
-    rank_cap = getattr(cfg, "last_talon_rank_cap", None)
-    chosen_rank = getattr(cfg, "last_talon_chosen_rank", None)
-    duplicate_count = getattr(cfg, "last_talon_duplicate_index_count", None)
-    question_active = getattr(cfg, "last_talon_question_aware_active", None)
-    router_mode = getattr(cfg, "last_talon_router_mode_code", None)
-    router_fused_conc = getattr(cfg, "last_talon_router_fused_concentration", None)
-    router_residual_conc = getattr(cfg, "last_talon_router_residual_concentration", None)
-    router_question_conc = getattr(cfg, "last_talon_router_question_concentration", None)
-    router_frame_entropy = getattr(cfg, "last_talon_router_frame_entropy", None)
     return {
-        "talon_target_tokens_per_frame": float(target) if target is not None else None,
-        "talon_adaptive_retention_ratio": float(adaptive_ratio) if adaptive_ratio is not None else None,
-        "talon_complexity_score": float(complexity) if complexity is not None else None,
-        "talon_target_budget": float(target_budget) if target_budget is not None else None,
-        "talon_anchor_tokens": float(anchor_tokens) if anchor_tokens is not None else None,
-        "talon_rank_tokens": float(rank_tokens) if rank_tokens is not None else None,
-        "talon_event_tokens": float(event_tokens) if event_tokens is not None else None,
-        "talon_recall_tokens": float(recall_tokens) if recall_tokens is not None else None,
-        "talon_persistence_tokens": float(persistence_tokens) if persistence_tokens is not None else None,
-        "talon_object_tokens": float(object_tokens) if object_tokens is not None else None,
-        "talon_memory_tokens": float(memory_tokens) if memory_tokens is not None else None,
-        "talon_rank_cap": float(rank_cap) if rank_cap is not None else None,
-        "talon_chosen_rank": float(chosen_rank) if chosen_rank is not None else None,
-        "talon_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
-        "talon_question_aware_active": float(bool(question_active)) if question_active is not None else None,
-        "talon_router_mode_code": float(router_mode) if router_mode is not None else None,
-        "talon_router_fused_concentration": float(router_fused_conc) if router_fused_conc is not None else None,
-        "talon_router_residual_concentration": float(router_residual_conc) if router_residual_conc is not None else None,
-        "talon_router_question_concentration": float(router_question_conc) if router_question_conc is not None else None,
-        "talon_router_frame_entropy": float(router_frame_entropy) if router_frame_entropy is not None else None,
     }
 
 
-def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
     empty = {
-        "talon_core_target_budget": None,
-        "talon_core_residual_mean": None,
-        "talon_core_semantic_tokens": None,
-        "talon_core_innovation_tokens": None,
-        "talon_core_duplicate_index_count": None,
-        "talon_core_question_aware_active": None,
-        "talon_core_budget_min": None,
-        "talon_core_budget_max": None,
-        "talon_core_grid_h": None,
-        "talon_core_grid_w": None,
     }
     if not hasattr(model, "flashvid_config"):
         return empty
     cfg = getattr(model, "flashvid_config")
-    target_budget = getattr(cfg, "last_talon_core_target_budget", None)
-    residual_mean = getattr(cfg, "last_talon_core_residual_mean", None)
-    semantic_tokens = getattr(cfg, "last_talon_core_semantic_tokens", None)
-    innovation_tokens = getattr(cfg, "last_talon_core_innovation_tokens", None)
-    duplicate_count = getattr(cfg, "last_talon_core_duplicate_index_count", None)
-    question_active = getattr(cfg, "last_talon_core_question_aware_active", None)
-    budget_min = getattr(cfg, "last_talon_core_budget_min", None)
-    budget_max = getattr(cfg, "last_talon_core_budget_max", None)
-    grid_h = getattr(cfg, "last_talon_core_grid_h", None)
-    grid_w = getattr(cfg, "last_talon_core_grid_w", None)
     return {
-        "talon_core_target_budget": float(target_budget) if target_budget is not None else None,
-        "talon_core_residual_mean": float(residual_mean) if residual_mean is not None else None,
-        "talon_core_semantic_tokens": float(semantic_tokens) if semantic_tokens is not None else None,
-        "talon_core_innovation_tokens": float(innovation_tokens) if innovation_tokens is not None else None,
-        "talon_core_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
-        "talon_core_question_aware_active": float(bool(question_active)) if question_active is not None else None,
-        "talon_core_budget_min": float(budget_min) if budget_min is not None else None,
-        "talon_core_budget_max": float(budget_max) if budget_max is not None else None,
-        "talon_core_grid_h": float(grid_h) if grid_h is not None else None,
-        "talon_core_grid_w": float(grid_w) if grid_w is not None else None,
     }
 
 
@@ -1237,35 +954,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     gen_tokens_per_run = []
     compressed_tokens_per_run = []
     vision_tokens_per_run = []
-    talon_target_per_run = []
-    talon_complexity_per_run = []
-    talon_target_budget_per_run = []
-    talon_anchor_per_run = []
-    talon_rank_per_run = []
-    talon_event_per_run = []
-    talon_recall_per_run = []
-    talon_persistence_per_run = []
-    talon_object_per_run = []
-    talon_memory_per_run = []
-    talon_rank_cap_per_run = []
-    talon_chosen_rank_per_run = []
-    talon_duplicate_per_run = []
-    talon_question_active_per_run = []
-    talon_router_mode_per_run = []
-    talon_router_fused_conc_per_run = []
-    talon_router_residual_conc_per_run = []
-    talon_router_question_conc_per_run = []
-    talon_router_frame_entropy_per_run = []
-    talon_core_target_budget_per_run = []
-    talon_core_residual_mean_per_run = []
-    talon_core_semantic_per_run = []
-    talon_core_innovation_per_run = []
-    talon_core_duplicate_per_run = []
-    talon_core_question_active_per_run = []
-    talon_core_budget_min_per_run = []
-    talon_core_budget_max_per_run = []
-    talon_core_grid_h_per_run = []
-    talon_core_grid_w_per_run = []
     graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
@@ -1304,107 +992,18 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         latencies.append(float(latency_ms))
         gen_tokens_per_run.append(float(gen_tokens))
         final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
-        debug_metrics = _get_talon_debug_metrics(model)
-        talon_core_metrics = _get_talon_core_debug_metrics(model)
         graft_metrics = _get_graft_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
         for key in GRAFT_METRIC_KEYS:
             if graft_metrics.get(key) is not None:
                 graft_metrics_per_run[key].append(float(graft_metrics[key]))
-        if debug_metrics["talon_target_tokens_per_frame"] is not None:
-            talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
-        if debug_metrics["talon_complexity_score"] is not None:
-            talon_complexity_per_run.append(float(debug_metrics["talon_complexity_score"]))
-        if debug_metrics["talon_target_budget"] is not None:
-            talon_target_budget_per_run.append(float(debug_metrics["talon_target_budget"]))
-        if debug_metrics["talon_anchor_tokens"] is not None:
-            talon_anchor_per_run.append(float(debug_metrics["talon_anchor_tokens"]))
-        if debug_metrics["talon_rank_tokens"] is not None:
-            talon_rank_per_run.append(float(debug_metrics["talon_rank_tokens"]))
-        if debug_metrics["talon_event_tokens"] is not None:
-            talon_event_per_run.append(float(debug_metrics["talon_event_tokens"]))
-        if debug_metrics["talon_recall_tokens"] is not None:
-            talon_recall_per_run.append(float(debug_metrics["talon_recall_tokens"]))
-        if debug_metrics["talon_persistence_tokens"] is not None:
-            talon_persistence_per_run.append(float(debug_metrics["talon_persistence_tokens"]))
-        if debug_metrics["talon_object_tokens"] is not None:
-            talon_object_per_run.append(float(debug_metrics["talon_object_tokens"]))
-        if debug_metrics["talon_memory_tokens"] is not None:
-            talon_memory_per_run.append(float(debug_metrics["talon_memory_tokens"]))
-        if debug_metrics["talon_rank_cap"] is not None:
-            talon_rank_cap_per_run.append(float(debug_metrics["talon_rank_cap"]))
-        if debug_metrics["talon_chosen_rank"] is not None:
-            talon_chosen_rank_per_run.append(float(debug_metrics["talon_chosen_rank"]))
-        if debug_metrics["talon_duplicate_index_count"] is not None:
-            talon_duplicate_per_run.append(float(debug_metrics["talon_duplicate_index_count"]))
-        if debug_metrics["talon_question_aware_active"] is not None:
-            talon_question_active_per_run.append(float(debug_metrics["talon_question_aware_active"]))
-        if debug_metrics["talon_router_mode_code"] is not None:
-            talon_router_mode_per_run.append(float(debug_metrics["talon_router_mode_code"]))
-        if debug_metrics["talon_router_fused_concentration"] is not None:
-            talon_router_fused_conc_per_run.append(float(debug_metrics["talon_router_fused_concentration"]))
-        if debug_metrics["talon_router_residual_concentration"] is not None:
-            talon_router_residual_conc_per_run.append(float(debug_metrics["talon_router_residual_concentration"]))
-        if debug_metrics["talon_router_question_concentration"] is not None:
-            talon_router_question_conc_per_run.append(float(debug_metrics["talon_router_question_concentration"]))
-        if debug_metrics["talon_router_frame_entropy"] is not None:
-            talon_router_frame_entropy_per_run.append(float(debug_metrics["talon_router_frame_entropy"]))
-        if talon_core_metrics["talon_core_target_budget"] is not None:
-            talon_core_target_budget_per_run.append(float(talon_core_metrics["talon_core_target_budget"]))
-        if talon_core_metrics["talon_core_residual_mean"] is not None:
-            talon_core_residual_mean_per_run.append(float(talon_core_metrics["talon_core_residual_mean"]))
-        if talon_core_metrics["talon_core_semantic_tokens"] is not None:
-            talon_core_semantic_per_run.append(float(talon_core_metrics["talon_core_semantic_tokens"]))
-        if talon_core_metrics["talon_core_innovation_tokens"] is not None:
-            talon_core_innovation_per_run.append(float(talon_core_metrics["talon_core_innovation_tokens"]))
-        if talon_core_metrics["talon_core_duplicate_index_count"] is not None:
-            talon_core_duplicate_per_run.append(float(talon_core_metrics["talon_core_duplicate_index_count"]))
-        if talon_core_metrics["talon_core_question_aware_active"] is not None:
-            talon_core_question_active_per_run.append(float(talon_core_metrics["talon_core_question_aware_active"]))
-        if talon_core_metrics["talon_core_budget_min"] is not None:
-            talon_core_budget_min_per_run.append(float(talon_core_metrics["talon_core_budget_min"]))
-        if talon_core_metrics["talon_core_budget_max"] is not None:
-            talon_core_budget_max_per_run.append(float(talon_core_metrics["talon_core_budget_max"]))
-        if talon_core_metrics["talon_core_grid_h"] is not None:
-            talon_core_grid_h_per_run.append(float(talon_core_metrics["talon_core_grid_h"]))
-        if talon_core_metrics["talon_core_grid_w"] is not None:
-            talon_core_grid_w_per_run.append(float(talon_core_metrics["talon_core_grid_w"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
     raw_visual_tokens = _get_raw_visual_token_metric(model, raw_visual_tokens, use_acceleration)
     compressed_visual_tokens = float(np.mean(compressed_tokens_per_run)) if compressed_tokens_per_run else float(raw_visual_tokens)
     vision_compressed_visual_tokens = float(np.mean(vision_tokens_per_run)) if vision_tokens_per_run else float(raw_visual_tokens)
-    talon_target_tokens_per_frame = float(np.mean(talon_target_per_run)) if talon_target_per_run else None
-    talon_complexity_score = float(np.mean(talon_complexity_per_run)) if talon_complexity_per_run else None
-    talon_target_budget = float(np.mean(talon_target_budget_per_run)) if talon_target_budget_per_run else None
-    talon_anchor_tokens = float(np.mean(talon_anchor_per_run)) if talon_anchor_per_run else None
-    talon_rank_tokens = float(np.mean(talon_rank_per_run)) if talon_rank_per_run else None
-    talon_event_tokens = float(np.mean(talon_event_per_run)) if talon_event_per_run else None
-    talon_recall_tokens = float(np.mean(talon_recall_per_run)) if talon_recall_per_run else None
-    talon_persistence_tokens = float(np.mean(talon_persistence_per_run)) if talon_persistence_per_run else None
-    talon_object_tokens = float(np.mean(talon_object_per_run)) if talon_object_per_run else None
-    talon_memory_tokens = float(np.mean(talon_memory_per_run)) if talon_memory_per_run else None
-    talon_rank_cap = float(np.mean(talon_rank_cap_per_run)) if talon_rank_cap_per_run else None
-    talon_chosen_rank = float(np.mean(talon_chosen_rank_per_run)) if talon_chosen_rank_per_run else None
-    talon_duplicate_index_count = float(np.mean(talon_duplicate_per_run)) if talon_duplicate_per_run else None
-    talon_question_aware_active = float(np.mean(talon_question_active_per_run)) if talon_question_active_per_run else None
-    talon_router_mode_code = float(np.mean(talon_router_mode_per_run)) if talon_router_mode_per_run else None
-    talon_router_fused_concentration = float(np.mean(talon_router_fused_conc_per_run)) if talon_router_fused_conc_per_run else None
-    talon_router_residual_concentration = float(np.mean(talon_router_residual_conc_per_run)) if talon_router_residual_conc_per_run else None
-    talon_router_question_concentration = float(np.mean(talon_router_question_conc_per_run)) if talon_router_question_conc_per_run else None
-    talon_router_frame_entropy = float(np.mean(talon_router_frame_entropy_per_run)) if talon_router_frame_entropy_per_run else None
-    talon_core_target_budget = float(np.mean(talon_core_target_budget_per_run)) if talon_core_target_budget_per_run else None
-    talon_core_residual_mean = float(np.mean(talon_core_residual_mean_per_run)) if talon_core_residual_mean_per_run else None
-    talon_core_semantic_tokens = float(np.mean(talon_core_semantic_per_run)) if talon_core_semantic_per_run else None
-    talon_core_innovation_tokens = float(np.mean(talon_core_innovation_per_run)) if talon_core_innovation_per_run else None
-    talon_core_duplicate_index_count = float(np.mean(talon_core_duplicate_per_run)) if talon_core_duplicate_per_run else None
-    talon_core_question_aware_active = float(np.mean(talon_core_question_active_per_run)) if talon_core_question_active_per_run else None
-    talon_core_budget_min = float(np.mean(talon_core_budget_min_per_run)) if talon_core_budget_min_per_run else None
-    talon_core_budget_max = float(np.mean(talon_core_budget_max_per_run)) if talon_core_budget_max_per_run else None
-    talon_core_grid_h = float(np.mean(talon_core_grid_h_per_run)) if talon_core_grid_h_per_run else None
-    talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
     graft_metric_means = {
         key: float(np.mean(values)) if values else None
         for key, values in graft_metrics_per_run.items()
@@ -1421,35 +1020,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "raw_visual_tokens": float(raw_visual_tokens),
         "compressed_visual_tokens": compressed_visual_tokens,
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
-        "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
-        "talon_complexity_score": talon_complexity_score,
-        "talon_target_budget": talon_target_budget,
-        "talon_anchor_tokens": talon_anchor_tokens,
-        "talon_rank_tokens": talon_rank_tokens,
-        "talon_event_tokens": talon_event_tokens,
-        "talon_recall_tokens": talon_recall_tokens,
-        "talon_persistence_tokens": talon_persistence_tokens,
-        "talon_object_tokens": talon_object_tokens,
-        "talon_memory_tokens": talon_memory_tokens,
-        "talon_rank_cap": talon_rank_cap,
-        "talon_chosen_rank": talon_chosen_rank,
-        "talon_duplicate_index_count": talon_duplicate_index_count,
-        "talon_question_aware_active": talon_question_aware_active,
-        "talon_router_mode_code": talon_router_mode_code,
-        "talon_router_fused_concentration": talon_router_fused_concentration,
-        "talon_router_residual_concentration": talon_router_residual_concentration,
-        "talon_router_question_concentration": talon_router_question_concentration,
-        "talon_router_frame_entropy": talon_router_frame_entropy,
-        "talon_core_target_budget": talon_core_target_budget,
-        "talon_core_residual_mean": talon_core_residual_mean,
-        "talon_core_semantic_tokens": talon_core_semantic_tokens,
-        "talon_core_innovation_tokens": talon_core_innovation_tokens,
-        "talon_core_duplicate_index_count": talon_core_duplicate_index_count,
-        "talon_core_question_aware_active": talon_core_question_aware_active,
-        "talon_core_budget_min": talon_core_budget_min,
-        "talon_core_budget_max": talon_core_budget_max,
-        "talon_core_grid_h": talon_core_grid_h,
-        "talon_core_grid_w": talon_core_grid_w,
         **graft_metric_means,
     }
 
@@ -1474,31 +1044,6 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "raw_visual_tokens": None,
         "compressed_visual_tokens": None,
         "vision_compressed_visual_tokens": None,
-        "talon_target_tokens_per_frame": None,
-        "talon_complexity_score": None,
-        "talon_target_budget": None,
-        "talon_anchor_tokens": None,
-        "talon_rank_tokens": None,
-        "talon_event_tokens": None,
-        "talon_recall_tokens": None,
-        "talon_persistence_tokens": None,
-        "talon_object_tokens": None,
-        "talon_memory_tokens": None,
-        "talon_rank_cap": None,
-        "talon_chosen_rank": None,
-        "talon_duplicate_index_count": None,
-        "talon_question_aware_active": None,
-        "talon_router_mode_code": None,
-        "talon_router_fused_concentration": None,
-        "talon_router_residual_concentration": None,
-        "talon_router_question_concentration": None,
-        "talon_router_frame_entropy": None,
-        "talon_core_target_budget": None,
-        "talon_core_residual_mean": None,
-        "talon_core_semantic_tokens": None,
-        "talon_core_innovation_tokens": None,
-        "talon_core_duplicate_index_count": None,
-        "talon_core_question_aware_active": None,
         "visual_token_reduction_ratio": None,
         "vision_visual_token_reduction_ratio": None,
         "error": None,
@@ -1533,35 +1078,6 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
                 "raw_visual_tokens": raw_v,
                 "compressed_visual_tokens": compressed_v,
                 "vision_compressed_visual_tokens": vision_compressed_v,
-                "talon_target_tokens_per_frame": result.get("talon_target_tokens_per_frame"),
-                "talon_complexity_score": result.get("talon_complexity_score"),
-                "talon_target_budget": result.get("talon_target_budget"),
-                "talon_anchor_tokens": result.get("talon_anchor_tokens"),
-                "talon_rank_tokens": result.get("talon_rank_tokens"),
-                "talon_event_tokens": result.get("talon_event_tokens"),
-                "talon_recall_tokens": result.get("talon_recall_tokens"),
-                "talon_persistence_tokens": result.get("talon_persistence_tokens"),
-                "talon_object_tokens": result.get("talon_object_tokens"),
-                "talon_memory_tokens": result.get("talon_memory_tokens"),
-                "talon_rank_cap": result.get("talon_rank_cap"),
-                "talon_chosen_rank": result.get("talon_chosen_rank"),
-                "talon_duplicate_index_count": result.get("talon_duplicate_index_count"),
-                "talon_question_aware_active": result.get("talon_question_aware_active"),
-                "talon_router_mode_code": result.get("talon_router_mode_code"),
-                "talon_router_fused_concentration": result.get("talon_router_fused_concentration"),
-                "talon_router_residual_concentration": result.get("talon_router_residual_concentration"),
-                "talon_router_question_concentration": result.get("talon_router_question_concentration"),
-                "talon_router_frame_entropy": result.get("talon_router_frame_entropy"),
-                "talon_core_target_budget": result.get("talon_core_target_budget"),
-                "talon_core_residual_mean": result.get("talon_core_residual_mean"),
-                "talon_core_semantic_tokens": result.get("talon_core_semantic_tokens"),
-                "talon_core_innovation_tokens": result.get("talon_core_innovation_tokens"),
-                "talon_core_duplicate_index_count": result.get("talon_core_duplicate_index_count"),
-                "talon_core_question_aware_active": result.get("talon_core_question_aware_active"),
-                "talon_core_budget_min": result.get("talon_core_budget_min"),
-                "talon_core_budget_max": result.get("talon_core_budget_max"),
-                "talon_core_grid_h": result.get("talon_core_grid_h"),
-                "talon_core_grid_w": result.get("talon_core_grid_w"),
                 **{key: result.get(key) for key in GRAFT_METRIC_KEYS},
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
@@ -1696,166 +1212,20 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("vision_compressed_visual_tokens") is not None
     ]
-    talon_target = [
-        float(r["talon_target_tokens_per_frame"])
+    reduction = [
+        float(r["visual_token_reduction_ratio"])
         for r in valid
-        if r.get("talon_target_tokens_per_frame") is not None
+        if r.get("visual_token_reduction_ratio") is not None
     ]
-    talon_complexity = [
-        float(r["talon_complexity_score"])
-        for r in valid
-        if r.get("talon_complexity_score") is not None
-    ]
-    talon_target_budget = [
-        float(r["talon_target_budget"])
-        for r in valid
-        if r.get("talon_target_budget") is not None
-    ]
-    talon_anchor_tokens = [
-        float(r["talon_anchor_tokens"])
-        for r in valid
-        if r.get("talon_anchor_tokens") is not None
-    ]
-    talon_rank_tokens = [
-        float(r["talon_rank_tokens"])
-        for r in valid
-        if r.get("talon_rank_tokens") is not None
-    ]
-    talon_event_tokens = [
-        float(r["talon_event_tokens"])
-        for r in valid
-        if r.get("talon_event_tokens") is not None
-    ]
-    talon_recall_tokens = [
-        float(r["talon_recall_tokens"])
-        for r in valid
-        if r.get("talon_recall_tokens") is not None
-    ]
-    talon_persistence_tokens = [
-        float(r["talon_persistence_tokens"])
-        for r in valid
-        if r.get("talon_persistence_tokens") is not None
-    ]
-    talon_object_tokens = [
-        float(r["talon_object_tokens"])
-        for r in valid
-        if r.get("talon_object_tokens") is not None
-    ]
-    talon_memory_tokens = [
-        float(r["talon_memory_tokens"])
-        for r in valid
-        if r.get("talon_memory_tokens") is not None
-    ]
-    talon_rank_cap = [
-        float(r["talon_rank_cap"])
-        for r in valid
-        if r.get("talon_rank_cap") is not None
-    ]
-    talon_chosen_rank = [
-        float(r["talon_chosen_rank"])
-        for r in valid
-        if r.get("talon_chosen_rank") is not None
-    ]
-    talon_duplicate_count = [
-        float(r["talon_duplicate_index_count"])
-        for r in valid
-        if r.get("talon_duplicate_index_count") is not None
-    ]
-    talon_question_active = [
-        float(r["talon_question_aware_active"])
-        for r in valid
-        if r.get("talon_question_aware_active") is not None
-    ]
-    talon_router_mode = [
-        float(r["talon_router_mode_code"])
-        for r in valid
-        if r.get("talon_router_mode_code") is not None
-    ]
-    talon_router_fused_conc = [
-        float(r["talon_router_fused_concentration"])
-        for r in valid
-        if r.get("talon_router_fused_concentration") is not None
-    ]
-    talon_router_residual_conc = [
-        float(r["talon_router_residual_concentration"])
-        for r in valid
-        if r.get("talon_router_residual_concentration") is not None
-    ]
-    talon_router_question_conc = [
-        float(r["talon_router_question_concentration"])
-        for r in valid
-        if r.get("talon_router_question_concentration") is not None
-    ]
-    talon_router_frame_entropy = [
-        float(r["talon_router_frame_entropy"])
-        for r in valid
-        if r.get("talon_router_frame_entropy") is not None
-    ]
-    talon_core_target_budget = [
-        float(r["talon_core_target_budget"])
-        for r in valid
-        if r.get("talon_core_target_budget") is not None
-    ]
-    talon_core_residual_mean = [
-        float(r["talon_core_residual_mean"])
-        for r in valid
-        if r.get("talon_core_residual_mean") is not None
-    ]
-    talon_core_semantic_tokens = [
-        float(r["talon_core_semantic_tokens"])
-        for r in valid
-        if r.get("talon_core_semantic_tokens") is not None
-    ]
-    talon_core_innovation_tokens = [
-        float(r["talon_core_innovation_tokens"])
-        for r in valid
-        if r.get("talon_core_innovation_tokens") is not None
-    ]
-    talon_core_duplicate_count = [
-        float(r["talon_core_duplicate_index_count"])
-        for r in valid
-        if r.get("talon_core_duplicate_index_count") is not None
-    ]
-    talon_core_question_active = [
-        float(r["talon_core_question_aware_active"])
-        for r in valid
-        if r.get("talon_core_question_aware_active") is not None
-    ]
-    talon_core_budget_min = [
-        float(r["talon_core_budget_min"])
-        for r in valid
-        if r.get("talon_core_budget_min") is not None
-    ]
-    talon_core_budget_max = [
-        float(r["talon_core_budget_max"])
-        for r in valid
-        if r.get("talon_core_budget_max") is not None
-    ]
-    talon_core_grid_h = [
-        float(r["talon_core_grid_h"])
-        for r in valid
-        if r.get("talon_core_grid_h") is not None
-    ]
-    talon_core_grid_w = [
-        float(r["talon_core_grid_w"])
-        for r in valid
-        if r.get("talon_core_grid_w") is not None
-    ]
-    reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
         float(r["vision_visual_token_reduction_ratio"])
         for r in valid
         if r.get("vision_visual_token_reduction_ratio") is not None
     ]
-    graft_stats = {
-        key: _stats([float(r[key]) for r in valid if r.get(key) is not None])
-        for key in GRAFT_METRIC_KEYS
-    }
 
-    return {
-        "num_samples": len(records),
+    summary = {
         "num_valid": len(valid),
-        "num_errors": len(records) - len(valid),
+        "num_samples": len(records),
         "accuracy": float(np.mean(correctness)) if correctness else None,
         "latency_ms": _stats(latency),
         "generated_tokens": _stats(gen_tokens),
@@ -1863,40 +1233,24 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "raw_visual_tokens": _stats(raw_visual),
         "compressed_visual_tokens": _stats(compressed_visual),
         "vision_compressed_visual_tokens": _stats(vision_compressed_visual),
-        "talon_target_tokens_per_frame": _stats(talon_target),
-        "talon_complexity_score": _stats(talon_complexity),
-        "talon_target_budget": _stats(talon_target_budget),
-        "talon_anchor_tokens": _stats(talon_anchor_tokens),
-        "talon_rank_tokens": _stats(talon_rank_tokens),
-        "talon_event_tokens": _stats(talon_event_tokens),
-        "talon_recall_tokens": _stats(talon_recall_tokens),
-        "talon_persistence_tokens": _stats(talon_persistence_tokens),
-        "talon_object_tokens": _stats(talon_object_tokens),
-        "talon_memory_tokens": _stats(talon_memory_tokens),
-        "talon_rank_cap": _stats(talon_rank_cap),
-        "talon_chosen_rank": _stats(talon_chosen_rank),
-        "talon_duplicate_index_count": _stats(talon_duplicate_count),
-        "talon_question_aware_active": _stats(talon_question_active),
-        "talon_router_mode_code": _stats(talon_router_mode),
-        "talon_router_fused_concentration": _stats(talon_router_fused_conc),
-        "talon_router_residual_concentration": _stats(talon_router_residual_conc),
-        "talon_router_question_concentration": _stats(talon_router_question_conc),
-        "talon_router_frame_entropy": _stats(talon_router_frame_entropy),
-        "talon_core_target_budget": _stats(talon_core_target_budget),
-        "talon_core_residual_mean": _stats(talon_core_residual_mean),
-        "talon_core_semantic_tokens": _stats(talon_core_semantic_tokens),
-        "talon_core_innovation_tokens": _stats(talon_core_innovation_tokens),
-        "talon_core_duplicate_index_count": _stats(talon_core_duplicate_count),
-        "talon_core_question_aware_active": _stats(talon_core_question_active),
-        "talon_core_budget_min": _stats(talon_core_budget_min),
-        "talon_core_budget_max": _stats(talon_core_budget_max),
-        "talon_core_grid_h": _stats(talon_core_grid_h),
-        "talon_core_grid_w": _stats(talon_core_grid_w),
-        **graft_stats,
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
+        "errors": [r.get("error") for r in records if r.get("error")][:5],
     }
 
+    # Keep GRAFT diagnostics when present, but avoid hard-coding old retired methods.
+    diagnostic_prefixes = ("graft_",)
+    diagnostic_keys = sorted(
+        key
+        for row in valid
+        for key in row.keys()
+        if any(str(key).startswith(prefix) for prefix in diagnostic_prefixes)
+    )
+    for key in diagnostic_keys:
+        vals = [float(r[key]) for r in valid if r.get(key) is not None and isinstance(r.get(key), (int, float, bool))]
+        if vals:
+            summary[key] = _stats(vals)
+    return summary
 
 def _summarize_pairwise_comparison(
     anchor_records: list[dict[str, Any]],
@@ -2122,188 +1476,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         question_aware_reweighting=False,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=False,
-        talon_transport_radius=args.talon_transport_radius,
-        talon_rank_ratio=args.talon_rank_ratio,
-        talon_rank_min=args.talon_rank_min,
-        talon_rank_max=args.talon_rank_max,
-        talon_budget_scale=args.talon_budget_scale,
-        talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
-        talon_short_target_tokens_per_frame=args.talon_short_target_tokens_per_frame,
-        talon_medium_target_tokens_per_frame=args.talon_medium_target_tokens_per_frame,
-        talon_long_target_tokens_per_frame=args.talon_long_target_tokens_per_frame,
-        talon_min_total_tokens=args.talon_min_total_tokens,
-        talon_fast_rank_plan=args.talon_fast_rank_plan,
-        talon_background_max_ratio=args.talon_background_max_ratio,
-        talon_frame_balanced_selection=args.talon_frame_balanced_selection,
-        talon_basis_method=args.talon_basis_method,
-        talon_basis_oversample=args.talon_basis_oversample,
-        talon_innovation_attention_weight=args.talon_innovation_attention_weight,
-        talon_motion_importance_weight=args.talon_motion_importance_weight,
-        talon_boundary_importance_weight=args.talon_boundary_importance_weight,
-        talon_question_frame_weight=args.talon_question_frame_weight,
-        talon_frame_balanced_memory=args.talon_frame_balanced_memory,
-        talon_memory_mode=args.talon_memory_mode,
-        talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
-        talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
-        talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
-        talon_spatial_anchor_coverage=args.talon_spatial_anchor_coverage,
-        talon_spatial_anchor_ratio=args.talon_spatial_anchor_ratio,
-        talon_spatial_anchor_rows=args.talon_spatial_anchor_rows,
-        talon_spatial_anchor_cols=args.talon_spatial_anchor_cols,
-        talon_spatial_anchor_score=args.talon_spatial_anchor_score,
-        talon_spatial_anchor_apply_to_short=args.talon_spatial_anchor_apply_to_short,
-        talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
-        talon_frame_importance_pooling=args.talon_frame_importance_pooling,
-        talon_frame_importance_topk=args.talon_frame_importance_topk,
-        talon_medium_frame_coverage_floor_ratio=args.talon_medium_frame_coverage_floor_ratio,
-        talon_long_frame_coverage_floor_ratio=args.talon_long_frame_coverage_floor_ratio,
-        talon_frame_local_budget_ratio=args.talon_frame_local_budget_ratio,
-        talon_question_recall_ratio=args.talon_question_recall_ratio,
-        talon_question_recall_qweight=args.talon_question_recall_qweight,
-        talon_persistence_recall_ratio=args.talon_persistence_recall_ratio,
-        talon_persistence_recall_qweight=args.talon_persistence_recall_qweight,
-        talon_persistence_recall_pweight=args.talon_persistence_recall_pweight,
-        talon_persistence_apply_to_short=args.talon_persistence_apply_to_short,
-        talon_persistence_apply_to_medium=args.talon_persistence_apply_to_medium,
-        talon_persistence_apply_to_long=args.talon_persistence_apply_to_long,
-        talon_object_evidence_ratio=args.talon_object_evidence_ratio,
-        talon_object_evidence_qweight=args.talon_object_evidence_qweight,
-        talon_object_evidence_sweight=args.talon_object_evidence_sweight,
-        talon_object_evidence_pweight=args.talon_object_evidence_pweight,
-        talon_object_evidence_apply_to_short=args.talon_object_evidence_apply_to_short,
-        talon_object_evidence_apply_to_medium=args.talon_object_evidence_apply_to_medium,
-        talon_object_evidence_apply_to_long=args.talon_object_evidence_apply_to_long,
-        talon_question_pooling=args.talon_question_pooling,
-        talon_question_pooling_topk=args.talon_question_pooling_topk,
-        talon_question_contrast_weight=args.talon_question_contrast_weight,
-        talon_question_contrast_apply_to_short=args.talon_question_contrast_apply_to_short,
-        talon_monotonic_base_tokens_per_frame=args.talon_monotonic_base_tokens_per_frame,
-        talon_budget_strategy=args.talon_budget_strategy,
-        talon_budget_mode=args.talon_budget_mode,
-        talon_transport_mode=args.talon_transport_mode,
-        talon_transport_temperature=args.talon_transport_temperature,
-        talon_lite_enabled=args.talon_lite_enabled,
-        talon_echo_temperature=args.talon_echo_temperature,
-        talon_echo_topk_neighbors=args.talon_echo_topk_neighbors,
-        talon_echo_residual_weight=args.talon_echo_residual_weight,
-        talon_echo_score_mode=args.talon_echo_score_mode,
-        talon_rd_spectral_weight=args.talon_rd_spectral_weight,
-        talon_rd_innovation_weight=args.talon_rd_innovation_weight,
-        talon_use_question_innovation=args.talon_use_question_innovation,
-        talon_innovation_qweight=args.talon_innovation_qweight,
-        talon_output_mode=args.talon_output_mode,
-        talon_reconstruction_blend=args.talon_reconstruction_blend,
-        talon_anchor_score_weight=args.talon_anchor_score_weight,
-        talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
-        talon_passthrough_ratio=args.talon_passthrough_ratio,
-        talon_passthrough_min=args.talon_passthrough_min,
-        talon_use_segmentation=args.talon_use_segmentation,
-        talon_disable_oversegmentation=args.talon_disable_oversegmentation,
-        talon_max_segments=args.talon_max_segments,
-        talon_deepstack_mode=args.talon_deepstack_mode,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
-        talon_adaptive_target_low=args.talon_adaptive_target_low,
-        talon_adaptive_target_mid=args.talon_adaptive_target_mid,
-        talon_adaptive_target_high=args.talon_adaptive_target_high,
-        talon_complexity_floor=args.talon_complexity_floor,
-        talon_complexity_ceil=args.talon_complexity_ceil,
-        talon_adaptive_gamma=args.talon_adaptive_gamma,
-        talon_adaptive_target_enabled=args.talon_adaptive_target_enabled,
-        talon_force_fixed_target=args.talon_force_fixed_target,
-        talon_target_mean_cap=args.talon_target_mean_cap,
-        talon_unified_selection=args.talon_unified_selection,
-        talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
-        talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
-        talon_background_global_ratio=args.talon_background_global_ratio,
-        talon_event_budget_ratio=args.talon_event_budget_ratio,
-        talon_memory_fused_weight=args.talon_memory_fused_weight,
-        talon_memory_residual_weight=args.talon_memory_residual_weight,
-        talon_memory_frame_weight=args.talon_memory_frame_weight,
-        talon_recall_memory_mode=args.talon_recall_memory_mode,
-        talon_final_fused_weight=args.talon_final_fused_weight,
-        talon_final_residual_weight=args.talon_final_residual_weight,
-        talon_final_frame_weight=args.talon_final_frame_weight,
-        talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
-        talon_recall_keep_bonus=args.talon_recall_keep_bonus,
-        talon_event_keep_bonus=args.talon_event_keep_bonus,
-        talon_legacy_base_keep_ratio=args.talon_legacy_base_keep_ratio,
-        talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
-        talon_prior_keep_bonus=args.talon_prior_keep_bonus,
-        talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
-        talon_flash_prior_channel_method=args.talon_flash_prior_channel_method,
-        talon_flash_prior_channel_min_per_frame=args.talon_flash_prior_channel_min_per_frame,
-        talon_flash_prior_channel_max_per_frame=args.talon_flash_prior_channel_max_per_frame,
-        talon_flash_prior_channel_bonus=args.talon_flash_prior_channel_bonus,
-        talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
-        talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
-        talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
-        talon_global_topk_ratio=args.talon_global_topk_ratio,
-        talon_rescue_enabled=args.talon_rescue_enabled,
-        talon_rescue_ratio=args.talon_rescue_ratio,
-        talon_rescue_from_memory_only=args.talon_rescue_from_memory_only,
-        talon_rescue_fused_weight=args.talon_rescue_fused_weight,
-        talon_rescue_residual_weight=args.talon_rescue_residual_weight,
-        talon_rescue_frame_weight=args.talon_rescue_frame_weight,
-        talon_rescue_global_ratio=args.talon_rescue_global_ratio,
-        talon_rerank_with_flash_prior=args.talon_rerank_with_flash_prior,
-        talon_flash_prior_ratio=args.talon_flash_prior_ratio,
-        talon_recall_semantic_ratio=args.talon_recall_semantic_ratio,
-        talon_recall_event_ratio=args.talon_recall_event_ratio,
-        talon_recall_frame_ratio=args.talon_recall_frame_ratio,
-        talon_recall_global_ratio=args.talon_recall_global_ratio,
-        talon_duration_aware=args.talon_duration_aware,
-        talon_medium_anchor_safety_ratio=args.talon_medium_anchor_safety_ratio,
-        talon_medium_event_budget_ratio=args.talon_medium_event_budget_ratio,
-        talon_medium_global_topk_ratio=args.talon_medium_global_topk_ratio,
-        talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
-        talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
-        talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
-        talon_task_aware_event=args.talon_task_aware_event,
-        talon_task_event_attention_weight=args.talon_task_event_attention_weight,
-        talon_task_event_qweight=args.talon_task_event_qweight,
-        talon_visual_task_balance=args.talon_visual_task_balance,
-        talon_visual_task_anchor_ratio=args.talon_visual_task_anchor_ratio,
-        talon_visual_task_event_ratio=args.talon_visual_task_event_ratio,
-        talon_visual_task_recall_ratio=args.talon_visual_task_recall_ratio,
-        talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
-        talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
-        talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
-        talon_adaptive_router=args.talon_adaptive_router,
-        talon_router_apply_to_short=args.talon_router_apply_to_short,
-        talon_router_visual_anchor_ratio=args.talon_router_visual_anchor_ratio,
-        talon_router_visual_event_ratio=args.talon_router_visual_event_ratio,
-        talon_router_visual_recall_ratio=args.talon_router_visual_recall_ratio,
-        talon_router_temporal_anchor_ratio=args.talon_router_temporal_anchor_ratio,
-        talon_router_temporal_event_ratio=args.talon_router_temporal_event_ratio,
-        talon_router_temporal_recall_ratio=args.talon_router_temporal_recall_ratio,
-        talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
-        talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
-        talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
-        talon_router_visual_concentration_threshold=args.talon_router_visual_concentration_threshold,
-        talon_router_low_residual_threshold=args.talon_router_low_residual_threshold,
-        talon_router_temporal_entropy_threshold=args.talon_router_temporal_entropy_threshold,
-        talon_router_temporal_residual_threshold=args.talon_router_temporal_residual_threshold,
-        talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
-        talon_temporal_num_chunks=args.talon_temporal_num_chunks,
-        talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
-        talon_temporal_chunk_score=args.talon_temporal_chunk_score,
-        talon_track_aware=args.talon_track_aware,
-        talon_track_budget_ratio=args.talon_track_budget_ratio,
-        talon_track_tokens_per_slot=args.talon_track_tokens_per_slot,
-        talon_track_score=args.talon_track_score,
-        talon_absorb_dropped_tokens=args.talon_absorb_dropped_tokens,
-        talon_absorb_ratio=args.talon_absorb_ratio,
-        talon_absorb_alpha=args.talon_absorb_alpha,
-        talon_absorb_score=args.talon_absorb_score,
-        talon_summary_replacement=args.talon_summary_replacement,
-        talon_summary_raw_swap=args.talon_summary_raw_swap,
-        talon_summary_ratio=args.talon_summary_ratio,
-        talon_summary_num_chunks=args.talon_summary_num_chunks,
-        talon_summary_pool_topk=args.talon_summary_pool_topk,
-        talon_summary_alpha=args.talon_summary_alpha,
-        talon_summary_score=args.talon_summary_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -2579,188 +1754,9 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
         adaptive_budget_high=args.adaptive_budget_high,
-        talon_adaptive_target_low=args.talon_adaptive_target_low,
-        talon_adaptive_target_mid=args.talon_adaptive_target_mid,
-        talon_adaptive_target_high=args.talon_adaptive_target_high,
-        talon_complexity_floor=args.talon_complexity_floor,
-        talon_complexity_ceil=args.talon_complexity_ceil,
-        talon_adaptive_gamma=args.talon_adaptive_gamma,
-        talon_transport_radius=args.talon_transport_radius,
-        talon_rank_ratio=args.talon_rank_ratio,
-        talon_rank_min=args.talon_rank_min,
-        talon_rank_max=args.talon_rank_max,
-        talon_budget_scale=args.talon_budget_scale,
-        talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
-        talon_short_target_tokens_per_frame=args.talon_short_target_tokens_per_frame,
-        talon_medium_target_tokens_per_frame=args.talon_medium_target_tokens_per_frame,
-        talon_long_target_tokens_per_frame=args.talon_long_target_tokens_per_frame,
-        talon_min_total_tokens=args.talon_min_total_tokens,
-        talon_fast_rank_plan=args.talon_fast_rank_plan,
-        talon_background_max_ratio=args.talon_background_max_ratio,
-        talon_frame_balanced_selection=args.talon_frame_balanced_selection,
-        talon_basis_method=args.talon_basis_method,
-        talon_basis_oversample=args.talon_basis_oversample,
-        talon_innovation_attention_weight=args.talon_innovation_attention_weight,
-        talon_motion_importance_weight=args.talon_motion_importance_weight,
-        talon_boundary_importance_weight=args.talon_boundary_importance_weight,
-        talon_question_frame_weight=args.talon_question_frame_weight,
-        talon_frame_balanced_memory=args.talon_frame_balanced_memory,
-        talon_memory_mode=args.talon_memory_mode,
-        talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
-        talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
-        talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
-        talon_spatial_anchor_coverage=args.talon_spatial_anchor_coverage,
-        talon_spatial_anchor_ratio=args.talon_spatial_anchor_ratio,
-        talon_spatial_anchor_rows=args.talon_spatial_anchor_rows,
-        talon_spatial_anchor_cols=args.talon_spatial_anchor_cols,
-        talon_spatial_anchor_score=args.talon_spatial_anchor_score,
-        talon_spatial_anchor_apply_to_short=args.talon_spatial_anchor_apply_to_short,
-        talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
-        talon_frame_importance_pooling=args.talon_frame_importance_pooling,
-        talon_frame_importance_topk=args.talon_frame_importance_topk,
-        talon_medium_frame_coverage_floor_ratio=args.talon_medium_frame_coverage_floor_ratio,
-        talon_long_frame_coverage_floor_ratio=args.talon_long_frame_coverage_floor_ratio,
-        talon_frame_local_budget_ratio=args.talon_frame_local_budget_ratio,
-        talon_question_recall_ratio=args.talon_question_recall_ratio,
-        talon_question_recall_qweight=args.talon_question_recall_qweight,
-        talon_persistence_recall_ratio=args.talon_persistence_recall_ratio,
-        talon_persistence_recall_qweight=args.talon_persistence_recall_qweight,
-        talon_persistence_recall_pweight=args.talon_persistence_recall_pweight,
-        talon_persistence_apply_to_short=args.talon_persistence_apply_to_short,
-        talon_persistence_apply_to_medium=args.talon_persistence_apply_to_medium,
-        talon_persistence_apply_to_long=args.talon_persistence_apply_to_long,
-        talon_object_evidence_ratio=args.talon_object_evidence_ratio,
-        talon_object_evidence_qweight=args.talon_object_evidence_qweight,
-        talon_object_evidence_sweight=args.talon_object_evidence_sweight,
-        talon_object_evidence_pweight=args.talon_object_evidence_pweight,
-        talon_object_evidence_apply_to_short=args.talon_object_evidence_apply_to_short,
-        talon_object_evidence_apply_to_medium=args.talon_object_evidence_apply_to_medium,
-        talon_object_evidence_apply_to_long=args.talon_object_evidence_apply_to_long,
-        talon_question_pooling=args.talon_question_pooling,
-        talon_question_pooling_topk=args.talon_question_pooling_topk,
-        talon_question_contrast_weight=args.talon_question_contrast_weight,
-        talon_question_contrast_apply_to_short=args.talon_question_contrast_apply_to_short,
-        talon_monotonic_base_tokens_per_frame=args.talon_monotonic_base_tokens_per_frame,
-        talon_budget_strategy=args.talon_budget_strategy,
-        talon_budget_mode=args.talon_budget_mode,
-        talon_transport_mode=args.talon_transport_mode,
-        talon_transport_temperature=args.talon_transport_temperature,
-        talon_lite_enabled=args.talon_lite_enabled,
-        talon_echo_temperature=args.talon_echo_temperature,
-        talon_echo_topk_neighbors=args.talon_echo_topk_neighbors,
-        talon_echo_residual_weight=args.talon_echo_residual_weight,
-        talon_echo_score_mode=args.talon_echo_score_mode,
-        talon_rd_spectral_weight=args.talon_rd_spectral_weight,
-        talon_rd_innovation_weight=args.talon_rd_innovation_weight,
-        talon_use_question_innovation=args.talon_use_question_innovation,
-        talon_innovation_qweight=args.talon_innovation_qweight,
-        talon_output_mode=args.talon_output_mode,
-        talon_reconstruction_blend=args.talon_reconstruction_blend,
-        talon_anchor_score_weight=args.talon_anchor_score_weight,
-        talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
-        talon_passthrough_ratio=args.talon_passthrough_ratio,
-        talon_passthrough_min=args.talon_passthrough_min,
-        talon_use_segmentation=args.talon_use_segmentation,
-        talon_disable_oversegmentation=args.talon_disable_oversegmentation,
-        talon_max_segments=args.talon_max_segments,
-        talon_deepstack_mode=args.talon_deepstack_mode,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
-        talon_adaptive_target_enabled=args.talon_adaptive_target_enabled,
-        talon_force_fixed_target=args.talon_force_fixed_target,
-        talon_target_mean_cap=args.talon_target_mean_cap,
-        talon_unified_selection=args.talon_unified_selection,
-        talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
-        talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
-        talon_background_global_ratio=args.talon_background_global_ratio,
-        talon_event_budget_ratio=args.talon_event_budget_ratio,
-        talon_memory_fused_weight=args.talon_memory_fused_weight,
-        talon_memory_residual_weight=args.talon_memory_residual_weight,
-        talon_memory_frame_weight=args.talon_memory_frame_weight,
-        talon_recall_memory_mode=args.talon_recall_memory_mode,
-        talon_final_fused_weight=args.talon_final_fused_weight,
-        talon_final_residual_weight=args.talon_final_residual_weight,
-        talon_final_frame_weight=args.talon_final_frame_weight,
-        talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
-        talon_recall_keep_bonus=args.talon_recall_keep_bonus,
-        talon_event_keep_bonus=args.talon_event_keep_bonus,
-        talon_legacy_base_keep_ratio=args.talon_legacy_base_keep_ratio,
-        talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
-        talon_prior_keep_bonus=args.talon_prior_keep_bonus,
-        talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
-        talon_flash_prior_channel_method=args.talon_flash_prior_channel_method,
-        talon_flash_prior_channel_min_per_frame=args.talon_flash_prior_channel_min_per_frame,
-        talon_flash_prior_channel_max_per_frame=args.talon_flash_prior_channel_max_per_frame,
-        talon_flash_prior_channel_bonus=args.talon_flash_prior_channel_bonus,
-        talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
-        talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
-        talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
-        talon_global_topk_ratio=args.talon_global_topk_ratio,
-        talon_rescue_enabled=args.talon_rescue_enabled,
-        talon_rescue_ratio=args.talon_rescue_ratio,
-        talon_rescue_from_memory_only=args.talon_rescue_from_memory_only,
-        talon_rescue_fused_weight=args.talon_rescue_fused_weight,
-        talon_rescue_residual_weight=args.talon_rescue_residual_weight,
-        talon_rescue_frame_weight=args.talon_rescue_frame_weight,
-        talon_rescue_global_ratio=args.talon_rescue_global_ratio,
-        talon_rerank_with_flash_prior=args.talon_rerank_with_flash_prior,
-        talon_flash_prior_ratio=args.talon_flash_prior_ratio,
-        talon_recall_semantic_ratio=args.talon_recall_semantic_ratio,
-        talon_recall_event_ratio=args.talon_recall_event_ratio,
-        talon_recall_frame_ratio=args.talon_recall_frame_ratio,
-        talon_recall_global_ratio=args.talon_recall_global_ratio,
-        talon_duration_aware=args.talon_duration_aware,
-        talon_medium_anchor_safety_ratio=args.talon_medium_anchor_safety_ratio,
-        talon_medium_event_budget_ratio=args.talon_medium_event_budget_ratio,
-        talon_medium_global_topk_ratio=args.talon_medium_global_topk_ratio,
-        talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
-        talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
-        talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
-        talon_task_aware_event=args.talon_task_aware_event,
-        talon_task_event_attention_weight=args.talon_task_event_attention_weight,
-        talon_task_event_qweight=args.talon_task_event_qweight,
-        talon_visual_task_balance=args.talon_visual_task_balance,
-        talon_visual_task_anchor_ratio=args.talon_visual_task_anchor_ratio,
-        talon_visual_task_event_ratio=args.talon_visual_task_event_ratio,
-        talon_visual_task_recall_ratio=args.talon_visual_task_recall_ratio,
-        talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
-        talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
-        talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
-        talon_adaptive_router=args.talon_adaptive_router,
-        talon_router_apply_to_short=args.talon_router_apply_to_short,
-        talon_router_visual_anchor_ratio=args.talon_router_visual_anchor_ratio,
-        talon_router_visual_event_ratio=args.talon_router_visual_event_ratio,
-        talon_router_visual_recall_ratio=args.talon_router_visual_recall_ratio,
-        talon_router_temporal_anchor_ratio=args.talon_router_temporal_anchor_ratio,
-        talon_router_temporal_event_ratio=args.talon_router_temporal_event_ratio,
-        talon_router_temporal_recall_ratio=args.talon_router_temporal_recall_ratio,
-        talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
-        talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
-        talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
-        talon_router_visual_concentration_threshold=args.talon_router_visual_concentration_threshold,
-        talon_router_low_residual_threshold=args.talon_router_low_residual_threshold,
-        talon_router_temporal_entropy_threshold=args.talon_router_temporal_entropy_threshold,
-        talon_router_temporal_residual_threshold=args.talon_router_temporal_residual_threshold,
-        talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
-        talon_temporal_num_chunks=args.talon_temporal_num_chunks,
-        talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
-        talon_temporal_chunk_score=args.talon_temporal_chunk_score,
-        talon_track_aware=args.talon_track_aware,
-        talon_track_budget_ratio=args.talon_track_budget_ratio,
-        talon_track_tokens_per_slot=args.talon_track_tokens_per_slot,
-        talon_track_score=args.talon_track_score,
-        talon_absorb_dropped_tokens=args.talon_absorb_dropped_tokens,
-        talon_absorb_ratio=args.talon_absorb_ratio,
-        talon_absorb_alpha=args.talon_absorb_alpha,
-        talon_absorb_score=args.talon_absorb_score,
-        talon_summary_replacement=args.talon_summary_replacement,
-        talon_summary_raw_swap=args.talon_summary_raw_swap,
-        talon_summary_ratio=args.talon_summary_ratio,
-        talon_summary_num_chunks=args.talon_summary_num_chunks,
-        talon_summary_pool_topk=args.talon_summary_pool_topk,
-        talon_summary_alpha=args.talon_summary_alpha,
-        talon_summary_score=args.talon_summary_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -2794,19 +1790,12 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
         duration_targets = (
-            f"{args.talon_short_target_tokens_per_frame}/"
-            f"{args.talon_medium_target_tokens_per_frame}/"
-            f"{args.talon_long_target_tokens_per_frame}"
         )
         print(
             f"{_phase_display_name(ours_phase_name)} config: "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"temporal_merge={args.temporal_merge_mode}, "
-            f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
-            f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
             f"duration_targets={duration_targets}, "
-            f"event_cap={args.talon_event_budget_ratio:.2f}, "
-            f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
     if args.run_graphvid:
         print(
@@ -2849,148 +1838,47 @@ def _print_summary(summary: dict[str, Any]):
         phase = summary.get(phase_name)
         if phase is None:
             continue
-        acc = phase["accuracy"]
+        acc = phase.get("accuracy")
         acc_text = f"{acc * 100:.2f}%" if acc is not None else "N/A"
-        print(f"[{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}")
-        lat_mean = phase["latency_ms"]["mean"]
-        vt_mean = phase["compressed_visual_tokens"]["mean"]
-        vision_vt_mean = phase["vision_compressed_visual_tokens"]["mean"]
-        talon_target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
-        talon_complexity_mean = phase.get("talon_complexity_score", {}).get("mean")
-        talon_budget_mean = phase.get("talon_target_budget", {}).get("mean")
-        talon_anchor_mean = phase.get("talon_anchor_tokens", {}).get("mean")
-        talon_rank_mean = phase.get("talon_rank_tokens", {}).get("mean")
-        talon_event_mean = phase.get("talon_event_tokens", {}).get("mean")
-        talon_recall_mean = phase.get("talon_recall_tokens", {}).get("mean")
-        talon_persistence_mean = phase.get("talon_persistence_tokens", {}).get("mean")
-        talon_object_mean = phase.get("talon_object_tokens", {}).get("mean")
-        talon_memory_mean = phase.get("talon_memory_tokens", {}).get("mean")
-        talon_rank_cap_mean = phase.get("talon_rank_cap", {}).get("mean")
-        talon_chosen_rank_mean = phase.get("talon_chosen_rank", {}).get("mean")
-        talon_dup_mean = phase.get("talon_duplicate_index_count", {}).get("mean")
-        talon_question_active_mean = phase.get("talon_question_aware_active", {}).get("mean")
-        talon_router_mode_mean = phase.get("talon_router_mode_code", {}).get("mean")
-        talon_router_fused_mean = phase.get("talon_router_fused_concentration", {}).get("mean")
-        talon_router_resid_mean = phase.get("talon_router_residual_concentration", {}).get("mean")
-        talon_router_q_mean = phase.get("talon_router_question_concentration", {}).get("mean")
-        talon_router_entropy_mean = phase.get("talon_router_frame_entropy", {}).get("mean")
-        talon_core_budget_mean = phase.get("talon_core_target_budget", {}).get("mean")
-        talon_core_residual_mean = phase.get("talon_core_residual_mean", {}).get("mean")
-        talon_core_semantic_mean = phase.get("talon_core_semantic_tokens", {}).get("mean")
-        talon_core_innovation_mean = phase.get("talon_core_innovation_tokens", {}).get("mean")
-        talon_core_dup_mean = phase.get("talon_core_duplicate_index_count", {}).get("mean")
-        talon_core_question_active_mean = phase.get("talon_core_question_aware_active", {}).get("mean")
-        talon_core_budget_min_mean = phase.get("talon_core_budget_min", {}).get("mean")
-        talon_core_budget_max_mean = phase.get("talon_core_budget_max", {}).get("mean")
-        talon_core_grid_h_mean = phase.get("talon_core_grid_h", {}).get("mean")
-        talon_core_grid_w_mean = phase.get("talon_core_grid_w", {}).get("mean")
-        graft_count_mean = phase.get("graft_component_count", {}).get("mean")
-        graft_num_nodes_mean = phase.get("graft_num_nodes", {}).get("mean")
-        graft_target_mean = phase.get("graft_target_components", {}).get("mean")
-        graft_protected_mean = phase.get("graft_protected_count", {}).get("mean")
-        graft_entries_before_mean = phase.get("graft_entries_before_budget", {}).get("mean")
-        graft_entries_after_mean = phase.get("graft_entries_after_budget", {}).get("mean")
-        graft_anchor_mean = phase.get("graft_anchor_ratio", {}).get("mean")
-        graft_residual_mean = phase.get("graft_input_is_residual", {}).get("mean")
-        graft_budget_div_mean = phase.get("graft_budget_diversity_weight", {}).get("mean")
-        graft_score_preset_mean = phase.get("graft_score_preset_code", {}).get("mean")
-        graft_budget_active_mean = phase.get("graft_budget_correction_active", {}).get("mean")
-        graft_protected_kept_mean = phase.get("graft_protected_kept_count", {}).get("mean")
-        graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
-        graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
-        graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
-        graft_radius_max_mean = phase.get("graft_radius_max", {}).get("mean")
-        graft_edges_mean = phase.get("graft_edges_considered", {}).get("mean")
-        graft_accept_mean = phase.get("graft_edges_accepted", {}).get("mean")
-        graft_mutual_rej_mean = phase.get("graft_mutual_rejected", {}).get("mean")
-        graft_radius_rej_mean = phase.get("graft_radius_rejected", {}).get("mean")
-        graft_capacity_rej_mean = phase.get("graft_capacity_rejected", {}).get("mean")
-        graft_same_frame_rej_mean = phase.get("graft_same_frame_rejected", {}).get("mean")
-        red_mean = phase["visual_token_reduction_ratio"]["mean"]
-        vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
+        print(f"[{phase_name}] valid={phase.get('num_valid', 0)}/{phase.get('num_samples', 0)} acc={acc_text}")
+        lat_mean = phase.get("latency_ms", {}).get("mean")
+        vt_mean = phase.get("compressed_visual_tokens", {}).get("mean")
+        vision_vt_mean = phase.get("vision_compressed_visual_tokens", {}).get("mean")
+        red_mean = phase.get("visual_token_reduction_ratio", {}).get("mean")
+        vision_red_mean = phase.get("vision_visual_token_reduction_ratio", {}).get("mean")
         if lat_mean is not None:
             print(f"  latency mean: {lat_mean:.2f} ms")
         if vt_mean is not None:
             print(f"  final visual tokens mean: {vt_mean:.2f}")
         if vision_vt_mean is not None:
             print(f"  vision-side tokens mean: {vision_vt_mean:.2f}")
-        if talon_target_mean is not None:
-            print(f"  talon target/frame mean: {talon_target_mean:.2f}")
-        if talon_complexity_mean is not None:
-            print(f"  talon complexity mean: {talon_complexity_mean:.4f}")
-        if talon_budget_mean is not None:
-            print(f"  talon target budget mean: {talon_budget_mean:.2f}")
-        if talon_anchor_mean is not None:
-            print(f"  talon anchor/event/recall mean: {talon_anchor_mean:.2f}/{(talon_event_mean or 0.0):.2f}/{(talon_recall_mean or 0.0):.2f}")
-        if talon_persistence_mean is not None and talon_persistence_mean > 0:
-            print(f"  talon persistence recall mean: {talon_persistence_mean:.2f}")
-        if talon_object_mean is not None and talon_object_mean > 0:
-            print(f"  talon object evidence mean: {talon_object_mean:.2f}")
-        if talon_rank_mean is not None:
-            print(f"  talon rank/memory mean: {talon_rank_mean:.2f}/{(talon_memory_mean or 0.0):.2f}")
-        if talon_rank_cap_mean is not None:
-            print(f"  talon rank cap/chosen mean: {talon_rank_cap_mean:.2f}/{(talon_chosen_rank_mean or 0.0):.2f}")
-        if talon_dup_mean is not None:
-            print(f"  talon duplicate index mean: {talon_dup_mean:.2f}")
-        if talon_question_active_mean is not None:
-            print(f"  talon question-aware active mean: {talon_question_active_mean:.2f}")
-        if talon_router_mode_mean is not None and talon_router_mode_mean > 0:
-            print(f"  talon router mode code mean: {talon_router_mode_mean:.2f} (1=visual,2=temporal,3=balanced)")
-        if talon_router_fused_mean is not None:
-            print(
-                "  talon router fused/residual/question/entropy mean: "
-                f"{talon_router_fused_mean:.3f}/{(talon_router_resid_mean or 0.0):.3f}/"
-                f"{(talon_router_q_mean or 0.0):.3f}/{(talon_router_entropy_mean or 0.0):.3f}"
-            )
-        if talon_core_budget_mean is not None:
-            print(f"  talon-core target budget mean: {talon_core_budget_mean:.2f}")
-        if talon_core_residual_mean is not None:
-            print(f"  talon-core residual mean: {talon_core_residual_mean:.6f}")
-        if talon_core_semantic_mean is not None:
-            print(
-                "  talon-core semantic/innovation mean: "
-                f"{talon_core_semantic_mean:.2f}/{(talon_core_innovation_mean or 0.0):.2f}"
-            )
-        if talon_core_dup_mean is not None:
-            print(f"  talon-core duplicate index mean: {talon_core_dup_mean:.2f}")
-        if talon_core_question_active_mean is not None:
-            print(f"  talon-core question-aware active mean: {talon_core_question_active_mean:.2f}")
-        if talon_core_budget_min_mean is not None:
-            print(
-                "  talon-core frame budget min/max mean: "
-                f"{talon_core_budget_min_mean:.2f}/{(talon_core_budget_max_mean or 0.0):.2f}"
-            )
-        if talon_core_grid_h_mean is not None:
-            print(f"  talon-core grid H/W mean: {talon_core_grid_h_mean:.2f}/{(talon_core_grid_w_mean or 0.0):.2f}")
+
+        graft_count_mean = phase.get("graft_component_count", {}).get("mean")
         if graft_count_mean is not None:
-            if graft_num_nodes_mean is not None:
-                print(
-                    "  graft nodes/target/protected/entries pre-post mean: "
-                    f"{graft_num_nodes_mean:.2f}/{(graft_target_mean or 0.0):.2f}/"
-                    f"{(graft_protected_mean or 0.0):.2f}/{(graft_entries_before_mean or 0.0):.2f}/"
-                    f"{(graft_entries_after_mean or 0.0):.2f}"
-                )
-            if graft_anchor_mean is not None:
-                print(
-                    "  graft anchor/residual-input/budget-div/score/fix/kept-protect mean: "
-                    f"{graft_anchor_mean:.3f}/{(graft_residual_mean or 0.0):.2f}/{(graft_budget_div_mean or 0.0):.2f}/"
-                    f"{(graft_score_preset_mean or 0.0):.2f}/{(graft_budget_active_mean or 0.0):.2f}/"
-                    f"{(graft_protected_kept_mean or 0.0):.2f}"
-                )
+            graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
+            graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
+            graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
             print(
                 "  graft components avg/max/radius mean: "
-                f"{graft_count_mean:.2f}/{(graft_size_mean or 0.0):.2f}/{(graft_max_size_mean or 0.0):.2f}/"
-                f"{(graft_radius_mean or 0.0):.4f}"
+                f"{graft_count_mean:.2f}/{(graft_size_mean or 0.0):.2f}/"
+                f"{(graft_max_size_mean or 0.0):.2f}/{(graft_radius_mean or 0.0):.4f}"
             )
-        if graft_radius_max_mean is not None:
-            print(f"  graft radius max mean: {graft_radius_max_mean:.4f}")
-        if graft_edges_mean is not None:
-            print(
-                "  graft edges considered/accepted/rej(m/r/c/sf) mean: "
-                f"{graft_edges_mean:.2f}/{(graft_accept_mean or 0.0):.2f}/"
-                f"{(graft_mutual_rej_mean or 0.0):.2f}/{(graft_radius_rej_mean or 0.0):.2f}/"
-                f"{(graft_capacity_rej_mean or 0.0):.2f}/{(graft_same_frame_rej_mean or 0.0):.2f}"
-            )
+            graft_radius_max_mean = phase.get("graft_radius_max", {}).get("mean")
+            if graft_radius_max_mean is not None:
+                print(f"  graft radius max mean: {graft_radius_max_mean:.4f}")
+            graft_edges_mean = phase.get("graft_edges_considered", {}).get("mean")
+            if graft_edges_mean is not None:
+                graft_accept_mean = phase.get("graft_edges_accepted", {}).get("mean")
+                graft_mutual_rej_mean = phase.get("graft_mutual_rejected", {}).get("mean")
+                graft_radius_rej_mean = phase.get("graft_radius_rejected", {}).get("mean")
+                graft_capacity_rej_mean = phase.get("graft_capacity_rejected", {}).get("mean")
+                graft_same_frame_rej_mean = phase.get("graft_same_frame_rejected", {}).get("mean")
+                print(
+                    "  graft edges considered/accepted/rej(m/r/c/sf) mean: "
+                    f"{graft_edges_mean:.2f}/{(graft_accept_mean or 0.0):.2f}/"
+                    f"{(graft_mutual_rej_mean or 0.0):.2f}/{(graft_radius_rej_mean or 0.0):.2f}/"
+                    f"{(graft_capacity_rej_mean or 0.0):.2f}/{(graft_same_frame_rej_mean or 0.0):.2f}"
+                )
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -2999,41 +1887,22 @@ def _print_summary(summary: dict[str, Any]):
     comparison = summary.get("comparison", {})
     if comparison:
         print("[comparison]")
-        preferred_comparisons = [
-            "baseline_vs_flashvid",
-            *[f"baseline_vs_{phase}" for phase in _phase_order(summary) if phase not in ("baseline", "flashvid")],
-            *[f"flashvid_vs_{phase}" for phase in _phase_order(summary) if phase not in ("baseline", "flashvid")],
-        ]
-        ordered_comparisons = preferred_comparisons + sorted(k for k in comparison if k not in preferred_comparisons)
-        for key in ordered_comparisons:
-            comp = comparison.get(key)
+        for key in sorted(comparison):
+            comp = comparison[key]
             if comp is None:
                 continue
-            lat_sp = comp["latency_speedup_ratio"]["mean"]
-            ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
-            reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
-            vision_ratio_key = next((k for k in comp.keys() if k.startswith("vision_token_ratio_")), None)
-            vision_reduction_key = next((k for k in comp.keys() if k.startswith("vision_token_reduction_vs_")), None)
-            token_red = comp[reduction_key]["mean"] if reduction_key else None
-            vision_token_red = comp[vision_reduction_key]["mean"] if vision_reduction_key else None
-            anchor_name, target_name = key.split("_vs_", 1)
-            print(f"  [{key}] matched={comp['matched_samples']}")
-            print(
-                "    paired correctness: "
-                f"both_correct={comp.get('both_correct', 0)} both_wrong={comp.get('both_wrong', 0)} "
-                f"anchor_only={comp.get(f'{anchor_name}_only_correct', 0)} "
-                f"target_only={comp.get(f'{target_name}_only_correct', 0)}"
-            )
+            print(f"  [{key}] matched={comp.get('matched_samples', 0)}")
+            if "_vs_" in key:
+                anchor_name, target_name = key.split("_vs_", 1)
+                print(
+                    "    paired correctness: "
+                    f"both_correct={comp.get('both_correct', 0)} both_wrong={comp.get('both_wrong', 0)} "
+                    f"anchor_only={comp.get(f'{anchor_name}_only_correct', 0)} "
+                    f"target_only={comp.get(f'{target_name}_only_correct', 0)}"
+                )
+            lat_sp = comp.get("latency_speedup_ratio", {}).get("mean")
             if lat_sp is not None:
                 print(f"    latency speedup: {lat_sp:.3f}x")
-            if ratio_key and comp[ratio_key]["mean"] is not None:
-                print(f"    {ratio_key}: {comp[ratio_key]['mean']:.3f}")
-            if token_red is not None:
-                print(f"    token reduction: {token_red * 100:.2f}%")
-            if vision_ratio_key and comp[vision_ratio_key]["mean"] is not None:
-                print(f"    {vision_ratio_key}: {comp[vision_ratio_key]['mean']:.3f}")
-            if vision_token_red is not None:
-                print(f"    vision-side token reduction: {vision_token_red * 100:.2f}%")
 
     duration_breakdown = summary.get("duration_breakdown", {})
     if duration_breakdown:
@@ -3061,46 +1930,19 @@ def _print_summary(summary: dict[str, Any]):
                 acc_text = f"{acc * 100:.2f}%" if acc is not None else "N/A"
                 vt_mean = phase.get("compressed_visual_tokens", {}).get("mean")
                 vision_vt_mean = phase.get("vision_compressed_visual_tokens", {}).get("mean")
-                target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
-                channel = (
-                    phase.get("talon_anchor_tokens", {}).get("mean"),
-                    phase.get("talon_event_tokens", {}).get("mean"),
-                    phase.get("talon_recall_tokens", {}).get("mean"),
-                )
-                line = f"    [{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}"
+                line = f"    [{phase_name}] valid={phase.get('num_valid', 0)}/{phase.get('num_samples', 0)} acc={acc_text}"
                 if vt_mean is not None:
                     line += f" vtoken={vt_mean:.2f}"
                 if vision_vt_mean is not None:
                     line += f" vision={vision_vt_mean:.2f}"
-                if target_mean is not None:
-                    line += f" target/frame={target_mean:.2f}"
-                if channel[0] is not None:
-                    line += f" a/e/r={channel[0]:.1f}/{(channel[1] or 0.0):.1f}/{(channel[2] or 0.0):.1f}"
                 print(line)
-            comp_key = ""
-            comp = None
-            for candidate in [f"flashvid_vs_{phase}" for phase in _phase_order(summary) if phase not in ("baseline", "flashvid")]:
-                comp = bucket.get("comparison", {}).get(candidate)
-                if comp is not None:
-                    comp_key = candidate
-                    break
-            if comp is not None:
-                ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
-                reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
-                ratio = comp[ratio_key]["mean"] if ratio_key else None
-                reduction = comp[reduction_key]["mean"] if reduction_key else None
-                comp_line = f"    [{comp_key}] matched={comp['matched_samples']}"
-                if ratio is not None:
-                    comp_line += f" ratio={ratio:.3f}"
-                if reduction is not None:
-                    comp_line += f" token_reduction={reduction * 100:.2f}%"
-                print(comp_line)
     print(SEPARATOR)
-
 
 def run(args: BenchmarkArgs):
     ours_phase_name = _ours_phase_key(args)
     ours_output_path = _ours_output_path(args, ours_phase_name)
+    if args.run_ours:
+        raise ValueError("run_ours has been removed; use run_flashvid, run_graphvid, or run_graftvid.")
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
@@ -3171,10 +2013,6 @@ def run(args: BenchmarkArgs):
     if args.run_flashvid:
         print(f"\nPhase {phase_idx}/{total_phases}: FlashVID ...")
         print(
-            "[talon-active][flashvid] "
-            f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
-            f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
-            f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
@@ -3258,15 +2096,8 @@ def run(args: BenchmarkArgs):
         ours_display_name = _phase_display_name(ours_phase_name)
         print(f"\nPhase {phase_idx}/{total_phases}: {ours_display_name} ...")
         print(
-            f"[talon-active][{ours_phase_name}] "
             f"path=clean, qaware={args.question_aware_reweighting}, "
             f"variant={args.compression_variant}, merge={args.temporal_merge_mode}, "
-            f"target/frame={args.talon_target_tokens_per_frame}, "
-            f"duration_targets={args.talon_short_target_tokens_per_frame}/"
-            f"{args.talon_medium_target_tokens_per_frame}/"
-            f"{args.talon_long_target_tokens_per_frame}, "
-            f"rank_max={args.talon_rank_max}, "
-            f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]

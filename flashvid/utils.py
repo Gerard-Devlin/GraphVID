@@ -127,17 +127,8 @@ def flashvid_compression(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
-    if compression_variant == "talon":
-        from .talon import talon_compression
-
-        return talon_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
     if compression_variant not in ("flashvid", "graphvid", "graftvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid|talon")
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid")
     if compression_variant == "graftvid":
         from .graftvid import _reset_graft_metrics
 
