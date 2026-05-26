@@ -310,9 +310,41 @@ _VIDEOMME_LEGACY_POST_PROMPT = "Answer with the option's letter from the given c
 
 def _normalize_videomme_eval_style(style: str | None) -> str:
     normalized = str(style or "current").strip().lower()
+    if normalized in {"949", "commit949", "raw", "snapshot949", "best949"}:
+        return "commit949"
     if normalized in {"old", "legacy", "legacy_prompt", "old_prompt"}:
         return "legacy"
     return "current"
+
+
+def _extract_choice_letter_commit949(text: str) -> str:
+    """Exact MCQ parser from commit 94901b09."""
+    if not text:
+        return ""
+    t = (text or "").strip().upper()
+    if not t:
+        return ""
+
+    # 1) Strict single-token answer forms: "A", "(B)", "C.", "[D]".
+    m = re.match(r"^\s*[\(\[]?\s*([ABCD])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?[\s]*$", t)
+    if m:
+        return m.group(1)
+
+    # 2) Common prefixed forms: "Answer: B", "Option C", "Choice is D".
+    prefixed_patterns = [
+        r"\b(?:ANSWER|OPTION|CHOICE)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
+        r"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
+    ]
+    for pat in prefixed_patterns:
+        m = re.search(pat, t)
+        if m:
+            return m.group(1)
+
+    # 3) Fallback: first standalone option token (avoid letters inside words).
+    m = re.search(r"\b([ABCD])\b", t)
+    if m:
+        return m.group(1)
+    return ""
 
 
 def _extract_choice_letter_legacy(text: str) -> str:
@@ -390,7 +422,10 @@ def _extract_choice_letter_current(text: str) -> str:
 
 
 def _extract_choice_letter(text: str, style: str | None = None) -> str:
-    if _normalize_videomme_eval_style(style) == "legacy":
+    normalized = _normalize_videomme_eval_style(style)
+    if normalized == "commit949":
+        return _extract_choice_letter_commit949(text)
+    if normalized == "legacy":
         return _extract_choice_letter_legacy(text)
     return _extract_choice_letter_current(text)
 
@@ -427,7 +462,10 @@ def _split_videomme_question_options(prompt_text: str) -> tuple[str, str]:
 
 def _to_lmms_videomme_prompt(prompt_text: str, backend: str = "llava", style: str | None = None) -> str:
     """Use current lmms-eval VideoMME backend-specific prompt variants."""
-    if _normalize_videomme_eval_style(style) == "legacy":
+    normalized = _normalize_videomme_eval_style(style)
+    if normalized == "commit949":
+        return prompt_text
+    if normalized == "legacy":
         prompt = _strip_videomme_post_prompt(prompt_text)
         if not prompt.endswith("The best answer is:"):
             prompt = f"{prompt}\nThe best answer is:"

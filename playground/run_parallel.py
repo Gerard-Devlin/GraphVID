@@ -466,7 +466,7 @@ def main() -> None:
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
-    parser.add_argument("--videomme_eval_style", default="current", choices=["current", "legacy"])
+    parser.add_argument("--videomme_eval_style", default="current", choices=["current", "legacy", "commit949"])
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--token_selection_method", default="attn_div_v2")
     parser.add_argument("--flashvid_token_selection_method", default="attn_div_v2")
