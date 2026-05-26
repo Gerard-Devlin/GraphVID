@@ -759,12 +759,19 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
     except ImportError as exc:
         raise ImportError("qwen_vl_utils is required for Qwen video processing") from exc
 
-    video_content: dict[str, Any] = {
-        "type": "video",
-        "video": video_path,
-        "max_pixels": args.max_pixels,
-        "min_pixels": args.min_pixels,
-    }
+    if _normalize_videomme_eval_style(args.videomme_eval_style) == "commit949":
+        video_content: dict[str, Any] = {
+            "video": video_path,
+            "max_pixels": args.max_pixels,
+            "min_pixels": args.min_pixels,
+        }
+    else:
+        video_content = {
+            "type": "video",
+            "video": video_path,
+            "max_pixels": args.max_pixels,
+            "min_pixels": args.min_pixels,
+        }
     # lmms-eval/Qwen2.5-VL does not pass nframes into qwen_vl_utils. It decodes
     # the video first, then uniformly samples max_num_frames afterwards.
     if backend != "qwen2_5_vl":

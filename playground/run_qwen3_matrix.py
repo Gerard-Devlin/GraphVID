@@ -337,7 +337,8 @@ def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: st
     phase = summary.get(phase_key) if summary else None
     result: dict[str, float | None] = {
         "acc": _safe_pct(phase.get("accuracy")) if phase else None,
-        "tokens": _stat_mean(phase, "compressed_visual_tokens"),
+        "tokens": _stat_mean(phase, "vision_compressed_visual_tokens")
+        or _stat_mean(phase, "compressed_visual_tokens"),
     }
     if dataset_name == "videomme" and summary:
         by_duration = summary.get("duration_breakdown", {})
