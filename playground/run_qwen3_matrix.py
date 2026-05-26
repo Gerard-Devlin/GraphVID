@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid"}
+    allowed = {"graphvid", "graftvid", "flashvid", "fastvid", "visionzip", "prunevid"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -295,6 +295,28 @@ def _build_command(
             cmd.append("--no-graph_adaptive_detail_protection")
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
+    elif method in ("fastvid", "visionzip", "prunevid"):
+        cmd.extend(
+            [
+                "--no-run_flashvid",
+                f"--run_{method}",
+                "--external_budget_uses_expansion" if args.external_budget_uses_expansion else "--no-external_budget_uses_expansion",
+                "--fastvid_DySeg_c",
+                str(args.fastvid_DySeg_c),
+                "--fastvid_DySeg_tau",
+                str(args.fastvid_DySeg_tau),
+                "--fastvid_DySeg_ignore",
+                str(args.fastvid_DySeg_ignore),
+                "--fastvid_STPrune_d",
+                str(args.fastvid_STPrune_d),
+                "--fastvid_DTM_p",
+                str(args.fastvid_DTM_p),
+                "--fastvid_DTM_beta",
+                str(args.fastvid_DTM_beta),
+                "--visionzip_dominant_ratio",
+                str(args.visionzip_dominant_ratio),
+            ]
+        )
     else:
         raise ValueError(f"unsupported method={method!r}")
     cmd.extend(args.extra_args)
@@ -476,6 +498,14 @@ def main() -> None:
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
+    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
+    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
+    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
+    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
+    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
+    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
+    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     parser.add_argument("--token_selection_method", default="attn_div_stable")
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_stable")
     args, extra_args = parser.parse_known_args()

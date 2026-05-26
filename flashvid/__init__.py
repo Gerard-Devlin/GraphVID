@@ -156,6 +156,14 @@ def flashvid(
     graft_long_scene_threshold: Optional[float] = None,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
+    external_budget_uses_expansion: bool = True,
+    fastvid_DySeg_c: int = 8,
+    fastvid_DySeg_tau: float = 0.90,
+    fastvid_DySeg_ignore: float = 0.95,
+    fastvid_STPrune_d: float = 0.40,
+    fastvid_DTM_p: int = 4,
+    fastvid_DTM_beta: float = 0.60,
+    visionzip_dominant_ratio: float = 0.85,
     question_aware_reweighting: bool = False,
     question_reweight_beta: float = 0.35,
     # Shared memory/adaptive params.
@@ -199,6 +207,7 @@ def flashvid(
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
+            "fastvid"/"visionzip" run adapted external baseline paths.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
@@ -284,8 +293,11 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "graphvid", "graftvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid")
+    if variant not in ("flashvid", "graphvid", "graftvid", "fastvid", "visionzip", "prunevid"):
+        raise ValueError(
+            f"unsupported compression_variant={compression_variant!r}, "
+            "expected flashvid|graphvid|graftvid|fastvid|visionzip|prunevid"
+        )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
     elif variant == "graftvid":
@@ -363,6 +375,14 @@ def flashvid(
         graft_long_spatial_penalty=graft_long_spatial_penalty,
         graft_long_scene_threshold=graft_long_scene_threshold,
         compression_variant=variant,
+        external_budget_uses_expansion=external_budget_uses_expansion,
+        fastvid_DySeg_c=fastvid_DySeg_c,
+        fastvid_DySeg_tau=fastvid_DySeg_tau,
+        fastvid_DySeg_ignore=fastvid_DySeg_ignore,
+        fastvid_STPrune_d=fastvid_STPrune_d,
+        fastvid_DTM_p=fastvid_DTM_p,
+        fastvid_DTM_beta=fastvid_DTM_beta,
+        visionzip_dominant_ratio=visionzip_dominant_ratio,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,
         memory_token_ratio=memory_token_ratio,

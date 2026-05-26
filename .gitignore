@@ -209,3 +209,4 @@ __marimo__/
 # logs
 logs/
 analysis_pull/
+external_baselines/

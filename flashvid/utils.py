@@ -127,8 +127,11 @@ def flashvid_compression(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
-    if compression_variant not in ("flashvid", "graphvid", "graftvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|graftvid")
+    if compression_variant not in ("flashvid", "graphvid", "graftvid", "fastvid", "visionzip", "prunevid"):
+        raise ValueError(
+            f"unsupported compression_variant={compression_variant!r}, "
+            "expected flashvid|graphvid|graftvid|fastvid|visionzip|prunevid"
+        )
     if compression_variant == "graftvid":
         from .graftvid import _reset_graft_metrics
 
@@ -138,6 +141,14 @@ def flashvid_compression(
         question_features=question_features,
         flashvid_config=flashvid_config,
     )
+    if compression_variant in ("fastvid", "visionzip", "prunevid"):
+        from .external_baselines import external_baseline_compression
+
+        return external_baseline_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+        )
 
     # 1. Partition the video frames into segments based on transition similarities.
     if flashvid_config.do_segment:

@@ -54,13 +54,16 @@ def _phase_display_name(phase_key: str) -> str:
         "flashvid": "FlashVID",
         "graphvid": "GraphVID",
         "graftvid": "GraftVID",
+        "fastvid": "FastVID",
+        "visionzip": "VisionZip",
+        "prunevid": "PruneVid",
         "ours": "Ours",
     }
     return labels.get(phase_key, phase_key)
 
 
 def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "graphvid", "graftvid", "ours"]
+    preferred = ["baseline", "flashvid", "graphvid", "graftvid", "fastvid", "visionzip", "prunevid", "ours"]
     if not summary:
         return preferred
     extras = [
@@ -227,6 +230,7 @@ class BenchmarkArgs:
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
+    compression_variant: str = field(default="flashvid")
 
     # New experimental knobs (optional)
     question_aware_reweighting: bool = field(default=False)
@@ -238,6 +242,14 @@ class BenchmarkArgs:
     memory_token_ratio: float = field(default=0.10)
     memory_token_min: int = field(default=1)
     memory_token_max: int = field(default=16)
+    external_budget_uses_expansion: bool = field(default=True)
+    fastvid_DySeg_c: int = field(default=8)
+    fastvid_DySeg_tau: float = field(default=0.90)
+    fastvid_DySeg_ignore: float = field(default=0.95)
+    fastvid_STPrune_d: float = field(default=0.40)
+    fastvid_DTM_p: int = field(default=4)
+    fastvid_DTM_beta: float = field(default=0.60)
+    visionzip_dominant_ratio: float = field(default=0.85)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
     decode_update_interval: int = field(default=4)
@@ -1748,6 +1760,14 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant=args.compression_variant,
+        external_budget_uses_expansion=args.external_budget_uses_expansion,
+        fastvid_DySeg_c=args.fastvid_DySeg_c,
+        fastvid_DySeg_tau=args.fastvid_DySeg_tau,
+        fastvid_DySeg_ignore=args.fastvid_DySeg_ignore,
+        fastvid_STPrune_d=args.fastvid_STPrune_d,
+        fastvid_DTM_p=args.fastvid_DTM_p,
+        fastvid_DTM_beta=args.fastvid_DTM_beta,
+        visionzip_dominant_ratio=args.visionzip_dominant_ratio,
         question_aware_reweighting=args.question_aware_reweighting,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=args.adaptive_token_budget,
@@ -1941,8 +1961,6 @@ def _print_summary(summary: dict[str, Any]):
 def run(args: BenchmarkArgs):
     ours_phase_name = _ours_phase_key(args)
     ours_output_path = _ours_output_path(args, ours_phase_name)
-    if args.run_ours:
-        raise ValueError("run_ours has been removed; use run_flashvid, run_graphvid, or run_graftvid.")
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")

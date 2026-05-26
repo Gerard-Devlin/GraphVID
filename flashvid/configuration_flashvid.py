@@ -101,7 +101,19 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "graftvid": ADTS + constrained temporal forest path.
+    # "fastvid"/"visionzip": adapted external baseline paths.
     compression_variant: str = field(default="flashvid")
+
+    # External baseline adapters. These keep the released selection/merge
+    # logic intact and only adapt tensor IO to the unified benchmark harness.
+    external_budget_uses_expansion: bool = field(default=True)
+    fastvid_DySeg_c: int = field(default=8)
+    fastvid_DySeg_tau: float = field(default=0.90)
+    fastvid_DySeg_ignore: float = field(default=0.95)
+    fastvid_STPrune_d: float = field(default=0.40)
+    fastvid_DTM_p: int = field(default=4)
+    fastvid_DTM_beta: float = field(default=0.60)
+    visionzip_dominant_ratio: float = field(default=0.85)
 
     # Question-aware token reweighting.
     question_aware_reweighting: bool = field(default=False)

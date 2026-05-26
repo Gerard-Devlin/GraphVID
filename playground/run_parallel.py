@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GPU_CAP = 4
+EXTERNAL_METHODS = ("fastvid", "visionzip", "prunevid")
 
 
 def _str_bool(value: bool) -> str:
@@ -160,7 +161,53 @@ def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
     cmd.append("--graft_input_is_residual" if args.graft_input_is_residual else "--no-graft_input_is_residual")
 
 
+def _selected_external_method(args: argparse.Namespace) -> str | None:
+    selected = [name for name in EXTERNAL_METHODS if bool(getattr(args, f"run_{name}", False))]
+    if len(selected) > 1:
+        raise SystemExit(f"Enable at most one external baseline per run_parallel launch: {', '.join(selected)}")
+    method = selected[0] if selected else None
+    if method == "prunevid":
+        raise SystemExit(
+            "PruneVid is not launched here because the released repository only provides "
+            "a PLLaVA/KV-cache implementation, not a runnable Qwen3 adapter. "
+            "Refusing to run an approximation as PruneVid."
+        )
+    return method
+
+
+def _append_external_args(cmd: list[str], args: argparse.Namespace, method: str) -> None:
+    cmd.extend(
+        [
+            "--compression_variant",
+            method,
+            "--llm_retention_ratio",
+            str(args.llm_retention_ratio),
+            "--retention_ratio",
+            str(args.retention_ratio),
+            "--expansion",
+            str(args.expansion),
+            "--external_budget_uses_expansion",
+            str(bool(args.external_budget_uses_expansion)),
+            "--fastvid_DySeg_c",
+            str(args.fastvid_DySeg_c),
+            "--fastvid_DySeg_tau",
+            str(args.fastvid_DySeg_tau),
+            "--fastvid_DySeg_ignore",
+            str(args.fastvid_DySeg_ignore),
+            "--fastvid_STPrune_d",
+            str(args.fastvid_STPrune_d),
+            "--fastvid_DTM_p",
+            str(args.fastvid_DTM_p),
+            "--fastvid_DTM_beta",
+            str(args.fastvid_DTM_beta),
+            "--visionzip_dominant_ratio",
+            str(args.visionzip_dominant_ratio),
+        ]
+    )
+
+
 def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path) -> list[dict[str, object]]:
+    external_method = _selected_external_method(args)
     ranges = _split_ranges(args.start_index, args.total_limit, len(gpu_ids))
     shard_dir = work_dir / "logs" / "efficiency" / "parallel" / args.tag
     shard_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +217,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
         flashvid_out = shard_dir / f"flashvid_shard{shard_idx:02d}.jsonl"
         graphvid_out = shard_dir / f"graphvid_shard{shard_idx:02d}.jsonl"
         graftvid_out = shard_dir / f"graftvid_shard{shard_idx:02d}.jsonl"
+        external_out = shard_dir / f"{external_method}_shard{shard_idx:02d}.jsonl" if external_method else None
         summary_out = shard_dir / f"summary_shard{shard_idx:02d}.json"
         log_out = shard_dir / f"run_shard{shard_idx:02d}.log"
 
@@ -218,7 +266,7 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             "--run_flashvid",
             _str_bool(args.run_flashvid),
             "--run_ours",
-            "False",
+            _str_bool(external_method is not None),
             "--run_graphvid",
             _str_bool(args.run_graphvid),
             "--run_graftvid",
@@ -229,6 +277,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             str(graphvid_out),
             "--graftvid_output",
             str(graftvid_out),
+            "--ours_output",
+            str(external_out or (shard_dir / f"ours_shard{shard_idx:02d}.jsonl")),
             "--summary_output_json",
             str(summary_out),
         ]
@@ -236,6 +286,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             _append_graphvid_args(cmd, args)
         if args.run_graftvid:
             _append_graftvid_args(cmd, args)
+        if external_method is not None:
+            _append_external_args(cmd, args, external_method)
 
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -263,6 +315,8 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
                 "flashvid_out": flashvid_out,
                 "graphvid_out": graphvid_out,
                 "graftvid_out": graftvid_out,
+                "external_method": external_method,
+                "external_out": external_out,
                 "summary_out": summary_out,
                 "log_out": log_out,
             }
@@ -315,6 +369,7 @@ def _combine_jsonl(paths: list[Path], out_path: Path) -> list[dict]:
 
 
 def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shard_dir: Path) -> None:
+    external_method = _selected_external_method(args)
     sys.path.insert(0, str(REPO_ROOT))
     from playground.bench_all_metrics import (
         _add_duration_breakdown,
@@ -326,17 +381,21 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
     combined_flashvid = shard_dir / f"{args.tag}_flashvid.jsonl"
     combined_graphvid = shard_dir / f"{args.tag}_graphvid.jsonl"
     combined_graftvid = shard_dir / f"{args.tag}_graftvid.jsonl"
+    combined_external = shard_dir / f"{args.tag}_{external_method}.jsonl" if external_method else None
     combined_summary = shard_dir / f"{args.tag}_summary.json"
 
     flashvid_records = []
     graphvid_records = []
     graftvid_records = []
+    external_records = []
     if args.run_flashvid:
         flashvid_records = _combine_jsonl([Path(j["flashvid_out"]) for j in jobs], combined_flashvid)
     if args.run_graphvid:
         graphvid_records = _combine_jsonl([Path(j["graphvid_out"]) for j in jobs], combined_graphvid)
     if args.run_graftvid:
         graftvid_records = _combine_jsonl([Path(j["graftvid_out"]) for j in jobs], combined_graftvid)
+    if external_method and combined_external is not None:
+        external_records = _combine_jsonl([Path(j["external_out"]) for j in jobs if j.get("external_out")], combined_external)
 
     summary: dict[str, object] = {"comparison": {}}
     if args.run_flashvid:
@@ -345,6 +404,8 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
         summary["graphvid"] = _summarize_phase(graphvid_records)
     if args.run_graftvid:
         summary["graftvid"] = _summarize_phase(graftvid_records)
+    if external_method:
+        summary[external_method] = _summarize_phase(external_records)
     if args.run_flashvid and args.run_graphvid:
         summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
             flashvid_records,
@@ -359,9 +420,18 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
             anchor_name="flashvid",
             target_name="graftvid",
         )
+    if args.run_flashvid and external_method:
+        summary["comparison"][f"flashvid_vs_{external_method}"] = _summarize_pairwise_comparison(
+            flashvid_records,
+            external_records,
+            anchor_name="flashvid",
+            target_name=external_method,
+        )
     _add_duration_breakdown(
         summary,
         flashvid_records=flashvid_records if args.run_flashvid else None,
+        ours_records=external_records if external_method else None,
+        ours_phase_name=external_method or "ours",
         graphvid_records=graphvid_records if args.run_graphvid else None,
         graftvid_records=graftvid_records if args.run_graftvid else None,
     )
@@ -373,6 +443,8 @@ def _write_summary(args: argparse.Namespace, jobs: list[dict[str, object]], shar
         print(f"[combined] graftvid={combined_graftvid}")
     if args.run_flashvid:
         print(f"[combined] flashvid={combined_flashvid}")
+    if external_method and combined_external is not None:
+        print(f"[combined] {external_method}={combined_external}")
     print(f"[combined] summary={combined_summary}")
     _print_summary(summary)
 
@@ -401,6 +473,9 @@ def main() -> None:
     parser.add_argument("--run_ours", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--run_graphvid", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--run_graftvid", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--run_fastvid", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--run_visionzip", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--run_prunevid", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
@@ -453,6 +528,14 @@ def main() -> None:
     parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
     parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
+    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
+    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
+    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
+    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
+    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
+    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
+    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     args = parser.parse_args()
 
     work_dir = REPO_ROOT
@@ -467,8 +550,12 @@ def main() -> None:
         raise SystemExit("No eligible GPU found.")
     if args.total_limit <= 0:
         raise SystemExit("--total_limit must be positive for parallel sharding.")
-    if not (args.run_flashvid or args.run_graphvid or args.run_graftvid):
-        raise SystemExit("Enable at least one of --run_flashvid/--run_graphvid/--run_graftvid.")
+    external_method = _selected_external_method(args)
+    if not (args.run_flashvid or args.run_graphvid or args.run_graftvid or external_method):
+        raise SystemExit(
+            "Enable at least one of --run_flashvid/--run_graphvid/--run_graftvid/"
+            "--run_fastvid/--run_visionzip/--run_prunevid."
+        )
 
     jobs = _launch_shards(args, gpu_ids, work_dir)
     _wait_jobs(jobs)
