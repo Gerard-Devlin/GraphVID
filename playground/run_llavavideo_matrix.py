@@ -430,7 +430,7 @@ def main() -> None:
     parser.add_argument("--num_warmup", type=int, default=0)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
-    parser.add_argument("--videomme_eval_style", default="current", choices=["current", "legacy", "commit949"])
+    parser.add_argument("--videomme_eval_style", default="current", choices=["current", "commit949"])
     parser.add_argument("--attn_implementation", default="sdpa")
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=20000)

@@ -312,8 +312,6 @@ def _normalize_videomme_eval_style(style: str | None) -> str:
     normalized = str(style or "current").strip().lower()
     if normalized in {"949", "commit949", "raw", "snapshot949", "best949"}:
         return "commit949"
-    if normalized in {"old", "legacy", "legacy_prompt", "old_prompt"}:
-        return "legacy"
     return "current"
 
 
@@ -345,30 +343,6 @@ def _extract_choice_letter_commit949(text: str) -> str:
     if m:
         return m.group(1)
     return ""
-
-
-def _extract_choice_letter_legacy(text: str) -> str:
-    """Match the older in-repo VideoMME answer parser used by early tables."""
-    if not text or not text.strip():
-        return ""
-    stripped = text.strip()
-    answer_prefixes = (
-        "The answer is",
-        "The best answer is",
-        "The correct answer is",
-        "Answer:",
-        "answer:",
-        "ANSWER:",
-        "the answer is",
-        "the best answer is",
-        "the correct answer is",
-    )
-    for prefix in answer_prefixes:
-        stripped = stripped.replace(prefix, "").strip()
-    if len(stripped.split()) > 10 and not re.search(r"[ABCD]", stripped):
-        return ""
-    match = re.search(r"[ABCD]", stripped)
-    return match.group(0) if match else ""
 
 
 def _extract_choice_letter_current(text: str) -> str:
@@ -425,8 +399,6 @@ def _extract_choice_letter(text: str, style: str | None = None) -> str:
     normalized = _normalize_videomme_eval_style(style)
     if normalized == "commit949":
         return _extract_choice_letter_commit949(text)
-    if normalized == "legacy":
-        return _extract_choice_letter_legacy(text)
     return _extract_choice_letter_current(text)
 
 
@@ -465,11 +437,6 @@ def _to_lmms_videomme_prompt(prompt_text: str, backend: str = "llava", style: st
     normalized = _normalize_videomme_eval_style(style)
     if normalized == "commit949":
         return prompt_text
-    if normalized == "legacy":
-        prompt = _strip_videomme_post_prompt(prompt_text)
-        if not prompt.endswith("The best answer is:"):
-            prompt = f"{prompt}\nThe best answer is:"
-        return prompt
 
     backend = str(backend or "").lower()
     if backend == "qwen3_vl":
