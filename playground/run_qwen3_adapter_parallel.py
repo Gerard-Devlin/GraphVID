@@ -14,6 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_METHODS = ("fastvid", "visionzip")
 
 
+def _artifact_method_name(method: str) -> str:
+    return f"{method}_qwen3_adapter"
+
+
 def _query_free_gpus(free_ratio: float, min_free_mb: int) -> list[int]:
     cmd = [
         "nvidia-smi",
@@ -115,12 +119,13 @@ def _print_summary(summary: dict[str, Any], method: str) -> None:
 
 
 def _combine_outputs(args: argparse.Namespace, shard_dir: Path, shard_count: int) -> None:
+    artifact_method = _artifact_method_name(args.method)
     all_rows: list[dict[str, Any]] = []
     for idx in range(shard_count):
-        all_rows.extend(_read_jsonl(shard_dir / f"{args.method}_shard{idx:02d}.jsonl"))
+        all_rows.extend(_read_jsonl(shard_dir / f"{artifact_method}_shard{idx:02d}.jsonl"))
     all_rows.sort(key=lambda row: (str(row.get("sample_id", "")), int(row.get("sample_index", 0) or 0)))
 
-    combined_jsonl = shard_dir / f"{args.tag}_{args.method}.jsonl"
+    combined_jsonl = shard_dir / f"{args.tag}_{artifact_method}.jsonl"
     summary_path = shard_dir / f"{args.tag}_summary.json"
     _write_jsonl(combined_jsonl, all_rows)
 
@@ -138,7 +143,7 @@ def _combine_outputs(args: argparse.Namespace, shard_dir: Path, shard_count: int
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Parallel launcher for sidecar Qwen3 external baselines.")
+    parser = argparse.ArgumentParser(description="Parallel launcher for sidecar Qwen3 baseline adapters.")
     parser.add_argument("--method", choices=SUPPORTED_METHODS, required=True)
     parser.add_argument("--model_path", required=True)
     parser.add_argument("--model_backend", default="qwen3_vl")
@@ -163,7 +168,13 @@ def main() -> None:
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
     parser.add_argument("--token_selection_method", default="attn_div_v2")
-    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adapter_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--external_budget_uses_expansion",
+        dest="adapter_budget_uses_expansion",
+        action=argparse.BooleanOptionalAction,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
     parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
     parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
@@ -188,13 +199,14 @@ def main() -> None:
 
     jobs = []
     for shard_idx, ((start, limit), gpu_id) in enumerate(zip(ranges, gpu_ids)):
-        output_jsonl = shard_dir / f"{args.method}_shard{shard_idx:02d}.jsonl"
+        artifact_method = _artifact_method_name(args.method)
+        output_jsonl = shard_dir / f"{artifact_method}_shard{shard_idx:02d}.jsonl"
         summary_json = shard_dir / f"summary_shard{shard_idx:02d}.json"
         log_path = shard_dir / f"run_shard{shard_idx:02d}.log"
         cmd = [
             sys.executable,
             "-u",
-            "playground/bench_external_qwen3.py",
+            "playground/bench_qwen3_baseline_adapter.py",
             "--method",
             args.method,
             "--model_path",
@@ -239,7 +251,7 @@ def main() -> None:
             str(args.llm_retention_ratio),
             "--token_selection_method",
             args.token_selection_method,
-            "--external_budget_uses_expansion" if args.external_budget_uses_expansion else "--no-external_budget_uses_expansion",
+            "--adapter_budget_uses_expansion" if args.adapter_budget_uses_expansion else "--no-adapter_budget_uses_expansion",
             "--fastvid_DySeg_c",
             str(args.fastvid_DySeg_c),
             "--fastvid_DySeg_tau",

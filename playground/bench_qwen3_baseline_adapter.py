@@ -10,9 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_METHODS = ("fastvid", "visionzip")
 
 
-def _install_external_compression_patch(method: str) -> None:
+def _install_adapter_compression_patch(method: str) -> None:
     import flashvid.modeling_qwen3_vl as modeling_qwen3_vl
-    from playground.external_qwen3_baselines import external_baseline_compression
+    from playground.qwen3_baseline_adapters import adapter_baseline_compression
 
     original = modeling_qwen3_vl.flashvid_compression
 
@@ -25,7 +25,7 @@ def _install_external_compression_patch(method: str) -> None:
     ):
         variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
         if variant in SUPPORTED_METHODS:
-            return external_baseline_compression(video_features, cls_attention, flashvid_config)
+            return adapter_baseline_compression(video_features, cls_attention, flashvid_config)
         return original(
             video_features=video_features,
             cls_attention=cls_attention,
@@ -36,15 +36,15 @@ def _install_external_compression_patch(method: str) -> None:
     modeling_qwen3_vl.flashvid_compression = patched_flashvid_compression
 
 
-def _patch_bench_apply_ours(method: str, external_args: argparse.Namespace) -> None:
+def _patch_bench_apply_ours(method: str, adapter_args: argparse.Namespace) -> None:
     import playground.bench_all_metrics as bench
 
     original_apply_ours = bench._apply_ours
 
-    def apply_external(model, args, backend):
+    def apply_adapter(model, args, backend):
         # 949's flashvid() only accepts flashvid/talon/graphvid at setup time.
         # Initialize the standard hook, then switch only this phase's runtime
-        # compression variant to the external sidecar implementation.
+        # compression variant to the Qwen3 adapter implementation.
         original_variant = args.compression_variant
         args.compression_variant = "flashvid"
         try:
@@ -54,17 +54,18 @@ def _patch_bench_apply_ours(method: str, external_args: argparse.Namespace) -> N
 
         cfg = getattr(model, "flashvid_config")
         setattr(cfg, "compression_variant", method)
-        setattr(cfg, "external_budget_uses_expansion", bool(external_args.external_budget_uses_expansion))
-        setattr(cfg, "fastvid_DySeg_c", int(external_args.fastvid_DySeg_c))
-        setattr(cfg, "fastvid_DySeg_tau", float(external_args.fastvid_DySeg_tau))
-        setattr(cfg, "fastvid_DySeg_ignore", float(external_args.fastvid_DySeg_ignore))
-        setattr(cfg, "fastvid_STPrune_d", float(external_args.fastvid_STPrune_d))
-        setattr(cfg, "fastvid_DTM_p", int(external_args.fastvid_DTM_p))
-        setattr(cfg, "fastvid_DTM_beta", float(external_args.fastvid_DTM_beta))
-        setattr(cfg, "visionzip_dominant_ratio", float(external_args.visionzip_dominant_ratio))
+        setattr(cfg, "adapter_budget_uses_expansion", bool(adapter_args.adapter_budget_uses_expansion))
+        setattr(cfg, "external_budget_uses_expansion", bool(adapter_args.adapter_budget_uses_expansion))
+        setattr(cfg, "fastvid_DySeg_c", int(adapter_args.fastvid_DySeg_c))
+        setattr(cfg, "fastvid_DySeg_tau", float(adapter_args.fastvid_DySeg_tau))
+        setattr(cfg, "fastvid_DySeg_ignore", float(adapter_args.fastvid_DySeg_ignore))
+        setattr(cfg, "fastvid_STPrune_d", float(adapter_args.fastvid_STPrune_d))
+        setattr(cfg, "fastvid_DTM_p", int(adapter_args.fastvid_DTM_p))
+        setattr(cfg, "fastvid_DTM_beta", float(adapter_args.fastvid_DTM_beta))
+        setattr(cfg, "visionzip_dominant_ratio", float(adapter_args.visionzip_dominant_ratio))
         return model
 
-    bench._apply_ours = apply_external
+    bench._apply_ours = apply_adapter
 
 
 def _rename_summary_phase(summary_path: Path, method: str) -> None:
@@ -125,7 +126,7 @@ def _build_bench_args(cli: argparse.Namespace):
     args.run_ours = True
     args.compression_variant = cli.method
 
-    out_dir = REPO_ROOT / "logs" / "efficiency" / "external_qwen3" / cli.tag
+    out_dir = REPO_ROOT / "logs" / "efficiency" / "qwen3_baseline_adapters" / cli.tag
     out_dir.mkdir(parents=True, exist_ok=True)
     args.ours_output = cli.output_jsonl or str(out_dir / f"{cli.method}.jsonl")
     args.summary_output_json = cli.summary_output_json or str(out_dir / f"{cli.method}_summary.json")
@@ -134,7 +135,7 @@ def _build_bench_args(cli: argparse.Namespace):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run sidecar Qwen3 external baselines without modifying GraphVID/FlashVID core."
+        description="Run sidecar Qwen3 baseline adapters without modifying GraphVID/FlashVID core."
     )
     parser.add_argument("--method", choices=SUPPORTED_METHODS, required=True)
     parser.add_argument("--model_path", required=True)
@@ -159,7 +160,13 @@ def main() -> None:
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
     parser.add_argument("--token_selection_method", default="attn_div_v2")
     parser.add_argument("--local_files_only", action="store_true")
-    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adapter_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--external_budget_uses_expansion",
+        dest="adapter_budget_uses_expansion",
+        action=argparse.BooleanOptionalAction,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
     parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
     parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
@@ -171,14 +178,14 @@ def main() -> None:
 
     import playground.bench_all_metrics as bench
 
-    _install_external_compression_patch(cli.method)
+    _install_adapter_compression_patch(cli.method)
     _patch_bench_apply_ours(cli.method, cli)
     bench_args, out_dir = _build_bench_args(cli)
-    print(f"[external-qwen3] method={cli.method} out_dir={out_dir}")
+    print(f"[qwen3-adapter] method={cli.method} out_dir={out_dir}")
     bench.run(bench_args)
     _rename_summary_phase(Path(bench_args.summary_output_json), cli.method)
-    print(f"[external-qwen3] jsonl={bench_args.ours_output}")
-    print(f"[external-qwen3] summary={bench_args.summary_output_json}")
+    print(f"[qwen3-adapter] jsonl={bench_args.ours_output}")
+    print(f"[qwen3-adapter] summary={bench_args.summary_output_json}")
 
 
 if __name__ == "__main__":

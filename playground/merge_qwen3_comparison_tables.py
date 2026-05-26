@@ -256,7 +256,7 @@ def _write_tables(out_dir: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Merge GraphVID/FlashVID matrix rows with external baseline rows "
+            "Merge GraphVID/FlashVID matrix rows with Qwen3 baseline-adapter rows "
             "without touching any compression implementation."
         )
     )

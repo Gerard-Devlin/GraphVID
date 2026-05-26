@@ -102,6 +102,12 @@ def _phase_name(method: str) -> str:
     return method
 
 
+def _run_method_name(method: str) -> str:
+    if method in ("fastvid", "visionzip"):
+        return f"{method}_qwen3_adapter"
+    return method
+
+
 def _format_num(value: float | None, digits: int = 2) -> str:
     if value is None:
         return "-"
@@ -149,13 +155,14 @@ def _build_command(
     ratio: float,
     total_limit: int,
 ) -> tuple[list[str], Path]:
-    method_tag = f"{args.tag}_{method}_r{rate_label.replace('.', 'p')}_{dataset_name}"
+    run_method = _run_method_name(method)
+    method_tag = f"{args.tag}_{run_method}_r{rate_label.replace('.', 'p')}_{dataset_name}"
     summary_path = REPO_ROOT / "logs" / "efficiency" / "parallel" / method_tag / f"{method_tag}_summary.json"
     if method in ("fastvid", "visionzip"):
         cmd = [
             sys.executable,
             "-u",
-            "playground/run_external_qwen3_parallel.py",
+            "playground/run_qwen3_adapter_parallel.py",
             "--method",
             method,
             "--model_backend",
@@ -200,7 +207,7 @@ def _build_command(
             args.duration_filter,
             "--token_selection_method",
             args.token_selection_method,
-            "--external_budget_uses_expansion" if args.external_budget_uses_expansion else "--no-external_budget_uses_expansion",
+            "--adapter_budget_uses_expansion" if args.adapter_budget_uses_expansion else "--no-adapter_budget_uses_expansion",
             "--fastvid_DySeg_c",
             str(args.fastvid_DySeg_c),
             "--fastvid_DySeg_tau",
@@ -465,7 +472,13 @@ def main() -> None:
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     parser.add_argument("--talon_question_pooling", default="topk")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
-    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--adapter_budget_uses_expansion",
+        "--external_budget_uses_expansion",
+        dest="adapter_budget_uses_expansion",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
     parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
     parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
