@@ -154,6 +154,7 @@ class BenchmarkArgs:
     num_warmup: int = field(default=1)
     num_runs: int = field(default=3)
     max_new_tokens: int = field(default=16)
+    videomme_eval_style: str = field(default="current")
 
     # Which phases to run
     run_baseline: bool = field(default=True)
@@ -307,7 +308,38 @@ _VIDEOMME_OPTION_PROMPT = (
 _VIDEOMME_LEGACY_POST_PROMPT = "Answer with the option's letter from the given choices directly."
 
 
-def _extract_choice_letter(text: str) -> str:
+def _normalize_videomme_eval_style(style: str | None) -> str:
+    normalized = str(style or "current").strip().lower()
+    if normalized in {"old", "legacy", "legacy_prompt", "old_prompt"}:
+        return "legacy"
+    return "current"
+
+
+def _extract_choice_letter_legacy(text: str) -> str:
+    """Match the older in-repo VideoMME answer parser used by early tables."""
+    if not text or not text.strip():
+        return ""
+    stripped = text.strip()
+    answer_prefixes = (
+        "The answer is",
+        "The best answer is",
+        "The correct answer is",
+        "Answer:",
+        "answer:",
+        "ANSWER:",
+        "the answer is",
+        "the best answer is",
+        "the correct answer is",
+    )
+    for prefix in answer_prefixes:
+        stripped = stripped.replace(prefix, "").strip()
+    if len(stripped.split()) > 10 and not re.search(r"[ABCD]", stripped):
+        return ""
+    match = re.search(r"[ABCD]", stripped)
+    return match.group(0) if match else ""
+
+
+def _extract_choice_letter_current(text: str) -> str:
     """Match current lmms-eval VideoMME extract_mcq_answer priority rules."""
     if not text or not text.strip():
         return ""
@@ -357,6 +389,12 @@ def _extract_choice_letter(text: str) -> str:
     return candidates[0][0]
 
 
+def _extract_choice_letter(text: str, style: str | None = None) -> str:
+    if _normalize_videomme_eval_style(style) == "legacy":
+        return _extract_choice_letter_legacy(text)
+    return _extract_choice_letter_current(text)
+
+
 def _strip_videomme_post_prompt(prompt: str) -> str:
     prompt = (prompt or "").strip()
     for suffix in (
@@ -387,8 +425,14 @@ def _split_videomme_question_options(prompt_text: str) -> tuple[str, str]:
     return question, options
 
 
-def _to_lmms_videomme_prompt(prompt_text: str, backend: str = "llava") -> str:
+def _to_lmms_videomme_prompt(prompt_text: str, backend: str = "llava", style: str | None = None) -> str:
     """Use current lmms-eval VideoMME backend-specific prompt variants."""
+    if _normalize_videomme_eval_style(style) == "legacy":
+        prompt = _strip_videomme_post_prompt(prompt_text)
+        if not prompt.endswith("The best answer is:"):
+            prompt = f"{prompt}\nThe best answer is:"
+        return prompt
+
     backend = str(backend or "").lower()
     if backend == "qwen3_vl":
         question, options = _split_videomme_question_options(prompt_text)
@@ -805,7 +849,7 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
 def _prepare_inputs(model_bundle, args: BenchmarkArgs, sample: dict[str, Any]):
     video_path = _resolve_sample_video_path(sample, args.hf_home)
     backend = model_bundle["backend"]
-    prompt_text = _to_lmms_videomme_prompt(sample["input"], backend)
+    prompt_text = _to_lmms_videomme_prompt(sample["input"], backend, args.videomme_eval_style)
     if backend == "llava":
         return _prepare_llava_inputs(model_bundle, args, prompt_text, video_path)
     return _prepare_qwen_inputs(model_bundle, args, prompt_text, video_path)
@@ -831,7 +875,12 @@ def _clone_inputs(backend: str, prepared_inputs):
     return cloned
 
 
-def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) -> tuple[str, int]:
+def _decode_prediction(
+    model_bundle,
+    output_ids: torch.Tensor,
+    prompt_len: int,
+    eval_style: str | None = None,
+) -> tuple[str, int]:
     backend = model_bundle["backend"]
     if backend == "llava":
         # LLaVA-Video generation is driven by inputs_embeds. On recent
@@ -844,12 +893,12 @@ def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) 
             return "", 0
         tokenizer = model_bundle["tokenizer"]
         text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
-        answer = _extract_choice_letter(text)
+        answer = _extract_choice_letter(text, eval_style)
         if answer:
             return answer, gen_tokens
         first_token_id = int(generated[0, 0].item())
         first_token = tokenizer.decode([first_token_id], skip_special_tokens=True)
-        return _extract_choice_letter(first_token), gen_tokens
+        return _extract_choice_letter(first_token, eval_style), gen_tokens
 
     generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
     gen_tokens = int(generated.shape[1])
@@ -858,10 +907,10 @@ def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) 
 
     processor = model_bundle["processor"]
     text = processor.batch_decode(generated, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
-    answer = _extract_choice_letter(text)
+    answer = _extract_choice_letter(text, eval_style)
     if answer:
         return answer, gen_tokens
-    return _extract_choice_letter(text[:8]), gen_tokens
+    return _extract_choice_letter(text[:8], eval_style), gen_tokens
 
 
 def _safe_int_metric(value, fallback: int) -> int:
@@ -998,7 +1047,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             )
 
         output_ids, latency_ms = _timed_call(_generate)
-        answer, gen_tokens = _decode_prediction(model_bundle, output_ids, prompt_len)
+        answer, gen_tokens = _decode_prediction(model_bundle, output_ids, prompt_len, args.videomme_eval_style)
         if run_idx == 0:
             pred_answer = answer
         latencies.append(float(latency_ms))
@@ -1048,6 +1097,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "task_category": sample.get("task_category"),
         "sub_category": sample.get("sub_category"),
         "answer": sample.get("answer"),
+        "videomme_eval_style": _normalize_videomme_eval_style(args.videomme_eval_style),
         "pred_answer": "",
         "correct": None,
         "latency_ms": None,
@@ -1801,6 +1851,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Frames        : {args.num_frames}")
     print(f"Warmup/Runs   : {args.num_warmup}/{args.num_runs}")
     print(f"Max new tokens: {args.max_new_tokens}")
+    print(f"VideoMME eval : {_normalize_videomme_eval_style(args.videomme_eval_style)}")
     print(
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
