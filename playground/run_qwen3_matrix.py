@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "flashvid", "talon"}
+    allowed = {"graphvid", "flashvid", "talon", "fastvid", "visionzip"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -151,6 +151,75 @@ def _build_command(
 ) -> tuple[list[str], Path]:
     method_tag = f"{args.tag}_{method}_r{rate_label.replace('.', 'p')}_{dataset_name}"
     summary_path = REPO_ROOT / "logs" / "efficiency" / "parallel" / method_tag / f"{method_tag}_summary.json"
+    if method in ("fastvid", "visionzip"):
+        cmd = [
+            sys.executable,
+            "-u",
+            "playground/run_external_qwen3_parallel.py",
+            "--method",
+            method,
+            "--model_backend",
+            args.model_backend,
+            "--model_path",
+            args.model_path,
+            "--dataset_jsonl",
+            str(dataset_path),
+            "--hf_home",
+            args.hf_home,
+            "--total_limit",
+            str(total_limit),
+            "--num_frames",
+            str(args.num_frames),
+            "--min_pixels",
+            str(args.min_pixels),
+            "--max_pixels",
+            str(args.max_pixels),
+            "--num_warmup",
+            str(args.num_warmup),
+            "--num_runs",
+            str(args.num_runs),
+            "--max_new_tokens",
+            str(args.max_new_tokens),
+            "--attn_implementation",
+            args.attn_implementation,
+            "--free_ratio",
+            str(args.free_ratio),
+            "--min_free_mb",
+            str(args.min_free_mb),
+            "--max_gpus",
+            str(args.max_gpus),
+            "--retention_ratio",
+            str(ratio),
+            "--expansion",
+            str(args.expansion),
+            "--llm_retention_ratio",
+            str(args.llm_retention_ratio),
+            "--tag",
+            method_tag,
+            "--duration_filter",
+            args.duration_filter,
+            "--token_selection_method",
+            args.token_selection_method,
+            "--external_budget_uses_expansion" if args.external_budget_uses_expansion else "--no-external_budget_uses_expansion",
+            "--fastvid_DySeg_c",
+            str(args.fastvid_DySeg_c),
+            "--fastvid_DySeg_tau",
+            str(args.fastvid_DySeg_tau),
+            "--fastvid_DySeg_ignore",
+            str(args.fastvid_DySeg_ignore),
+            "--fastvid_STPrune_d",
+            str(args.fastvid_STPrune_d),
+            "--fastvid_DTM_p",
+            str(args.fastvid_DTM_p),
+            "--fastvid_DTM_beta",
+            str(args.fastvid_DTM_beta),
+            "--visionzip_dominant_ratio",
+            str(args.visionzip_dominant_ratio),
+        ]
+        if args.gpu_ids:
+            cmd.extend(["--gpu_ids", args.gpu_ids])
+        return cmd, summary_path
+
     cmd = [
         sys.executable,
         "-u",
@@ -161,6 +230,8 @@ def _build_command(
         args.model_path,
         "--dataset_jsonl",
         str(dataset_path),
+        "--duration_filter",
+        args.duration_filter,
         "--hf_home",
         args.hf_home,
         "--total_limit",
@@ -347,7 +418,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon,fastvid,visionzip.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -356,6 +427,9 @@ def main() -> None:
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Skip runs whose combined summary already exists.")
     parser.add_argument("--num_frames", type=int, default=32)
+    parser.add_argument("--min_pixels", type=int, default=64 * 28 * 28)
+    parser.add_argument("--max_pixels", type=int, default=256 * 28 * 28)
+    parser.add_argument("--duration_filter", default="")
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
@@ -391,6 +465,14 @@ def main() -> None:
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     parser.add_argument("--talon_question_pooling", default="topk")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
+    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
+    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
+    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
+    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
+    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
+    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
+    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

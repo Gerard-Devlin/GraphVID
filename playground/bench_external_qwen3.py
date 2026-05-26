@@ -127,8 +127,8 @@ def _build_bench_args(cli: argparse.Namespace):
 
     out_dir = REPO_ROOT / "logs" / "efficiency" / "external_qwen3" / cli.tag
     out_dir.mkdir(parents=True, exist_ok=True)
-    args.ours_output = str(out_dir / f"{cli.method}.jsonl")
-    args.summary_output_json = str(out_dir / f"{cli.method}_summary.json")
+    args.ours_output = cli.output_jsonl or str(out_dir / f"{cli.method}.jsonl")
+    args.summary_output_json = cli.summary_output_json or str(out_dir / f"{cli.method}_summary.json")
     return args, out_dir
 
 
@@ -142,6 +142,8 @@ def main() -> None:
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--hf_home", default="")
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--output_jsonl", default="")
+    parser.add_argument("--summary_output_json", default="")
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--limit", type=int, default=900)
     parser.add_argument("--duration_filter", default="short")
