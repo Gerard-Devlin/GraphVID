@@ -127,6 +127,7 @@ def Qwen2_5_VLTextModel_forward(
         raise ValueError("FlashVid configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
+    enable_inner_pruning = is_prefill and float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
 
     assert all(decoder_layer.attention_type == "full_attention" for decoder_layer in self.layers[: self.config.num_hidden_layers])
     _output_attentions = output_attentions
@@ -135,7 +136,7 @@ def Qwen2_5_VLTextModel_forward(
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
         # Only prunes visual tokens at prefilling stage.
-        if is_prefill:
+        if enable_inner_pruning:
             if layer_idx == flashvid_config.pruning_layer - 1:
                 output_attentions = True
             elif layer_idx == flashvid_config.pruning_layer:
