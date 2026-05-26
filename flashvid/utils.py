@@ -37,12 +37,11 @@ def extract_question_features(
     if batch_index >= input_ids.shape[0] or batch_index >= inputs_embeds.shape[0]:
         return None
 
-    embed_device = inputs_embeds.device
-    token_ids = input_ids[batch_index].to(embed_device)
+    token_ids = input_ids[batch_index]
     token_mask = torch.ones_like(token_ids, dtype=torch.bool)
 
     if attention_mask is not None and attention_mask.ndim == 2:
-        attn = attention_mask[batch_index].to(embed_device)
+        attn = attention_mask[batch_index]
         token_mask &= attn.bool() if attn.dtype == torch.bool else attn > 0
 
     if invalid_token_ids is not None:
@@ -127,28 +126,23 @@ def flashvid_compression(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
-    if compression_variant not in ("flashvid", "graphvid", "graftvid", "fastvid", "visionzip", "prunevid"):
-        raise ValueError(
-            f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|graftvid|fastvid|visionzip|prunevid"
-        )
-    if compression_variant == "graftvid":
-        from .graftvid import _reset_graft_metrics
+    if compression_variant == "talon":
+        from .talon import talon_compression
 
-        _reset_graft_metrics(flashvid_config)
+        return talon_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
+    if compression_variant not in ("flashvid", "graphvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|graphvid|talon")
+
     retention_ratio = _resolve_effective_retention_ratio(
         video_features=video_features,
         question_features=question_features,
         flashvid_config=flashvid_config,
     )
-    if compression_variant in ("fastvid", "visionzip", "prunevid"):
-        from .external_baselines import external_baseline_compression
-
-        return external_baseline_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-        )
 
     # 1. Partition the video frames into segments based on transition similarities.
     if flashvid_config.do_segment:
@@ -186,7 +180,6 @@ def flashvid_compression(
             segment_global_indices=segment_global_indices,
             cls_attention=segment_cls_attention,
             flashvid_config=flashvid_config,
-            question_features=question_features,
         )
         all_segment_features.append(segment_features)
         all_segment_indices.append(segment_global_indices)
@@ -209,7 +202,6 @@ def segment_compression(
     segment_global_indices: torch.Tensor,
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
-    question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compress the segment features by applying Temporal Average Merging (TAM) and Spatial Merging.
 
@@ -223,7 +215,7 @@ def segment_compression(
         Tuple[torch.Tensor, torch.Tensor]: The final tokens and their global indices after compression.
     """
     num_frames, num_visual_tokens, feat_dim = segment_features.shape
-    compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+
     # 1. Apply Attention and Diversity-based Token Selection (ADTS).
     if flashvid_config.alpha > 0:
         additional_kwargs = {"cls_attention": cls_attention} if "attn" in flashvid_config.token_selection_method else {}
@@ -247,25 +239,12 @@ def segment_compression(
     if num_other_tokens > 0 and flashvid_config.temporal_threshold < 1.0:
         if num_frames > 1:
             merge_mode = str(getattr(flashvid_config, "temporal_merge_mode", "tree") or "tree").strip().lower()
-            compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
-            if compression_variant == "graphvid":
+            if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid":
                 merge_mode = "graph"
-            elif compression_variant == "graftvid":
-                merge_mode = "graft"
             if merge_mode == "graph":
                 from .graphvid import graph_spatiotemporal_compression
 
                 temp_merged_token_list, temp_merged_indices_list = graph_spatiotemporal_compression(
-                    video_features=segment_features,
-                    temporal_threshold=flashvid_config.temporal_threshold,
-                    token_mask=mask,
-                    flashvid_config=flashvid_config,
-                    cls_attention=cls_attention,
-                )
-            elif merge_mode == "graft":
-                from .graftvid import graft_spatiotemporal_compression
-
-                temp_merged_token_list, temp_merged_indices_list = graft_spatiotemporal_compression(
                     video_features=segment_features,
                     temporal_threshold=flashvid_config.temporal_threshold,
                     token_mask=mask,
@@ -290,14 +269,13 @@ def segment_compression(
         temp_merged_global_indices_list = []
 
     is_graphvid = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid"
-    is_graph_family = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() in ("graphvid", "graftvid")
     all_tokens = [selected_features.view(-1, feat_dim)]
     all_global_indices = [selected_global_indices]
     # 2. Apply Spatial Merging to the tokens after temporal merging.
     if num_other_tokens > 0: ## Only apply spatial merging when there are STTM tokens.
         graph_final_cap = int(getattr(flashvid_config, "graph_final_tokens_per_frame", 0) or 0)
         skip_spatial_merge = (
-            is_graph_family
+            is_graphvid
             and graph_final_cap > 0
             and bool(getattr(flashvid_config, "graph_skip_spatial_merge_when_capped", True))
         )
@@ -370,7 +348,7 @@ def segment_compression(
 
     segment_final_tokens = torch.cat(all_tokens, dim=0)  # (num_final_tokens, feat_dim)
     segment_final_global_indices = torch.cat(all_global_indices, dim=0)  # (num_final_tokens,)
-    if is_graph_family:
+    if is_graphvid:
         segment_final_tokens, segment_final_global_indices = _graphvid_apply_final_cap(
             segment_final_tokens=segment_final_tokens,
             segment_final_global_indices=segment_final_global_indices,

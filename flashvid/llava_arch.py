@@ -115,24 +115,9 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                 flashvid_config.visual_token_start_index = visual_token_start_index
                 pooled_image_feature = self.get_2dPool(image_feat)
                 pooled_cls_attentions = self.get_2dPool(cls_attentions.unsqueeze(-1)).squeeze(-1)
-                raw_num_frames, raw_tokens_per_frame = pooled_image_feature.shape[:2]
-                mm_newline_position_for_raw = getattr(self.config, "mm_newline_position", "one_token")
-                raw_visual_length = int(raw_num_frames * raw_tokens_per_frame)
-                if mm_newline_position_for_raw == "frame":
-                    raw_visual_length += int(raw_num_frames)
-                elif mm_newline_position_for_raw in ("grid", "one_token") and "unpad" in getattr(self.config, "mm_patch_merge_type", "flat"):
-                    raw_visual_length += 1
-                flashvid_config.raw_vision_token_length = raw_visual_length
-                flashvid_config.raw_visual_token_length = raw_visual_length
-                # LLaVA uses IMAGE_TOKEN_INDEX=-200 as a placeholder. It must
-                # not be passed to the text embedding table; keep it masked out
-                # for question feature extraction and embed a safe placeholder.
-                safe_input_ids = input_ids.clone()
-                safe_token_id = int(getattr(self.config, "pad_token_id", 0) or getattr(self.config, "eos_token_id", 0) or 0)
-                safe_input_ids = safe_input_ids.masked_fill(safe_input_ids == IMAGE_TOKEN_INDEX, safe_token_id)
                 question_features = extract_question_features(
                     input_ids=input_ids,
-                    inputs_embeds=self.get_model().embed_tokens(safe_input_ids),
+                    inputs_embeds=self.get_model().embed_tokens(input_ids),
                     attention_mask=attention_mask,
                     invalid_token_ids=[IMAGE_TOKEN_INDEX],
                 )
@@ -190,7 +175,6 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                         # image_feature = self.add_token_per_frame(image_feature)
                         # * Append mm_newline_token to each frame
                         compressed_visual_token_list = []
-                        compressed_visual_index_list = []
                         num_frames, num_visual_tokens = pooled_image_feature.shape[:2] # (64, 169)
                         for frame_idx in range(num_frames):
                             start_idx = frame_idx * num_visual_tokens
@@ -199,11 +183,7 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                             frame_visual_tokens = compressed_visual_tokens[ind]
                             frame_visual_tokens = torch.cat((frame_visual_tokens, self.model.image_newline[None].to(image_feature.device)), dim=0)
                             compressed_visual_token_list.append(frame_visual_tokens)
-                            frame_indices = keep_visual_indices[ind].to(device=image_feature.device, dtype=torch.long)
-                            newline_index = torch.full((1,), -1, dtype=torch.long, device=image_feature.device)
-                            compressed_visual_index_list.append(torch.cat((frame_indices, newline_index), dim=0))
                         image_feature = torch.cat(compressed_visual_token_list, dim=0)
-                        flashvid_config.visual_seq_global_indices = torch.cat(compressed_visual_index_list, dim=0).detach()
                         flashvid_config.vision_token_length = int(image_feature.shape[0])
                         flashvid_config.llm_token_length = None
                         flashvid_config.visual_token_length = image_feature.shape[0] # * Update the visual token length in the config

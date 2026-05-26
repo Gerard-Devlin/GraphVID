@@ -127,7 +127,6 @@ def Qwen2_5_VLTextModel_forward(
         raise ValueError("FlashVid configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
-    enable_inner_pruning = is_prefill and float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
 
     assert all(decoder_layer.attention_type == "full_attention" for decoder_layer in self.layers[: self.config.num_hidden_layers])
     _output_attentions = output_attentions
@@ -136,7 +135,7 @@ def Qwen2_5_VLTextModel_forward(
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
         # Only prunes visual tokens at prefilling stage.
-        if enable_inner_pruning:
+        if is_prefill:
             if layer_idx == flashvid_config.pruning_layer - 1:
                 output_attentions = True
             elif layer_idx == flashvid_config.pruning_layer:
@@ -647,44 +646,7 @@ def Qwen2_5_VLModel_get_video_features(
             The temporal, height and width of feature shape of each video in LLM.
     """
     pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-    try:
-        forward_name = getattr(getattr(self.visual, "forward", None), "__name__", "")
-        if forward_name != "Qwen2_5_VisionTransformerPretrainedModel_forward":
-            visual_out = Qwen2_5_VisionTransformerPretrainedModel_forward(
-                self.visual,
-                pixel_values_videos,
-                video_grid_thw,
-            )
-        else:
-            visual_out = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
-    except Exception:
-        visual_out = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
-    if isinstance(visual_out, tuple):
-        video_embeds = visual_out[0]
-        cls_attention = visual_out[1] if len(visual_out) > 1 and torch.is_tensor(visual_out[1]) else None
-    elif hasattr(visual_out, "last_hidden_state"):
-        video_embeds = visual_out.last_hidden_state
-        cls_attention = getattr(visual_out, "attentions", None)
-    else:
-        video_embeds = visual_out
-        cls_attention = None
-
+    video_embeds, cls_attention = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
     split_sizes = (video_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
-    if cls_attention is None or not torch.is_tensor(cls_attention):
-        # Newer Transformers versions may bypass the FlashVID vision forward
-        # patch and return only video embeddings. Fall back to a deterministic
-        # saliency proxy so compression still runs instead of crashing.
-        if video_grid_thw is not None and int(video_grid_thw.shape[0]) == 1:
-            num_frames = max(1, int(video_grid_thw[0][0].item()))
-            per_frame = max(1, int(split_sizes[0]) // num_frames)
-            scores = video_embeds.float().norm(dim=-1)
-            cls_attention = scores[: num_frames * per_frame].view(num_frames, per_frame)
-        else:
-            cls_attention = video_embeds.float().norm(dim=-1).unsqueeze(0)
-    elif cls_attention.dim() == 1 and video_grid_thw is not None and int(video_grid_thw.shape[0]) == 1:
-        num_frames = max(1, int(video_grid_thw[0][0].item()))
-        per_frame = max(1, int(cls_attention.numel()) // num_frames)
-        cls_attention = cls_attention[: num_frames * per_frame].view(num_frames, per_frame)
-
     video_embeds = torch.split(video_embeds, split_sizes)
     return video_embeds, cls_attention

@@ -79,13 +79,12 @@ def Qwen2Model_forward(
         raise ValueError("FlashVID configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
-    enable_inner_pruning = is_prefill and float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
 
     assert all(decoder_layer.attention_type == "full_attention" for decoder_layer in self.layers[: self.config.num_hidden_layers])
     causal_mask = causal_mask_mapping["full_attention"]
     for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
         # Only prunes visual tokens in prefilling stage.
-        if enable_inner_pruning:
+        if is_prefill:
             if layer_idx == flashvid_config.pruning_layer - 1:
                 kwargs["output_attentions"] = True
             elif layer_idx == flashvid_config.pruning_layer:

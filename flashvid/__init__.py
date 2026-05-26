@@ -1,15 +1,8 @@
-from typing import Optional
-
 from torch import nn
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,
     Qwen2DecoderLayer,
     Qwen2Model,
-)
-from transformers.models.llama.modeling_llama import (
-    LlamaAttention,
-    LlamaDecoderLayer,
-    LlamaModel,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLAttention,
@@ -32,7 +25,6 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 
 from llava.model.llava_arch import LlavaMetaForCausalLM
-from llava.model.language_model.llava_llama import LlavaLlamaForCausalLM
 from llava.model.language_model.llava_qwen import LlavaQwenForCausalLM
 from llava.model.multimodal_encoder.siglip_encoder import (
     SigLipAttention,
@@ -48,11 +40,6 @@ from .modeling_qwen2 import (
     Qwen2Attention_forward,
     Qwen2DecoderLayer_forward,
     Qwen2Model_forward,
-)
-from .modeling_llama import (
-    LlamaAttention_forward,
-    LlamaDecoderLayer_forward,
-    LlamaModel_forward,
 )
 
 from .modeling_qwen2_5_vl import (
@@ -108,64 +95,93 @@ def flashvid(
     graph_merge_protect_ratio: float = 0.15,
     graph_merge_target_ratio: float = 0.65,
     graph_merge_representative: str = "medoid",
-    graph_representative_position: str = "protection",
-    graph_protection_attn_weight: float = 0.70,
-    graph_protection_novelty_weight: float = 0.30,
-    graph_protection_detail_weight: float = 0.0,
-    graph_adaptive_detail_protection: bool = False,
-    graph_adaptive_detail_boost: float = 0.22,
-    graph_adaptive_protect_boost: float = 0.10,
-    graph_merge_importance_penalty: float = 0.0,
-    graph_respect_temporal_threshold: bool = False,
     graph_final_tokens_per_frame: int = 0,
     graph_final_frame_floor_ratio: float = 0.55,
     graph_skip_spatial_merge_when_capped: bool = True,
-    graft_temporal_topk: int = 3,
-    graft_temporal_radius: int = 1,
-    graft_temporal_skip: int = 1,
-    graft_global_topk: int = 3,
-    graft_input_is_residual: bool = True,
-    graft_anchor_ratio: Optional[float] = None,
-    graft_edge_threshold: float = 0.80,
-    graft_component_radius_eps: float = 0.12,
-    graft_split_radius_eps: float = 0.20,
-    graft_parent_capacity: int = 1,
-    graft_mutual_knn: bool = True,
-    graft_one_token_per_frame: bool = True,
-    graft_spatial_penalty: float = 0.10,
-    graft_importance_penalty: float = 0.05,
-    graft_hub_penalty: float = 0.05,
-    graft_adaptive_aggregation: bool = True,
-    graft_scene_threshold: float = 0.0,
-    graft_min_tokens_per_frame: int = 0,
-    graft_budget_correction: bool = True,
-    graft_budget_diversity_weight: float = 0.35,
-    graft_score_preset: str = "base",
-    graft_duration_aware: bool = False,
-    graft_medium_temporal_skip: Optional[int] = None,
-    graft_medium_global_topk: Optional[int] = None,
-    graft_medium_edge_threshold: Optional[float] = None,
-    graft_medium_split_radius_eps: Optional[float] = None,
-    graft_medium_spatial_penalty: Optional[float] = None,
-    graft_medium_scene_threshold: Optional[float] = None,
-    graft_long_temporal_skip: Optional[int] = None,
-    graft_long_global_topk: Optional[int] = None,
-    graft_long_edge_threshold: Optional[float] = None,
-    graft_long_split_radius_eps: Optional[float] = None,
-    graft_long_spatial_penalty: Optional[float] = None,
-    graft_long_scene_threshold: Optional[float] = None,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
-    external_budget_uses_expansion: bool = True,
-    fastvid_DySeg_c: int = 8,
-    fastvid_DySeg_tau: float = 0.90,
-    fastvid_DySeg_ignore: float = 0.95,
-    fastvid_STPrune_d: float = 0.40,
-    fastvid_DTM_p: int = 4,
-    fastvid_DTM_beta: float = 0.60,
-    visionzip_dominant_ratio: float = 0.85,
     question_aware_reweighting: bool = False,
     question_reweight_beta: float = 0.35,
+    # TALON params.
+    talon_transport_radius: int = 1,
+    talon_rank_ratio: float = 0.40,
+    talon_rank_min: int = 2,
+    talon_rank_max: int = 32,
+    talon_budget_scale: float = 0.60,
+    talon_target_tokens_per_frame: int = 0,
+    talon_short_target_tokens_per_frame: int = 0,
+    talon_medium_target_tokens_per_frame: int = 0,
+    talon_long_target_tokens_per_frame: int = 0,
+    talon_min_total_tokens: int = 1,
+    talon_fast_rank_plan: bool = True,
+    talon_background_max_ratio: float = 0.45,
+    talon_frame_balanced_selection: bool = True,
+    talon_basis_method: str = "randomized",
+    talon_basis_oversample: int = 4,
+    talon_innovation_attention_weight: float = 0.45,
+    talon_motion_importance_weight: float = 0.35,
+    talon_boundary_importance_weight: float = 0.10,
+    talon_question_frame_weight: float = 0.20,
+    talon_frame_balanced_memory: bool = True,
+    talon_memory_mode: str = "raw",
+    talon_anchor_safety_ratio: float = 0.28,
+    talon_anchor_diversity_weight: float = 0.0,
+    talon_anchor_candidate_multiplier: float = 4.0,
+    talon_spatial_anchor_coverage: bool = False,
+    talon_spatial_anchor_ratio: float = 0.35,
+    talon_spatial_anchor_rows: int = 3,
+    talon_spatial_anchor_cols: int = 3,
+    talon_spatial_anchor_score: str = "fused",
+    talon_spatial_anchor_apply_to_short: bool = False,
+    talon_frame_coverage_floor_ratio: float = 0.65,
+    talon_frame_importance_pooling: str = "mean",
+    talon_frame_importance_topk: int = 6,
+    talon_medium_frame_coverage_floor_ratio: float = -1.0,
+    talon_long_frame_coverage_floor_ratio: float = -1.0,
+    talon_frame_local_budget_ratio: float = 1.0,
+    talon_question_recall_ratio: float = 0.06,
+    talon_question_recall_qweight: float = 0.65,
+    talon_persistence_recall_ratio: float = 0.0,
+    talon_persistence_recall_qweight: float = 0.50,
+    talon_persistence_recall_pweight: float = 0.35,
+    talon_persistence_apply_to_short: bool = False,
+    talon_persistence_apply_to_medium: bool = True,
+    talon_persistence_apply_to_long: bool = False,
+    talon_object_evidence_ratio: float = 0.0,
+    talon_object_evidence_qweight: float = 0.35,
+    talon_object_evidence_sweight: float = 0.45,
+    talon_object_evidence_pweight: float = 0.10,
+    talon_object_evidence_apply_to_short: bool = False,
+    talon_object_evidence_apply_to_medium: bool = True,
+    talon_object_evidence_apply_to_long: bool = False,
+    talon_question_pooling: str = "mean",
+    talon_question_pooling_topk: int = 4,
+    talon_question_contrast_weight: float = 0.0,
+    talon_question_contrast_apply_to_short: bool = False,
+    talon_monotonic_base_tokens_per_frame: int = 20,
+    talon_budget_strategy: str = "marginal",
+    talon_budget_mode: str = "uniform",
+    talon_transport_mode: str = "hard",
+    talon_transport_temperature: float = 0.07,
+    talon_lite_enabled: bool = False,
+    talon_echo_temperature: float = 0.07,
+    talon_echo_topk_neighbors: int = 4,
+    talon_echo_residual_weight: float = 0.0,
+    talon_echo_score_mode: str = "mse",
+    talon_rd_spectral_weight: float = 1.0,
+    talon_rd_innovation_weight: float = 1.0,
+    talon_use_question_innovation: bool = True,
+    talon_innovation_qweight: float = 0.25,
+    talon_output_mode: str = "manifold",
+    talon_reconstruction_blend: float = 0.0,
+    talon_anchor_score_weight: float = 0.35,
+    talon_min_anchor_per_frame: int = 2,
+    talon_passthrough_ratio: float = 0.15,
+    talon_passthrough_min: int = 2,
+    talon_use_segmentation: bool = True,
+    talon_disable_oversegmentation: bool = True,
+    talon_max_segments: int = 4,
+    talon_deepstack_mode: str = "keep",
     # Shared memory/adaptive params.
     memory_token_ratio: float = 0.10,
     memory_token_min: int = 1,
@@ -174,6 +190,106 @@ def flashvid(
     adaptive_budget_low: float = 0.10,
     adaptive_budget_mid: float = 0.15,
     adaptive_budget_high: float = 0.20,
+    talon_adaptive_target_low: int = 0,
+    talon_adaptive_target_mid: int = 0,
+    talon_adaptive_target_high: int = 0,
+    talon_complexity_floor: float = 0.20,
+    talon_complexity_ceil: float = 0.40,
+    talon_adaptive_gamma: float = 1.0,
+    talon_adaptive_target_enabled: bool = False,
+    talon_force_fixed_target: bool = False,
+    talon_target_mean_cap: float = 0.0,
+    talon_unified_selection: bool = False,
+    talon_low_budget_mode_threshold: int = 20,
+    talon_low_budget_rank_cap: int = 0,
+    talon_background_global_ratio: float = 0.60,
+    talon_event_budget_ratio: float = 0.30,
+    talon_memory_fused_weight: float = 0.50,
+    talon_memory_residual_weight: float = 0.35,
+    talon_memory_frame_weight: float = 0.15,
+    talon_recall_memory_mode: str = "raw",
+    talon_final_fused_weight: float = 0.70,
+    talon_final_residual_weight: float = 0.20,
+    talon_final_frame_weight: float = 0.10,
+    talon_anchor_keep_bonus: float = 0.10,
+    talon_recall_keep_bonus: float = 0.08,
+    talon_event_keep_bonus: float = 0.04,
+    talon_legacy_base_keep_ratio: float = 0.85,
+    talon_prior_candidate_ratio: float = 0.12,
+    talon_prior_keep_bonus: float = 0.06,
+    talon_flash_prior_channel_ratio: float = 0.12,
+    talon_flash_prior_channel_method: str = "attn_div_v2",
+    talon_flash_prior_channel_min_per_frame: int = 1,
+    talon_flash_prior_channel_max_per_frame: int = 4,
+    talon_flash_prior_channel_bonus: float = 0.06,
+    talon_final_anchor_min_ratio: float = 0.24,
+    talon_final_recall_min_ratio: float = 0.10,
+    talon_force_anchor_recall_quota: bool = True,
+    talon_global_topk_ratio: float = 0.70,
+    talon_rescue_enabled: bool = True,
+    talon_rescue_ratio: float = 0.08,
+    talon_rescue_from_memory_only: bool = True,
+    talon_rescue_fused_weight: float = 0.55,
+    talon_rescue_residual_weight: float = 0.35,
+    talon_rescue_frame_weight: float = 0.10,
+    talon_rescue_global_ratio: float = 0.85,
+    talon_rerank_with_flash_prior: bool = True,
+    talon_flash_prior_ratio: float = 0.20,
+    talon_recall_semantic_ratio: float = 0.50,
+    talon_recall_event_ratio: float = 0.25,
+    talon_recall_frame_ratio: float = 0.15,
+    talon_recall_global_ratio: float = 0.55,
+    talon_duration_aware: bool = False,
+    talon_medium_anchor_safety_ratio: float = 0.72,
+    talon_medium_event_budget_ratio: float = 0.30,
+    talon_medium_global_topk_ratio: float = 0.70,
+    talon_long_anchor_safety_ratio: float = 0.80,
+    talon_long_event_budget_ratio: float = 0.14,
+    talon_long_global_topk_ratio: float = 0.85,
+    talon_task_aware_event: bool = False,
+    talon_task_event_attention_weight: float = 0.82,
+    talon_task_event_qweight: float = 0.30,
+    talon_visual_task_balance: bool = False,
+    talon_visual_task_anchor_ratio: float = 0.84,
+    talon_visual_task_event_ratio: float = 0.12,
+    talon_visual_task_recall_ratio: float = 0.02,
+    talon_knowledge_visual_anchor_ratio: float = 0.78,
+    talon_knowledge_visual_event_ratio: float = 0.18,
+    talon_knowledge_visual_recall_ratio: float = 0.06,
+    talon_adaptive_router: bool = False,
+    talon_router_apply_to_short: bool = False,
+    talon_router_visual_anchor_ratio: float = 0.76,
+    talon_router_visual_event_ratio: float = 0.24,
+    talon_router_visual_recall_ratio: float = 0.06,
+    talon_router_temporal_anchor_ratio: float = 0.66,
+    talon_router_temporal_event_ratio: float = 0.34,
+    talon_router_temporal_recall_ratio: float = 0.08,
+    talon_router_balanced_anchor_ratio: float = 0.72,
+    talon_router_balanced_event_ratio: float = 0.30,
+    talon_router_balanced_recall_ratio: float = 0.08,
+    talon_router_visual_concentration_threshold: float = 0.28,
+    talon_router_low_residual_threshold: float = 0.30,
+    talon_router_temporal_entropy_threshold: float = 0.95,
+    talon_router_temporal_residual_threshold: float = 0.36,
+    talon_temporal_chunk_aware: bool = False,
+    talon_temporal_num_chunks: int = 4,
+    talon_temporal_chunk_min_ratio: float = 0.18,
+    talon_temporal_chunk_score: str = "combined",
+    talon_track_aware: bool = False,
+    talon_track_budget_ratio: float = 0.12,
+    talon_track_tokens_per_slot: int = 1,
+    talon_track_score: str = "combined",
+    talon_absorb_dropped_tokens: bool = False,
+    talon_absorb_ratio: float = 0.35,
+    talon_absorb_alpha: float = 0.25,
+    talon_absorb_score: str = "combined",
+    talon_summary_replacement: bool = False,
+    talon_summary_raw_swap: bool = False,
+    talon_summary_ratio: float = 0.08,
+    talon_summary_num_chunks: int = 8,
+    talon_summary_pool_topk: int = 12,
+    talon_summary_alpha: float = 0.55,
+    talon_summary_score: str = "combined",
     # 3) Inner-LLM Compression params
     expansion: float = 1.25,
     pruning_layer: int = 20,
@@ -206,10 +322,49 @@ def flashvid(
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
-            "graftvid" keeps ADTS/DPC but uses a constrained temporal forest;
-            "fastvid"/"visionzip" run adapted external baseline paths.
+            "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
+        talon_transport_radius (int, optional): Local transport radius for frame-to-frame token alignment.
+        talon_rank_ratio (float, optional): Per-frame low-rank share in TALON token budget.
+        talon_rank_min (int, optional): Minimum TALON low-rank token count per frame when budget allows.
+        talon_rank_max (int, optional): Maximum TALON low-rank token count per frame.
+        talon_budget_scale (float, optional): TALON-only multiplier over the shared visual budget.
+        talon_target_tokens_per_frame (int, optional): Fixed TALON target width per frame; 0 disables it.
+        talon_short/medium/long_target_tokens_per_frame (int, optional): Duration-specific
+            TALON targets; 0 falls back to talon_target_tokens_per_frame.
+        talon_min_total_tokens (int, optional): Lower bound on TALON output tokens per segment.
+        talon_fast_rank_plan (bool, optional): Use one-pass rate-distortion rank planning.
+        talon_background_max_ratio (float, optional): Max low-rank background share of per-frame TALON budget.
+        talon_frame_balanced_selection (bool, optional): Keep passthrough/innovation budgets frame-balanced.
+        talon_basis_method (str, optional): Low-rank basis solver, "randomized" or "covariance".
+        talon_basis_oversample (int, optional): Randomized basis oversampling rank.
+        talon_innovation_attention_weight (float, optional): Attention/fused-score share in innovation scoring.
+        talon_motion_importance_weight (float, optional): Transition/motion share in frame budget allocation.
+        talon_boundary_importance_weight (float, optional): First/last-frame prior in frame budget allocation.
+        talon_question_frame_weight (float, optional): Question-frame semantic share in frame budget allocation.
+        talon_frame_balanced_memory (bool, optional): Build residual memory tokens with frame coverage.
+        talon_memory_mode (str, optional): "raw" keeps representative memory anchors; "merge" averages residual groups.
+        talon_anchor_safety_ratio (float, optional): Extra raw attention-anchor share protected before TALON factors.
+        talon_budget_strategy (str, optional): Budget split policy, one of {"ratio","marginal"}.
+        talon_budget_mode (str, optional): Frame budget policy, one of {"uniform","attention"}.
+        talon_transport_mode (str, optional): Local transport mode, one of {"hard","soft"}.
+        talon_transport_temperature (float, optional): Soft local-transport temperature.
+        talon_rd_spectral_weight (float, optional): Rate-distortion spectral-tail weight.
+        talon_rd_innovation_weight (float, optional): Rate-distortion innovation-tail weight.
+        talon_use_question_innovation (bool, optional): Reweight innovation selection with question cues.
+        talon_innovation_qweight (float, optional): Question-aware weight for innovation scoring.
+        talon_output_mode (str, optional): "manifold" keeps outputs close to pretrained visual tokens;
+            "coefficient" exposes raw TALON coefficients/residuals for ablation.
+        talon_reconstruction_blend (float, optional): Blend low-rank reconstruction into anchor tokens.
+        talon_anchor_score_weight (float, optional): Mix question/attention score into low-rank anchor picking.
+        talon_min_anchor_per_frame (int, optional): Minimum raw attention anchors kept per frame when budget allows.
+        talon_passthrough_ratio (float, optional): Ratio of high-confidence raw tokens kept unchanged in TALON.
+        talon_passthrough_min (int, optional): Minimum TALON passthrough token count per segment when budget allows.
+        talon_use_segmentation (bool, optional): Whether TALON should segment the video before compression.
+        talon_disable_oversegmentation (bool, optional): Avoid excessive short segments for TALON path.
+        talon_max_segments (int, optional): Upper bound on TALON segment count when oversegmentation guard is enabled.
+        talon_deepstack_mode (str, optional): TALON handling for Qwen3-VL DeepStack, one of {"disable","keep","auto"}.
         memory_token_ratio (float, optional): Budget ratio reserved for residual memory tokens.
         memory_token_min (int, optional): Minimum residual memory tokens.
         memory_token_max (int, optional): Maximum residual memory tokens.
@@ -217,6 +372,12 @@ def flashvid(
         adaptive_budget_low (float, optional): Low retention ratio candidate.
         adaptive_budget_mid (float, optional): Mid retention ratio candidate.
         adaptive_budget_high (float, optional): High retention ratio candidate.
+        talon_adaptive_target_low (int, optional): TALON low-complexity target tokens per frame when adaptive budget is enabled.
+        talon_adaptive_target_mid (int, optional): TALON mid-complexity target tokens per frame when adaptive budget is enabled.
+        talon_adaptive_target_high (int, optional): TALON high-complexity target tokens per frame when adaptive budget is enabled.
+        talon_complexity_floor (float, optional): Lower bound used to normalize TALON complexity score for adaptive targeting.
+        talon_complexity_ceil (float, optional): Upper bound used to normalize TALON complexity score for adaptive targeting.
+        talon_adaptive_gamma (float, optional): Nonlinear gain for adaptive TALON target interpolation.
         expansion (float, optional): The expansion ratio for inner-LLM compression. Defaults to 1.25.
         pruning_layer (int, optional): The layer to prune. Defaults to 20.
         llm_retention_ratio (float, optional): The retention ratio for inner-LLM compression. Defaults to 0.3.
@@ -233,23 +394,14 @@ def flashvid(
     """
 
     # Replace with custom methods.
-    if type(model) in (LlavaQwenForCausalLM, LlavaLlamaForCausalLM):  ## For LLaVA-OneVision or LLaVA-Video
+    if type(model) is LlavaQwenForCausalLM:  ## For LLaVA-OneVision or LLaVA-Video
         LlavaMetaForCausalLM.encode_images = LlavaMetaForCausalLM_encode_images
         LlavaMetaForCausalLM.prepare_inputs_labels_for_multimodal = LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal
         SigLipAttention.forward = SigLipAttention_forward
         SigLipVisionTower.forward = SigLipVisionTower_forward
-        # The paper configuration uses inner-LLM pruning (llm_retention_ratio=0.3).
-        # Keep the stable vision-only path by default, but re-enable the Qwen2
-        # language-model hooks when a caller explicitly asks for inner pruning.
-        if float(llm_retention_ratio) < 0.9999:
-            if type(model) is LlavaQwenForCausalLM:
-                Qwen2Attention.forward = Qwen2Attention_forward
-                Qwen2DecoderLayer.forward = Qwen2DecoderLayer_forward
-                Qwen2Model.forward = Qwen2Model_forward
-            else:
-                LlamaAttention.forward = LlamaAttention_forward
-                LlamaDecoderLayer.forward = LlamaDecoderLayer_forward
-                LlamaModel.forward = LlamaModel_forward
+        Qwen2Attention.forward = Qwen2Attention_forward
+        Qwen2DecoderLayer.forward = Qwen2DecoderLayer_forward
+        Qwen2Model.forward = Qwen2Model_forward
         model.get_vision_tower().vision_tower.vision_model.encoder.layers[-1].self_attn.is_last_layer = True
     elif type(model) is Qwen2_5_VLForConditionalGeneration:  ## For Qwen2.5-VL
         Qwen2_5_VLAttention.forward = Qwen2_5_VLAttention_forward
@@ -293,15 +445,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "graphvid", "graftvid", "fastvid", "visionzip", "prunevid"):
-        raise ValueError(
-            f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|graftvid|fastvid|visionzip|prunevid"
-        )
+    if variant not in ("flashvid", "talon", "graphvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
-    elif variant == "graftvid":
-        temporal_merge_mode = "graft"
 
     # Create FlashVid config.
     flashvid_config = FlashVidConfig(
@@ -328,63 +475,91 @@ def flashvid(
         graph_merge_protect_ratio=graph_merge_protect_ratio,
         graph_merge_target_ratio=graph_merge_target_ratio,
         graph_merge_representative=graph_merge_representative,
-        graph_representative_position=graph_representative_position,
-        graph_protection_attn_weight=graph_protection_attn_weight,
-        graph_protection_novelty_weight=graph_protection_novelty_weight,
-        graph_protection_detail_weight=graph_protection_detail_weight,
-        graph_adaptive_detail_protection=graph_adaptive_detail_protection,
-        graph_adaptive_detail_boost=graph_adaptive_detail_boost,
-        graph_adaptive_protect_boost=graph_adaptive_protect_boost,
-        graph_merge_importance_penalty=graph_merge_importance_penalty,
-        graph_respect_temporal_threshold=graph_respect_temporal_threshold,
         graph_final_tokens_per_frame=graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=graph_skip_spatial_merge_when_capped,
-        graft_temporal_topk=graft_temporal_topk,
-        graft_temporal_radius=graft_temporal_radius,
-        graft_temporal_skip=graft_temporal_skip,
-        graft_global_topk=graft_global_topk,
-        graft_input_is_residual=graft_input_is_residual,
-        graft_anchor_ratio=graft_anchor_ratio,
-        graft_edge_threshold=graft_edge_threshold,
-        graft_component_radius_eps=graft_component_radius_eps,
-        graft_split_radius_eps=graft_split_radius_eps,
-        graft_parent_capacity=graft_parent_capacity,
-        graft_mutual_knn=graft_mutual_knn,
-        graft_one_token_per_frame=graft_one_token_per_frame,
-        graft_spatial_penalty=graft_spatial_penalty,
-        graft_importance_penalty=graft_importance_penalty,
-        graft_hub_penalty=graft_hub_penalty,
-        graft_adaptive_aggregation=graft_adaptive_aggregation,
-        graft_scene_threshold=graft_scene_threshold,
-        graft_min_tokens_per_frame=graft_min_tokens_per_frame,
-        graft_budget_correction=graft_budget_correction,
-        graft_budget_diversity_weight=graft_budget_diversity_weight,
-        graft_score_preset=graft_score_preset,
-        graft_duration_aware=graft_duration_aware,
-        graft_medium_temporal_skip=graft_medium_temporal_skip,
-        graft_medium_global_topk=graft_medium_global_topk,
-        graft_medium_edge_threshold=graft_medium_edge_threshold,
-        graft_medium_split_radius_eps=graft_medium_split_radius_eps,
-        graft_medium_spatial_penalty=graft_medium_spatial_penalty,
-        graft_medium_scene_threshold=graft_medium_scene_threshold,
-        graft_long_temporal_skip=graft_long_temporal_skip,
-        graft_long_global_topk=graft_long_global_topk,
-        graft_long_edge_threshold=graft_long_edge_threshold,
-        graft_long_split_radius_eps=graft_long_split_radius_eps,
-        graft_long_spatial_penalty=graft_long_spatial_penalty,
-        graft_long_scene_threshold=graft_long_scene_threshold,
         compression_variant=variant,
-        external_budget_uses_expansion=external_budget_uses_expansion,
-        fastvid_DySeg_c=fastvid_DySeg_c,
-        fastvid_DySeg_tau=fastvid_DySeg_tau,
-        fastvid_DySeg_ignore=fastvid_DySeg_ignore,
-        fastvid_STPrune_d=fastvid_STPrune_d,
-        fastvid_DTM_p=fastvid_DTM_p,
-        fastvid_DTM_beta=fastvid_DTM_beta,
-        visionzip_dominant_ratio=visionzip_dominant_ratio,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,
+        talon_transport_radius=talon_transport_radius,
+        talon_rank_ratio=talon_rank_ratio,
+        talon_rank_min=talon_rank_min,
+        talon_rank_max=talon_rank_max,
+        talon_budget_scale=talon_budget_scale,
+        talon_target_tokens_per_frame=talon_target_tokens_per_frame,
+        talon_short_target_tokens_per_frame=talon_short_target_tokens_per_frame,
+        talon_medium_target_tokens_per_frame=talon_medium_target_tokens_per_frame,
+        talon_long_target_tokens_per_frame=talon_long_target_tokens_per_frame,
+        talon_min_total_tokens=talon_min_total_tokens,
+        talon_fast_rank_plan=talon_fast_rank_plan,
+        talon_background_max_ratio=talon_background_max_ratio,
+        talon_frame_balanced_selection=talon_frame_balanced_selection,
+        talon_basis_method=talon_basis_method,
+        talon_basis_oversample=talon_basis_oversample,
+        talon_innovation_attention_weight=talon_innovation_attention_weight,
+        talon_motion_importance_weight=talon_motion_importance_weight,
+        talon_boundary_importance_weight=talon_boundary_importance_weight,
+        talon_question_frame_weight=talon_question_frame_weight,
+        talon_frame_balanced_memory=talon_frame_balanced_memory,
+        talon_memory_mode=talon_memory_mode,
+        talon_anchor_safety_ratio=talon_anchor_safety_ratio,
+        talon_anchor_diversity_weight=talon_anchor_diversity_weight,
+        talon_anchor_candidate_multiplier=talon_anchor_candidate_multiplier,
+        talon_spatial_anchor_coverage=talon_spatial_anchor_coverage,
+        talon_spatial_anchor_ratio=talon_spatial_anchor_ratio,
+        talon_spatial_anchor_rows=talon_spatial_anchor_rows,
+        talon_spatial_anchor_cols=talon_spatial_anchor_cols,
+        talon_spatial_anchor_score=talon_spatial_anchor_score,
+        talon_spatial_anchor_apply_to_short=talon_spatial_anchor_apply_to_short,
+        talon_frame_coverage_floor_ratio=talon_frame_coverage_floor_ratio,
+        talon_frame_importance_pooling=talon_frame_importance_pooling,
+        talon_frame_importance_topk=talon_frame_importance_topk,
+        talon_medium_frame_coverage_floor_ratio=talon_medium_frame_coverage_floor_ratio,
+        talon_long_frame_coverage_floor_ratio=talon_long_frame_coverage_floor_ratio,
+        talon_frame_local_budget_ratio=talon_frame_local_budget_ratio,
+        talon_question_recall_ratio=talon_question_recall_ratio,
+        talon_question_recall_qweight=talon_question_recall_qweight,
+        talon_persistence_recall_ratio=talon_persistence_recall_ratio,
+        talon_persistence_recall_qweight=talon_persistence_recall_qweight,
+        talon_persistence_recall_pweight=talon_persistence_recall_pweight,
+        talon_persistence_apply_to_short=talon_persistence_apply_to_short,
+        talon_persistence_apply_to_medium=talon_persistence_apply_to_medium,
+        talon_persistence_apply_to_long=talon_persistence_apply_to_long,
+        talon_object_evidence_ratio=talon_object_evidence_ratio,
+        talon_object_evidence_qweight=talon_object_evidence_qweight,
+        talon_object_evidence_sweight=talon_object_evidence_sweight,
+        talon_object_evidence_pweight=talon_object_evidence_pweight,
+        talon_object_evidence_apply_to_short=talon_object_evidence_apply_to_short,
+        talon_object_evidence_apply_to_medium=talon_object_evidence_apply_to_medium,
+        talon_object_evidence_apply_to_long=talon_object_evidence_apply_to_long,
+        talon_question_pooling=talon_question_pooling,
+        talon_question_pooling_topk=talon_question_pooling_topk,
+        talon_question_contrast_weight=talon_question_contrast_weight,
+        talon_question_contrast_apply_to_short=talon_question_contrast_apply_to_short,
+        talon_monotonic_base_tokens_per_frame=talon_monotonic_base_tokens_per_frame,
+        talon_budget_strategy=talon_budget_strategy,
+        talon_budget_mode=talon_budget_mode,
+        talon_transport_mode=talon_transport_mode,
+        talon_transport_temperature=talon_transport_temperature,
+        talon_lite_enabled=talon_lite_enabled,
+        talon_echo_temperature=talon_echo_temperature,
+        talon_echo_topk_neighbors=talon_echo_topk_neighbors,
+        talon_echo_residual_weight=talon_echo_residual_weight,
+        talon_echo_score_mode=talon_echo_score_mode,
+        talon_rd_spectral_weight=talon_rd_spectral_weight,
+        talon_rd_innovation_weight=talon_rd_innovation_weight,
+        talon_use_question_innovation=talon_use_question_innovation,
+        talon_innovation_qweight=talon_innovation_qweight,
+        talon_output_mode=talon_output_mode,
+        talon_reconstruction_blend=talon_reconstruction_blend,
+        talon_anchor_score_weight=talon_anchor_score_weight,
+        talon_min_anchor_per_frame=talon_min_anchor_per_frame,
+        talon_passthrough_ratio=talon_passthrough_ratio,
+        talon_passthrough_min=talon_passthrough_min,
+        talon_use_segmentation=talon_use_segmentation,
+        talon_disable_oversegmentation=talon_disable_oversegmentation,
+        talon_max_segments=talon_max_segments,
+        talon_deepstack_mode=talon_deepstack_mode,
         memory_token_ratio=memory_token_ratio,
         memory_token_min=memory_token_min,
         memory_token_max=memory_token_max,
@@ -392,6 +567,106 @@ def flashvid(
         adaptive_budget_low=adaptive_budget_low,
         adaptive_budget_mid=adaptive_budget_mid,
         adaptive_budget_high=adaptive_budget_high,
+        talon_adaptive_target_low=talon_adaptive_target_low,
+        talon_adaptive_target_mid=talon_adaptive_target_mid,
+        talon_adaptive_target_high=talon_adaptive_target_high,
+        talon_complexity_floor=talon_complexity_floor,
+        talon_complexity_ceil=talon_complexity_ceil,
+        talon_adaptive_gamma=talon_adaptive_gamma,
+        talon_adaptive_target_enabled=talon_adaptive_target_enabled,
+        talon_force_fixed_target=talon_force_fixed_target,
+        talon_target_mean_cap=talon_target_mean_cap,
+        talon_unified_selection=talon_unified_selection,
+        talon_low_budget_mode_threshold=talon_low_budget_mode_threshold,
+        talon_low_budget_rank_cap=talon_low_budget_rank_cap,
+        talon_background_global_ratio=talon_background_global_ratio,
+        talon_event_budget_ratio=talon_event_budget_ratio,
+        talon_memory_fused_weight=talon_memory_fused_weight,
+        talon_memory_residual_weight=talon_memory_residual_weight,
+        talon_memory_frame_weight=talon_memory_frame_weight,
+        talon_recall_memory_mode=talon_recall_memory_mode,
+        talon_final_fused_weight=talon_final_fused_weight,
+        talon_final_residual_weight=talon_final_residual_weight,
+        talon_final_frame_weight=talon_final_frame_weight,
+        talon_anchor_keep_bonus=talon_anchor_keep_bonus,
+        talon_recall_keep_bonus=talon_recall_keep_bonus,
+        talon_event_keep_bonus=talon_event_keep_bonus,
+        talon_legacy_base_keep_ratio=talon_legacy_base_keep_ratio,
+        talon_prior_candidate_ratio=talon_prior_candidate_ratio,
+        talon_prior_keep_bonus=talon_prior_keep_bonus,
+        talon_flash_prior_channel_ratio=talon_flash_prior_channel_ratio,
+        talon_flash_prior_channel_method=talon_flash_prior_channel_method,
+        talon_flash_prior_channel_min_per_frame=talon_flash_prior_channel_min_per_frame,
+        talon_flash_prior_channel_max_per_frame=talon_flash_prior_channel_max_per_frame,
+        talon_flash_prior_channel_bonus=talon_flash_prior_channel_bonus,
+        talon_final_anchor_min_ratio=talon_final_anchor_min_ratio,
+        talon_final_recall_min_ratio=talon_final_recall_min_ratio,
+        talon_force_anchor_recall_quota=talon_force_anchor_recall_quota,
+        talon_global_topk_ratio=talon_global_topk_ratio,
+        talon_rescue_enabled=talon_rescue_enabled,
+        talon_rescue_ratio=talon_rescue_ratio,
+        talon_rescue_from_memory_only=talon_rescue_from_memory_only,
+        talon_rescue_fused_weight=talon_rescue_fused_weight,
+        talon_rescue_residual_weight=talon_rescue_residual_weight,
+        talon_rescue_frame_weight=talon_rescue_frame_weight,
+        talon_rescue_global_ratio=talon_rescue_global_ratio,
+        talon_rerank_with_flash_prior=talon_rerank_with_flash_prior,
+        talon_flash_prior_ratio=talon_flash_prior_ratio,
+        talon_recall_semantic_ratio=talon_recall_semantic_ratio,
+        talon_recall_event_ratio=talon_recall_event_ratio,
+        talon_recall_frame_ratio=talon_recall_frame_ratio,
+        talon_recall_global_ratio=talon_recall_global_ratio,
+        talon_duration_aware=talon_duration_aware,
+        talon_medium_anchor_safety_ratio=talon_medium_anchor_safety_ratio,
+        talon_medium_event_budget_ratio=talon_medium_event_budget_ratio,
+        talon_medium_global_topk_ratio=talon_medium_global_topk_ratio,
+        talon_long_anchor_safety_ratio=talon_long_anchor_safety_ratio,
+        talon_long_event_budget_ratio=talon_long_event_budget_ratio,
+        talon_long_global_topk_ratio=talon_long_global_topk_ratio,
+        talon_task_aware_event=talon_task_aware_event,
+        talon_task_event_attention_weight=talon_task_event_attention_weight,
+        talon_task_event_qweight=talon_task_event_qweight,
+        talon_visual_task_balance=talon_visual_task_balance,
+        talon_visual_task_anchor_ratio=talon_visual_task_anchor_ratio,
+        talon_visual_task_event_ratio=talon_visual_task_event_ratio,
+        talon_visual_task_recall_ratio=talon_visual_task_recall_ratio,
+        talon_knowledge_visual_anchor_ratio=talon_knowledge_visual_anchor_ratio,
+        talon_knowledge_visual_event_ratio=talon_knowledge_visual_event_ratio,
+        talon_knowledge_visual_recall_ratio=talon_knowledge_visual_recall_ratio,
+        talon_adaptive_router=talon_adaptive_router,
+        talon_router_apply_to_short=talon_router_apply_to_short,
+        talon_router_visual_anchor_ratio=talon_router_visual_anchor_ratio,
+        talon_router_visual_event_ratio=talon_router_visual_event_ratio,
+        talon_router_visual_recall_ratio=talon_router_visual_recall_ratio,
+        talon_router_temporal_anchor_ratio=talon_router_temporal_anchor_ratio,
+        talon_router_temporal_event_ratio=talon_router_temporal_event_ratio,
+        talon_router_temporal_recall_ratio=talon_router_temporal_recall_ratio,
+        talon_router_balanced_anchor_ratio=talon_router_balanced_anchor_ratio,
+        talon_router_balanced_event_ratio=talon_router_balanced_event_ratio,
+        talon_router_balanced_recall_ratio=talon_router_balanced_recall_ratio,
+        talon_router_visual_concentration_threshold=talon_router_visual_concentration_threshold,
+        talon_router_low_residual_threshold=talon_router_low_residual_threshold,
+        talon_router_temporal_entropy_threshold=talon_router_temporal_entropy_threshold,
+        talon_router_temporal_residual_threshold=talon_router_temporal_residual_threshold,
+        talon_temporal_chunk_aware=talon_temporal_chunk_aware,
+        talon_temporal_num_chunks=talon_temporal_num_chunks,
+        talon_temporal_chunk_min_ratio=talon_temporal_chunk_min_ratio,
+        talon_temporal_chunk_score=talon_temporal_chunk_score,
+        talon_track_aware=talon_track_aware,
+        talon_track_budget_ratio=talon_track_budget_ratio,
+        talon_track_tokens_per_slot=talon_track_tokens_per_slot,
+        talon_track_score=talon_track_score,
+        talon_absorb_dropped_tokens=talon_absorb_dropped_tokens,
+        talon_absorb_ratio=talon_absorb_ratio,
+        talon_absorb_alpha=talon_absorb_alpha,
+        talon_absorb_score=talon_absorb_score,
+        talon_summary_replacement=talon_summary_replacement,
+        talon_summary_raw_swap=talon_summary_raw_swap,
+        talon_summary_ratio=talon_summary_ratio,
+        talon_summary_num_chunks=talon_summary_num_chunks,
+        talon_summary_pool_topk=talon_summary_pool_topk,
+        talon_summary_alpha=talon_summary_alpha,
+        talon_summary_score=talon_summary_score,
         expansion=expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,

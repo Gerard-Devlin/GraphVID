@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "graftvid", "flashvid", "fastvid", "visionzip", "prunevid"}
+    allowed = {"graphvid", "flashvid", "talon"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -97,6 +97,8 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
+    if method == "talon":
+        return "ours"
     return method
 
 
@@ -152,7 +154,7 @@ def _build_command(
     cmd = [
         sys.executable,
         "-u",
-        "playground/run_parallel.py",
+        "playground/run_talon_parallel.py",
         "--model_backend",
         args.model_backend,
         "--model_path",
@@ -165,18 +167,12 @@ def _build_command(
         str(total_limit),
         "--num_frames",
         str(args.num_frames),
-        "--min_pixels",
-        str(args.min_pixels),
-        "--max_pixels",
-        str(args.max_pixels),
         "--num_warmup",
         str(args.num_warmup),
         "--num_runs",
         str(args.num_runs),
         "--max_new_tokens",
         str(args.max_new_tokens),
-        "--videomme_eval_style",
-        args.videomme_eval_style,
         "--attn_implementation",
         args.attn_implementation,
         "--free_ratio",
@@ -185,8 +181,6 @@ def _build_command(
         str(args.min_free_mb),
         "--max_gpus",
         str(args.max_gpus),
-        "--gpu_cap",
-        str(args.gpu_cap),
         "--retention_ratio",
         str(ratio),
         "--expansion",
@@ -198,12 +192,11 @@ def _build_command(
     ]
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
-    if method in ("graphvid", "graftvid"):
+    if method == "graphvid":
         graph_cap = _graph_cap_for_rate(args, ratio)
         cmd.extend(
             [
-                "--run_graphvid" if method == "graphvid" else "--no-run_graphvid",
-                "--run_graftvid" if method == "graftvid" else "--no-run_graftvid",
+                "--run_graphvid",
                 "--no-run_flashvid",
                 "--graph_temporal_topk",
                 str(args.graph_temporal_topk),
@@ -217,20 +210,6 @@ def _build_command(
                 str(args.graph_merge_target_ratio),
                 "--graph_merge_representative",
                 args.graph_merge_representative,
-                "--graph_representative_position",
-                args.graph_representative_position,
-                "--graph_protection_attn_weight",
-                str(args.graph_protection_attn_weight),
-                "--graph_protection_novelty_weight",
-                str(args.graph_protection_novelty_weight),
-                "--graph_protection_detail_weight",
-                str(args.graph_protection_detail_weight),
-                "--graph_adaptive_detail_boost",
-                str(args.graph_adaptive_detail_boost),
-                "--graph_adaptive_protect_boost",
-                str(args.graph_adaptive_protect_boost),
-                "--graph_merge_importance_penalty",
-                str(args.graph_merge_importance_penalty),
                 "--graph_final_tokens_per_frame",
                 str(graph_cap),
                 "--graph_final_frame_floor_ratio",
@@ -241,86 +220,28 @@ def _build_command(
                 args.graphvid_token_selection_method,
             ]
         )
-        if method == "graftvid":
-            cmd.extend(
-                [
-                    "--graft_temporal_topk",
-                    str(args.graft_temporal_topk),
-                    "--graft_temporal_radius",
-                    str(args.graft_temporal_radius),
-                    "--graft_temporal_skip",
-                    str(args.graft_temporal_skip),
-                    "--graft_global_topk",
-                    str(args.graft_global_topk),
-                    "--graft_edge_threshold",
-                    str(args.graft_edge_threshold),
-                    "--graft_component_radius_eps",
-                    str(args.graft_component_radius_eps),
-                    "--graft_split_radius_eps",
-                    str(args.graft_split_radius_eps),
-                    "--graft_parent_capacity",
-                    str(args.graft_parent_capacity),
-                    "--graft_spatial_penalty",
-                    str(args.graft_spatial_penalty),
-                    "--graft_importance_penalty",
-                    str(args.graft_importance_penalty),
-                    "--graft_hub_penalty",
-                    str(args.graft_hub_penalty),
-                    "--graft_scene_threshold",
-                    str(args.graft_scene_threshold),
-                    "--graft_min_tokens_per_frame",
-                    str(args.graft_min_tokens_per_frame),
-                    "--graft_budget_diversity_weight",
-                    str(args.graft_budget_diversity_weight),
-                    "--graft_score_preset",
-                    str(args.graft_score_preset),
-                ]
-            )
-            if args.graft_anchor_ratio is not None:
-                cmd.extend(["--graft_anchor_ratio", str(args.graft_anchor_ratio)])
-            cmd.append("--graft_mutual_knn" if args.graft_mutual_knn else "--no-graft_mutual_knn")
-            cmd.append("--graft_one_token_per_frame" if args.graft_one_token_per_frame else "--no-graft_one_token_per_frame")
-            cmd.append("--graft_adaptive_aggregation" if args.graft_adaptive_aggregation else "--no-graft_adaptive_aggregation")
-            cmd.append("--graft_budget_correction" if args.graft_budget_correction else "--no-graft_budget_correction")
-            cmd.append("--graft_input_is_residual" if args.graft_input_is_residual else "--no-graft_input_is_residual")
         if args.graph_skip_spatial_merge_when_capped:
             cmd.append("--graph_skip_spatial_merge_when_capped")
         else:
             cmd.append("--no-graph_skip_spatial_merge_when_capped")
-        if args.graph_respect_temporal_threshold:
-            cmd.append("--graph_respect_temporal_threshold")
-        else:
-            cmd.append("--no-graph_respect_temporal_threshold")
-        if args.graph_adaptive_detail_protection:
-            cmd.append("--graph_adaptive_detail_protection")
-        else:
-            cmd.append("--no-graph_adaptive_detail_protection")
     elif method == "flashvid":
         cmd.extend(["--run_flashvid", "--no-run_ours"])
-    elif method in ("fastvid", "visionzip", "prunevid"):
+    else:
         cmd.extend(
             [
                 "--no-run_flashvid",
-                f"--run_{method}",
-                "--external_budget_uses_expansion" if args.external_budget_uses_expansion else "--no-external_budget_uses_expansion",
-                "--fastvid_DySeg_c",
-                str(args.fastvid_DySeg_c),
-                "--fastvid_DySeg_tau",
-                str(args.fastvid_DySeg_tau),
-                "--fastvid_DySeg_ignore",
-                str(args.fastvid_DySeg_ignore),
-                "--fastvid_STPrune_d",
-                str(args.fastvid_STPrune_d),
-                "--fastvid_DTM_p",
-                str(args.fastvid_DTM_p),
-                "--fastvid_DTM_beta",
-                str(args.fastvid_DTM_beta),
-                "--visionzip_dominant_ratio",
-                str(args.visionzip_dominant_ratio),
+                "--talon_target_tokens_per_frame",
+                str(args.talon_target_tokens_per_frame),
+                "--talon_question_recall_ratio",
+                str(args.talon_question_recall_ratio),
+                "--talon_question_recall_qweight",
+                str(args.talon_question_recall_qweight),
+                "--talon_question_pooling",
+                args.talon_question_pooling,
+                "--talon_question_pooling_topk",
+                str(args.talon_question_pooling_topk),
             ]
         )
-    else:
-        raise ValueError(f"unsupported method={method!r}")
     cmd.extend(args.extra_args)
     return cmd, summary_path
 
@@ -337,8 +258,7 @@ def _extract_score(summary: dict[str, Any] | None, method: str, dataset_name: st
     phase = summary.get(phase_key) if summary else None
     result: dict[str, float | None] = {
         "acc": _safe_pct(phase.get("accuracy")) if phase else None,
-        "tokens": _stat_mean(phase, "vision_compressed_visual_tokens")
-        or _stat_mean(phase, "compressed_visual_tokens"),
+        "tokens": _stat_mean(phase, "compressed_visual_tokens"),
     }
     if dataset_name == "videomme" and summary:
         by_duration = summary.get("duration_breakdown", {})
@@ -427,7 +347,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,graftvid,flashvid.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -436,17 +356,13 @@ def main() -> None:
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Skip runs whose combined summary already exists.")
     parser.add_argument("--num_frames", type=int, default=32)
-    parser.add_argument("--min_pixels", type=int, default=64 * 28 * 28)
-    parser.add_argument("--max_pixels", type=int, default=256 * 28 * 28)
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
-    parser.add_argument("--videomme_eval_style", default="current", choices=["current", "commit949"])
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
-    parser.add_argument("--max_gpus", type=int, default=4)
-    parser.add_argument("--gpu_cap", type=int, default=4)
+    parser.add_argument("--max_gpus", type=int, default=0)
     parser.add_argument("--gpu_ids", default="")
     parser.add_argument("--retention_expansion", dest="expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
@@ -465,53 +381,16 @@ def main() -> None:
     parser.add_argument("--graph_temporal_skip", type=int, default=1)
     parser.add_argument("--graph_merge_protect_ratio", type=float, default=0.15)
     parser.add_argument("--graph_merge_target_ratio", type=float, default=1.00)
-    parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean", "weighted_mean"])
-    parser.add_argument(
-        "--graph_representative_position",
-        default="protection",
-        choices=["protection", "earliest", "latest", "medoid", "position_medoid", "temporal_medoid"],
-    )
-    parser.add_argument("--graph_protection_attn_weight", type=float, default=0.70)
-    parser.add_argument("--graph_protection_novelty_weight", type=float, default=0.30)
-    parser.add_argument("--graph_protection_detail_weight", type=float, default=0.0)
-    parser.add_argument("--graph_adaptive_detail_protection", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--graph_adaptive_detail_boost", type=float, default=0.22)
-    parser.add_argument("--graph_adaptive_protect_boost", type=float, default=0.10)
-    parser.add_argument("--graph_merge_importance_penalty", type=float, default=0.0)
-    parser.add_argument("--graph_respect_temporal_threshold", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--graph_merge_representative", default="medoid", choices=["medoid", "mean"])
     parser.add_argument("--graph_final_frame_floor_ratio", type=float, default=0.55)
     parser.add_argument("--graph_skip_spatial_merge_when_capped", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--graft_temporal_topk", type=int, default=3)
-    parser.add_argument("--graft_temporal_radius", type=int, default=1)
-    parser.add_argument("--graft_temporal_skip", type=int, default=1)
-    parser.add_argument("--graft_global_topk", type=int, default=3)
-    parser.add_argument("--graft_input_is_residual", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--graft_anchor_ratio", type=float, default=None)
-    parser.add_argument("--graft_edge_threshold", type=float, default=0.80)
-    parser.add_argument("--graft_component_radius_eps", type=float, default=0.12)
-    parser.add_argument("--graft_split_radius_eps", type=float, default=0.20)
-    parser.add_argument("--graft_parent_capacity", type=int, default=1)
-    parser.add_argument("--graft_mutual_knn", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--graft_one_token_per_frame", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--graft_spatial_penalty", type=float, default=0.10)
-    parser.add_argument("--graft_importance_penalty", type=float, default=0.05)
-    parser.add_argument("--graft_hub_penalty", type=float, default=0.05)
-    parser.add_argument("--graft_adaptive_aggregation", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--graft_scene_threshold", type=float, default=0.0)
-    parser.add_argument("--graft_min_tokens_per_frame", type=int, default=0)
-    parser.add_argument("--graft_budget_correction", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--graft_budget_diversity_weight", type=float, default=0.35)
-    parser.add_argument("--graft_score_preset", default="base", choices=["base", "legacy", "event", "event_v1", "event_v2"])
-    parser.add_argument("--external_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
-    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
-    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
-    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
-    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
-    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
-    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     parser.add_argument("--token_selection_method", default="attn_div_stable")
     parser.add_argument("--graphvid_token_selection_method", default="attn_div_stable")
+    parser.add_argument("--talon_target_tokens_per_frame", type=int, default=22)
+    parser.add_argument("--talon_question_recall_ratio", type=float, default=0.08)
+    parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
+    parser.add_argument("--talon_question_pooling", default="topk")
+    parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

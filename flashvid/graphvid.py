@@ -50,83 +50,6 @@ def _neighbor_table(num_visual_tokens: int, h: int, w: int, radius: int, device:
     return table.to(device=device), valid.to(device=device)
 
 
-def _normalize_on_mask(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    valid = values[mask]
-    if valid.numel() == 0:
-        return torch.zeros_like(values)
-    min_val = valid.min()
-    max_val = valid.max()
-    return (values - min_val) / (max_val - min_val + 1e-6)
-
-
-def _spatial_detail_score(
-    normed_features: torch.Tensor,
-    neighbor_idx: torch.Tensor,
-    neighbor_valid: torch.Tensor,
-) -> torch.Tensor:
-    """Estimate local detail from same-frame neighborhood uniqueness."""
-    num_frames, num_visual_tokens, _ = normed_features.shape
-    device = normed_features.device
-    token_ids = torch.arange(num_visual_tokens, dtype=torch.long, device=device)
-    neigh = neighbor_idx[token_ids]
-    valid = neighbor_valid[token_ids] & (neigh != token_ids.unsqueeze(1))
-    detail = torch.zeros((num_frames, num_visual_tokens), dtype=torch.float32, device=device)
-    if valid.numel() == 0 or not valid.any():
-        return detail
-
-    for frame_idx in range(num_frames):
-        cur = normed_features[frame_idx, token_ids]
-        neigh_feats = normed_features[frame_idx, neigh]
-        sims = torch.sum(neigh_feats * cur.unsqueeze(1), dim=-1)
-        sims = sims.masked_fill(~valid, -1.0)
-        max_sim = sims.max(dim=1).values.clamp(min=-1.0, max=1.0)
-        detail[frame_idx] = ((1.0 - max_sim) * 0.5).clamp(0.0, 1.0)
-    return detail
-
-
-def _top_fraction_mean(values: torch.Tensor, fraction: float) -> torch.Tensor:
-    if values.numel() == 0:
-        return torch.tensor(0.0, dtype=torch.float32, device=values.device)
-    fraction = min(max(float(fraction), 0.0), 1.0)
-    k = max(1, int(math.ceil(values.numel() * fraction)))
-    return torch.topk(values.float(), k=k, largest=True).values.mean()
-
-
-def _choose_position_node(
-    members: list[int],
-    node_frames: list[int],
-    node_tokens: list[int],
-    protection_cpu: list[float],
-    w: int,
-    mode: str,
-) -> int:
-    mode = (mode or "protection").strip().lower()
-    if mode == "earliest":
-        frame = min(node_frames[node] for node in members)
-        candidates = [node for node in members if node_frames[node] == frame]
-        return max(candidates, key=lambda node: (protection_cpu[node], -node_tokens[node]))
-    if mode == "latest":
-        frame = max(node_frames[node] for node in members)
-        candidates = [node for node in members if node_frames[node] == frame]
-        return max(candidates, key=lambda node: (protection_cpu[node], -node_tokens[node]))
-    if mode in ("medoid", "position_medoid", "temporal_medoid"):
-        mean_frame = sum(float(node_frames[node]) for node in members) / max(1, len(members))
-        mean_row = sum(float(node_tokens[node] // w) for node in members) / max(1, len(members))
-        mean_col = sum(float(node_tokens[node] % w) for node in members) / max(1, len(members))
-
-        def key(node: int) -> tuple[float, float, int]:
-            row, col = divmod(node_tokens[node], w)
-            dist = (
-                (float(node_frames[node]) - mean_frame) ** 2
-                + (float(row) - mean_row) ** 2
-                + (float(col) - mean_col) ** 2
-            )
-            return (dist, -protection_cpu[node], node_tokens[node])
-
-        return min(members, key=key)
-    return max(members, key=lambda node: (protection_cpu[node], -node_tokens[node]))
-
-
 def graph_spatiotemporal_compression(
     video_features: torch.Tensor,
     temporal_threshold: float,
@@ -171,10 +94,7 @@ def graph_spatiotemporal_compression(
         attn_norm = torch.zeros_like(attn)
 
     h, w = _grid_hw(num_visual_tokens, flashvid_config)
-    raw_radius = int(getattr(flashvid_config, "graph_temporal_radius", 1) or 1)
-    # Negative radius means global temporal matching, mirroring FlashVID TSTM's
-    # full previous-frame search while still allowing top-k graph connectivity.
-    radius = max(h, w) if raw_radius < 0 else max(0, raw_radius)
+    radius = max(0, int(getattr(flashvid_config, "graph_temporal_radius", 1) or 1))
     temporal_skip = max(1, int(getattr(flashvid_config, "graph_temporal_skip", 1) or 1))
     topk = max(1, int(getattr(flashvid_config, "graph_temporal_topk", 3) or 3))
     neighbor_idx, neighbor_valid = _neighbor_table(num_visual_tokens, h, w, radius, device)
@@ -213,39 +133,11 @@ def graph_spatiotemporal_compression(
     novelty_min = novelty_vals.min()
     novelty_max = novelty_vals.max()
     novelty_norm = (novelty - novelty_min) / (novelty_max - novelty_min + 1e-6)
-    detail_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_detail_weight", 0.0) or 0.0))
-    adaptive_detail = bool(getattr(flashvid_config, "graph_adaptive_detail_protection", False))
-    detail_norm = torch.zeros_like(attn_norm)
-    detail_pressure = 0.0
-    if detail_weight > 0.0 or adaptive_detail:
-        detail = _spatial_detail_score(normed, neighbor_idx, neighbor_valid)
-        detail_norm = _normalize_on_mask(detail, token_mask)
-        if adaptive_detail:
-            valid_detail = detail_norm[token_mask]
-            valid_attn = attn_norm[token_mask]
-            detail_tail = _top_fraction_mean(valid_detail, 0.15)
-            attn_tail = _top_fraction_mean(valid_attn, 0.15)
-            detail_pressure = float((0.65 * detail_tail + 0.35 * attn_tail).clamp(0.0, 1.0).item())
-            detail_boost = max(0.0, float(getattr(flashvid_config, "graph_adaptive_detail_boost", 0.22) or 0.0))
-            detail_weight = max(detail_weight, detail_boost * detail_pressure)
-
-    attn_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_attn_weight", 0.70) or 0.0))
-    novelty_weight = max(0.0, float(getattr(flashvid_config, "graph_protection_novelty_weight", 0.30) or 0.0))
-    total_weight = attn_weight + novelty_weight + detail_weight
-    if total_weight <= 0.0:
-        attn_weight, novelty_weight, detail_weight, total_weight = 0.70, 0.30, 0.0, 1.0
-    protection_map = (
-        attn_weight * attn_norm
-        + novelty_weight * novelty_norm
-        + detail_weight * detail_norm
-    ) / total_weight
+    protection_map = 0.7 * attn_norm + 0.3 * novelty_norm
     protection = protection_map[token_mask]
 
     protected = torch.zeros(num_nodes, dtype=torch.bool, device=device)
     protect_ratio = min(max(float(getattr(flashvid_config, "graph_merge_protect_ratio", 0.15)), 0.0), 0.80)
-    if adaptive_detail and detail_pressure > 0.0:
-        protect_boost = max(0.0, float(getattr(flashvid_config, "graph_adaptive_protect_boost", 0.10) or 0.0))
-        protect_ratio = min(0.80, protect_ratio + protect_boost * detail_pressure)
     protect_count = min(num_nodes, int(math.ceil(target_components * protect_ratio)))
     if protect_count > 0:
         protected[torch.topk(protection, k=protect_count, largest=True).indices] = True
@@ -280,26 +172,13 @@ def graph_spatiotemporal_compression(
         edge_scores = torch.cat(edge_score_parts).float().cpu()
         edge_src = torch.cat(edge_src_parts).long().cpu()
         edge_dst = torch.cat(edge_dst_parts).long().cpu()
-        importance_penalty = max(0.0, float(getattr(flashvid_config, "graph_merge_importance_penalty", 0.0) or 0.0))
-        if importance_penalty > 0.0:
-            edge_importance = torch.tensor(
-                [
-                    max(protection_cpu[int(src)], protection_cpu[int(dst)])
-                    for src, dst in zip(edge_src.tolist(), edge_dst.tolist())
-                ],
-                dtype=edge_scores.dtype,
-            )
-            edge_sort_scores = edge_scores - importance_penalty * edge_importance
-        else:
-            edge_sort_scores = edge_scores
-        edge_order = torch.argsort(edge_sort_scores, descending=True)
-        respect_threshold = bool(getattr(flashvid_config, "graph_respect_temporal_threshold", False))
+        edge_order = torch.argsort(edge_scores, descending=True)
         for edge_idx in edge_order.tolist():
             if component_count <= target_components:
                 break
             sim = float(edge_scores[edge_idx].item())
-            if respect_threshold and sim < temporal_threshold:
-                continue
+            if sim < temporal_threshold and component_count <= target_components:
+                break
             union(int(edge_src[edge_idx].item()), int(edge_dst[edge_idx].item()))
 
     groups: dict[int, list[int]] = {}
@@ -309,25 +188,13 @@ def graph_spatiotemporal_compression(
     representative_mode = str(
         getattr(flashvid_config, "graph_merge_representative", "medoid") or "medoid"
     ).strip().lower()
-    position_mode = str(
-        getattr(flashvid_config, "graph_representative_position", "protection") or "protection"
-    ).strip().lower()
     frame_tokens: list[list[torch.Tensor]] = [[] for _ in range(num_frames)]
     frame_indices: list[list[int]] = [[] for _ in range(num_frames)]
     for members in groups.values():
-        pos_node = _choose_position_node(members, node_frames, node_tokens, protection_cpu, w, position_mode)
-        rep_frame = int(node_frames[pos_node])
-        rep_token = int(node_tokens[pos_node])
-        if representative_mode in ("weighted_mean", "attn_mean", "protection_mean"):
-            member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
-            weights = torch.tensor(
-                [max(1.0e-4, protection_cpu[m]) for m in members],
-                dtype=torch.float32,
-                device=device,
-            )
-            weights = weights / weights.sum().clamp_min(1.0e-6)
-            out_token = torch.sum(member_feats.float() * weights.unsqueeze(-1), dim=0).to(dtype=video_features.dtype)
-        elif representative_mode == "mean":
+        rep_node = max(members, key=lambda node: protection_cpu[node])
+        rep_frame = int(node_frames[rep_node])
+        rep_token = int(node_tokens[rep_node])
+        if representative_mode == "mean":
             member_feats = torch.stack([video_features[node_frames[m], node_tokens[m]] for m in members], dim=0)
             out_token = member_feats.mean(dim=0).to(dtype=video_features.dtype)
         else:

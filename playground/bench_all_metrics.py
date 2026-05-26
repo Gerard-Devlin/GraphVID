@@ -1,7 +1,6 @@
 import copy
 import gc
 import json
-import math
 import os
 import random
 import re
@@ -20,115 +19,6 @@ from transformers.hf_argparser import HfArgumentParser
 warnings.filterwarnings("ignore")
 
 SEPARATOR = "=" * 72
-
-
-def _canonical_method_name(value: str | None, *, default: str = "ours") -> str:
-    """Return a stable lowercase phase key for logs, jsonl names, and summaries."""
-    text = str(value or default).strip().lower()
-    text = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in text)
-    text = text.strip("_-")
-    return text or default
-
-
-def _ours_phase_key(args: "BenchmarkArgs") -> str:
-    return _canonical_method_name(getattr(args, "compression_variant", "ours"), default="ours")
-
-
-def _ours_output_path(args: "BenchmarkArgs", phase_key: str) -> str:
-    attr = f"{phase_key}_output"
-    phase_output = getattr(args, attr, None)
-    try:
-        ours_default = BenchmarkArgs.__dataclass_fields__["ours_output"].default
-        phase_default = BenchmarkArgs.__dataclass_fields__[attr].default
-    except Exception:
-        ours_default = "logs/efficiency/ours_all_metrics.jsonl"
-        phase_default = None
-    if str(getattr(args, "ours_output", ours_default)) != str(ours_default) and str(phase_output or "") == str(phase_default):
-        return str(args.ours_output)
-    return str(phase_output or args.ours_output)
-
-
-def _phase_display_name(phase_key: str) -> str:
-    labels = {
-        "baseline": "Baseline",
-        "flashvid": "FlashVID",
-        "graphvid": "GraphVID",
-        "graftvid": "GraftVID",
-        "fastvid": "FastVID",
-        "visionzip": "VisionZip",
-        "prunevid": "PruneVid",
-        "ours": "Ours",
-    }
-    return labels.get(phase_key, phase_key)
-
-
-def _phase_order(summary: dict[str, Any] | None = None) -> list[str]:
-    preferred = ["baseline", "flashvid", "graphvid", "graftvid", "fastvid", "visionzip", "prunevid", "ours"]
-    if not summary:
-        return preferred
-    extras = [
-        key
-        for key, value in summary.items()
-        if key not in preferred and key not in ("comparison", "duration_breakdown") and isinstance(value, dict)
-    ]
-    return preferred + sorted(extras)
-
-
-def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, bool, int)):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, np.generic):
-        return _json_safe(value.item())
-    if torch.is_tensor(value):
-        if value.numel() == 1:
-            return _json_safe(value.detach().cpu().item())
-        return [_json_safe(v) for v in value.detach().cpu().tolist()]
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    return str(value)
-
-
-def _jsonl_line(record: dict[str, Any]) -> str:
-    safe_record = _json_safe(record)
-    # Use ASCII escaping for result files. Some datasets/model outputs may contain
-    # odd Unicode surrogate fragments; ensure_ascii=True keeps JSONL writable and
-    # parseable on every server locale.
-    line = json.dumps(safe_record, ensure_ascii=True, allow_nan=False)
-    # Catch malformed records at write time, not after a full benchmark phase.
-    json.loads(line)
-    return line + "\n"
-
-GRAFT_METRIC_KEYS = [
-    "graft_num_nodes",
-    "graft_target_components",
-    "graft_protected_count",
-    "graft_entries_before_budget",
-    "graft_entries_after_budget",
-    "graft_scene_threshold",
-    "graft_global_topk",
-    "graft_anchor_ratio",
-    "graft_input_is_residual",
-    "graft_budget_diversity_weight",
-    "graft_score_preset_code",
-    "graft_duration_aware",
-    "graft_budget_correction_active",
-    "graft_protected_kept_count",
-    "graft_component_count",
-    "graft_avg_component_size",
-    "graft_max_component_size",
-    "graft_radius_mean",
-    "graft_radius_max",
-    "graft_edges_considered",
-    "graft_edges_accepted",
-    "graft_mutual_rejected",
-    "graft_radius_rejected",
-    "graft_capacity_rejected",
-    "graft_same_frame_rejected",
-]
 
 
 @dataclass
@@ -154,14 +44,12 @@ class BenchmarkArgs:
     num_warmup: int = field(default=1)
     num_runs: int = field(default=3)
     max_new_tokens: int = field(default=16)
-    videomme_eval_style: str = field(default="current")
 
     # Which phases to run
     run_baseline: bool = field(default=True)
     run_flashvid: bool = field(default=True)
-    run_ours: bool = field(default=False)
+    run_ours: bool = field(default=True)
     run_graphvid: bool = field(default=False)
-    run_graftvid: bool = field(default=False)
     reload_model_each_phase: bool = field(default=True)
 
     # FlashVID settings for phase-2
@@ -182,75 +70,214 @@ class BenchmarkArgs:
     graph_merge_protect_ratio: float = field(default=0.15)
     graph_merge_target_ratio: float = field(default=0.65)
     graph_merge_representative: str = field(default="medoid")
-    graph_representative_position: str = field(default="protection")
-    graph_protection_attn_weight: float = field(default=0.70)
-    graph_protection_novelty_weight: float = field(default=0.30)
-    graph_protection_detail_weight: float = field(default=0.0)
-    graph_adaptive_detail_protection: bool = field(default=False)
-    graph_adaptive_detail_boost: float = field(default=0.22)
-    graph_adaptive_protect_boost: float = field(default=0.10)
-    graph_merge_importance_penalty: float = field(default=0.0)
-    graph_respect_temporal_threshold: bool = field(default=False)
     graph_final_tokens_per_frame: int = field(default=0)
     graph_final_frame_floor_ratio: float = field(default=0.55)
     graph_skip_spatial_merge_when_capped: bool = field(default=True)
-    graft_temporal_topk: int = field(default=3)
-    graft_temporal_radius: int = field(default=1)
-    graft_temporal_skip: int = field(default=1)
-    graft_global_topk: int = field(default=3)
-    graft_input_is_residual: bool = field(default=True)
-    graft_anchor_ratio: Optional[float] = field(default=None)
-    graft_edge_threshold: float = field(default=0.80)
-    graft_component_radius_eps: float = field(default=0.12)
-    graft_split_radius_eps: float = field(default=0.20)
-    graft_parent_capacity: int = field(default=1)
-    graft_mutual_knn: bool = field(default=True)
-    graft_one_token_per_frame: bool = field(default=True)
-    graft_spatial_penalty: float = field(default=0.10)
-    graft_importance_penalty: float = field(default=0.05)
-    graft_hub_penalty: float = field(default=0.05)
-    graft_adaptive_aggregation: bool = field(default=True)
-    graft_scene_threshold: float = field(default=0.0)
-    graft_min_tokens_per_frame: int = field(default=0)
-    graft_budget_correction: bool = field(default=True)
-    graft_budget_diversity_weight: float = field(default=0.35)
-    graft_score_preset: str = field(default="base")
-    graft_duration_aware: bool = field(default=False)
-    graft_medium_temporal_skip: Optional[int] = field(default=None)
-    graft_medium_global_topk: Optional[int] = field(default=None)
-    graft_medium_edge_threshold: Optional[float] = field(default=None)
-    graft_medium_split_radius_eps: Optional[float] = field(default=None)
-    graft_medium_spatial_penalty: Optional[float] = field(default=None)
-    graft_medium_scene_threshold: Optional[float] = field(default=None)
-    graft_long_temporal_skip: Optional[int] = field(default=None)
-    graft_long_global_topk: Optional[int] = field(default=None)
-    graft_long_edge_threshold: Optional[float] = field(default=None)
-    graft_long_split_radius_eps: Optional[float] = field(default=None)
-    graft_long_spatial_penalty: Optional[float] = field(default=None)
-    graft_long_scene_threshold: Optional[float] = field(default=None)
     expansion: float = field(default=1.25)
     pruning_layer: int = field(default=20)
     llm_retention_ratio: float = field(default=0.3)
-    compression_variant: str = field(default="flashvid")
 
     # New experimental knobs (optional)
+    compression_variant: str = field(default="talon")
     question_aware_reweighting: bool = field(default=False)
     question_reweight_beta: float = field(default=0.35)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
     adaptive_budget_high: float = field(default=0.20)
+    talon_core_target_tokens_per_frame: int = field(default=0)
+    talon_core_neighbor_radius: int = field(default=1)
+    talon_core_topk_neighbors: int = field(default=4)
+    talon_core_temperature: float = field(default=0.07)
+    talon_core_rank: int = field(default=4)
+    talon_core_anchor_ratio: float = field(default=0.35)
+    talon_core_relevance_weight: float = field(default=0.42)
+    talon_core_temporal_weight: float = field(default=0.33)
+    talon_core_lowrank_weight: float = field(default=0.25)
+    talon_core_frame_budget_mode: str = field(default="attention")
+    talon_core_min_keep_per_frame: int = field(default=1)
+    talon_adaptive_target_low: int = field(default=0)
+    talon_adaptive_target_mid: int = field(default=0)
+    talon_adaptive_target_high: int = field(default=0)
+    talon_complexity_floor: float = field(default=0.20)
+    talon_complexity_ceil: float = field(default=0.40)
+    talon_adaptive_gamma: float = field(default=1.0)
+    talon_adaptive_target_enabled: bool = field(default=False)
+    talon_force_fixed_target: bool = field(default=False)
+    talon_target_mean_cap: float = field(default=0.0)
+    talon_unified_selection: bool = field(default=False)
+    talon_low_budget_mode_threshold: int = field(default=20)
+    talon_low_budget_rank_cap: int = field(default=0)
+    talon_background_global_ratio: float = field(default=0.60)
+    talon_event_budget_ratio: float = field(default=0.30)
+    talon_memory_fused_weight: float = field(default=0.50)
+    talon_memory_residual_weight: float = field(default=0.35)
+    talon_memory_frame_weight: float = field(default=0.15)
+    talon_recall_memory_mode: str = field(default="raw")
+    talon_final_fused_weight: float = field(default=0.70)
+    talon_final_residual_weight: float = field(default=0.20)
+    talon_final_frame_weight: float = field(default=0.10)
+    talon_anchor_keep_bonus: float = field(default=0.10)
+    talon_recall_keep_bonus: float = field(default=0.08)
+    talon_event_keep_bonus: float = field(default=0.04)
+    talon_legacy_base_keep_ratio: float = field(default=0.85)
+    talon_prior_candidate_ratio: float = field(default=0.12)
+    talon_prior_keep_bonus: float = field(default=0.06)
+    talon_flash_prior_channel_ratio: float = field(default=0.12)
+    talon_flash_prior_channel_method: str = field(default="attn_div_v2")
+    talon_flash_prior_channel_min_per_frame: int = field(default=1)
+    talon_flash_prior_channel_max_per_frame: int = field(default=4)
+    talon_flash_prior_channel_bonus: float = field(default=0.06)
+    talon_final_anchor_min_ratio: float = field(default=0.24)
+    talon_final_recall_min_ratio: float = field(default=0.10)
+    talon_force_anchor_recall_quota: bool = field(default=True)
+    talon_global_topk_ratio: float = field(default=0.70)
+    talon_rescue_enabled: bool = field(default=True)
+    talon_rescue_ratio: float = field(default=0.08)
+    talon_rescue_from_memory_only: bool = field(default=True)
+    talon_rescue_fused_weight: float = field(default=0.55)
+    talon_rescue_residual_weight: float = field(default=0.35)
+    talon_rescue_frame_weight: float = field(default=0.10)
+    talon_rescue_global_ratio: float = field(default=0.85)
+    talon_rerank_with_flash_prior: bool = field(default=True)
+    talon_flash_prior_ratio: float = field(default=0.20)
+    talon_recall_semantic_ratio: float = field(default=0.50)
+    talon_recall_event_ratio: float = field(default=0.25)
+    talon_recall_frame_ratio: float = field(default=0.15)
+    talon_recall_global_ratio: float = field(default=0.55)
+    talon_duration_aware: bool = field(default=False)
+    talon_medium_anchor_safety_ratio: float = field(default=0.72)
+    talon_medium_event_budget_ratio: float = field(default=0.30)
+    talon_medium_global_topk_ratio: float = field(default=0.70)
+    talon_long_anchor_safety_ratio: float = field(default=0.80)
+    talon_long_event_budget_ratio: float = field(default=0.14)
+    talon_long_global_topk_ratio: float = field(default=0.85)
+    talon_task_aware_event: bool = field(default=False)
+    talon_task_event_attention_weight: float = field(default=0.82)
+    talon_task_event_qweight: float = field(default=0.30)
+    talon_visual_task_balance: bool = field(default=False)
+    talon_visual_task_anchor_ratio: float = field(default=0.84)
+    talon_visual_task_event_ratio: float = field(default=0.12)
+    talon_visual_task_recall_ratio: float = field(default=0.02)
+    talon_knowledge_visual_anchor_ratio: float = field(default=0.78)
+    talon_knowledge_visual_event_ratio: float = field(default=0.18)
+    talon_knowledge_visual_recall_ratio: float = field(default=0.06)
+    talon_adaptive_router: bool = field(default=False)
+    talon_router_apply_to_short: bool = field(default=False)
+    talon_router_visual_anchor_ratio: float = field(default=0.76)
+    talon_router_visual_event_ratio: float = field(default=0.24)
+    talon_router_visual_recall_ratio: float = field(default=0.06)
+    talon_router_temporal_anchor_ratio: float = field(default=0.66)
+    talon_router_temporal_event_ratio: float = field(default=0.34)
+    talon_router_temporal_recall_ratio: float = field(default=0.08)
+    talon_router_balanced_anchor_ratio: float = field(default=0.72)
+    talon_router_balanced_event_ratio: float = field(default=0.30)
+    talon_router_balanced_recall_ratio: float = field(default=0.08)
+    talon_router_visual_concentration_threshold: float = field(default=0.28)
+    talon_router_low_residual_threshold: float = field(default=0.30)
+    talon_router_temporal_entropy_threshold: float = field(default=0.95)
+    talon_router_temporal_residual_threshold: float = field(default=0.36)
+    talon_temporal_chunk_aware: bool = field(default=False)
+    talon_temporal_num_chunks: int = field(default=4)
+    talon_temporal_chunk_min_ratio: float = field(default=0.18)
+    talon_temporal_chunk_score: str = field(default="combined")
+    talon_track_aware: bool = field(default=False)
+    talon_track_budget_ratio: float = field(default=0.12)
+    talon_track_tokens_per_slot: int = field(default=1)
+    talon_track_score: str = field(default="combined")
+    talon_absorb_dropped_tokens: bool = field(default=False)
+    talon_absorb_ratio: float = field(default=0.35)
+    talon_absorb_alpha: float = field(default=0.25)
+    talon_absorb_score: str = field(default="combined")
+    talon_summary_replacement: bool = field(default=False)
+    talon_summary_raw_swap: bool = field(default=False)
+    talon_summary_ratio: float = field(default=0.08)
+    talon_summary_num_chunks: int = field(default=8)
+    talon_summary_pool_topk: int = field(default=12)
+    talon_summary_alpha: float = field(default=0.55)
+    talon_summary_score: str = field(default="combined")
+    talon_transport_radius: int = field(default=1)
+    talon_rank_ratio: float = field(default=0.40)
+    talon_rank_min: int = field(default=2)
+    talon_rank_max: int = field(default=32)
+    talon_budget_scale: float = field(default=0.60)
+    talon_target_tokens_per_frame: int = field(default=0)
+    talon_short_target_tokens_per_frame: int = field(default=0)
+    talon_medium_target_tokens_per_frame: int = field(default=0)
+    talon_long_target_tokens_per_frame: int = field(default=0)
+    talon_min_total_tokens: int = field(default=1)
+    talon_fast_rank_plan: bool = field(default=True)
+    talon_background_max_ratio: float = field(default=0.45)
+    talon_frame_balanced_selection: bool = field(default=True)
+    talon_basis_method: str = field(default="randomized")
+    talon_basis_oversample: int = field(default=4)
+    talon_innovation_attention_weight: float = field(default=0.45)
+    talon_motion_importance_weight: float = field(default=0.35)
+    talon_boundary_importance_weight: float = field(default=0.10)
+    talon_question_frame_weight: float = field(default=0.20)
+    talon_frame_balanced_memory: bool = field(default=True)
+    talon_memory_mode: str = field(default="raw")
+    talon_anchor_safety_ratio: float = field(default=0.28)
+    talon_anchor_diversity_weight: float = field(default=0.0)
+    talon_anchor_candidate_multiplier: float = field(default=4.0)
+    talon_spatial_anchor_coverage: bool = field(default=False)
+    talon_spatial_anchor_ratio: float = field(default=0.35)
+    talon_spatial_anchor_rows: int = field(default=3)
+    talon_spatial_anchor_cols: int = field(default=3)
+    talon_spatial_anchor_score: str = field(default="fused")
+    talon_spatial_anchor_apply_to_short: bool = field(default=False)
+    talon_frame_coverage_floor_ratio: float = field(default=0.65)
+    talon_frame_importance_pooling: str = field(default="mean")
+    talon_frame_importance_topk: int = field(default=6)
+    talon_medium_frame_coverage_floor_ratio: float = field(default=-1.0)
+    talon_long_frame_coverage_floor_ratio: float = field(default=-1.0)
+    talon_frame_local_budget_ratio: float = field(default=1.0)
+    talon_question_recall_ratio: float = field(default=0.06)
+    talon_question_recall_qweight: float = field(default=0.65)
+    talon_persistence_recall_ratio: float = field(default=0.0)
+    talon_persistence_recall_qweight: float = field(default=0.50)
+    talon_persistence_recall_pweight: float = field(default=0.35)
+    talon_persistence_apply_to_short: bool = field(default=False)
+    talon_persistence_apply_to_medium: bool = field(default=True)
+    talon_persistence_apply_to_long: bool = field(default=False)
+    talon_object_evidence_ratio: float = field(default=0.0)
+    talon_object_evidence_qweight: float = field(default=0.35)
+    talon_object_evidence_sweight: float = field(default=0.45)
+    talon_object_evidence_pweight: float = field(default=0.10)
+    talon_object_evidence_apply_to_short: bool = field(default=False)
+    talon_object_evidence_apply_to_medium: bool = field(default=True)
+    talon_object_evidence_apply_to_long: bool = field(default=False)
+    talon_question_pooling: str = field(default="mean")
+    talon_question_pooling_topk: int = field(default=4)
+    talon_question_contrast_weight: float = field(default=0.0)
+    talon_question_contrast_apply_to_short: bool = field(default=False)
+    talon_monotonic_base_tokens_per_frame: int = field(default=20)
+    talon_budget_strategy: str = field(default="marginal")
+    talon_budget_mode: str = field(default="attention")
+    talon_transport_mode: str = field(default="hard")
+    talon_transport_temperature: float = field(default=0.07)
+    talon_lite_enabled: bool = field(default=False)
+    talon_echo_temperature: float = field(default=0.07)
+    talon_echo_topk_neighbors: int = field(default=4)
+    talon_echo_residual_weight: float = field(default=0.0)
+    talon_echo_score_mode: str = field(default="mse")
+    talon_rd_spectral_weight: float = field(default=1.0)
+    talon_rd_innovation_weight: float = field(default=1.0)
+    talon_use_question_innovation: bool = field(default=True)
+    talon_innovation_qweight: float = field(default=0.25)
+    talon_output_mode: str = field(default="manifold")
+    talon_reconstruction_blend: float = field(default=0.0)
+    talon_anchor_score_weight: float = field(default=0.35)
+    talon_min_anchor_per_frame: int = field(default=2)
+    talon_passthrough_ratio: float = field(default=0.15)
+    talon_passthrough_min: int = field(default=2)
+    talon_use_segmentation: bool = field(default=True)
+    talon_disable_oversegmentation: bool = field(default=True)
+    talon_max_segments: int = field(default=4)
+    talon_deepstack_mode: str = field(default="keep")
     memory_token_ratio: float = field(default=0.10)
     memory_token_min: int = field(default=1)
     memory_token_max: int = field(default=16)
-    external_budget_uses_expansion: bool = field(default=True)
-    fastvid_DySeg_c: int = field(default=8)
-    fastvid_DySeg_tau: float = field(default=0.90)
-    fastvid_DySeg_ignore: float = field(default=0.95)
-    fastvid_STPrune_d: float = field(default=0.40)
-    fastvid_DTM_p: int = field(default=4)
-    fastvid_DTM_beta: float = field(default=0.60)
-    visionzip_dominant_ratio: float = field(default=0.85)
     decode_policy: str = field(default="none")
     decode_kv_budget_ratio: float = field(default=1.0)
     decode_update_interval: int = field(default=4)
@@ -261,62 +288,10 @@ class BenchmarkArgs:
     flashvid_output: str = field(default="logs/efficiency/flashvid_all_metrics.jsonl")
     ours_output: str = field(default="logs/efficiency/ours_all_metrics.jsonl")
     graphvid_output: str = field(default="logs/efficiency/graphvid_all_metrics.jsonl")
-    graftvid_output: str = field(default="logs/efficiency/graftvid_all_metrics.jsonl")
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
-_MCQ_CHOICES = ("A", "B", "C", "D")
-_MCQ_ANSWER_PHRASES = [
-    "the answer is",
-    "answer is",
-    "the correct answer is",
-    "correct answer is",
-    "the best answer is",
-    "best answer is",
-    "the correct option is",
-    "correct option is",
-    "the best option is",
-    "best option is",
-    "the choice is",
-    "choice is",
-    "the correct choice is",
-    "correct choice is",
-    "i choose",
-    "i select",
-    "i pick",
-    "my answer is",
-    "my choice is",
-    "答案是",
-    "答案为",
-    "选",
-]
-_MCQ_FORMAT_PRIORITY = {
-    "start": 10,
-    "end": 9,
-    "phrase": 7,
-    "parentheses": 6,
-    "period": 5,
-    "colon": 4,
-    "right_paren": 3,
-    "space": 2,
-    "fallback": 0,
-}
-_VIDEOMME_OPTION_PROMPT = (
-    "Select the best answer to the following multiple-choice question based on the video and the subtitles. "
-    "Respond with only the letter (A, B, C, or D) of the correct option."
-)
-_VIDEOMME_LEGACY_POST_PROMPT = "Answer with the option's letter from the given choices directly."
-
-
-def _normalize_videomme_eval_style(style: str | None) -> str:
-    normalized = str(style or "current").strip().lower()
-    if normalized in {"949", "commit949", "raw", "snapshot949", "best949"}:
-        return "commit949"
-    return "current"
-
-
-def _extract_choice_letter_commit949(text: str) -> str:
-    """Exact MCQ parser from commit 94901b09."""
+def _extract_choice_letter(text: str) -> str:
     if not text:
         return ""
     t = (text or "").strip().upper()
@@ -343,117 +318,6 @@ def _extract_choice_letter_commit949(text: str) -> str:
     if m:
         return m.group(1)
     return ""
-
-
-def _extract_choice_letter_current(text: str) -> str:
-    """Match current lmms-eval VideoMME extract_mcq_answer priority rules."""
-    if not text or not text.strip():
-        return ""
-    stripped = text.strip()
-    for char in [",", ".", "!", "?", ";", ":", "'", '"']:
-        stripped = stripped.strip(char)
-    padded = f" {stripped} "
-    candidates: list[tuple[str, int, str]] = []
-
-    for ch in _MCQ_CHOICES:
-        if f"({ch})" in padded:
-            candidates.append((ch, padded.rfind(f"({ch})"), "parentheses"))
-        if f"{ch}." in padded:
-            candidates.append((ch, padded.rfind(f"{ch}."), "period"))
-        if f"{ch}:" in padded:
-            candidates.append((ch, padded.rfind(f"{ch}:"), "colon"))
-        if f"{ch})" in padded:
-            candidates.append((ch, padded.rfind(f"{ch})"), "right_paren"))
-        if f"{ch} " in padded:
-            candidates.append((ch, padded.rfind(f"{ch} "), "space"))
-
-    padded_lower = padded.lower()
-    for phrase in _MCQ_ANSWER_PHRASES:
-        idx = padded_lower.find(phrase)
-        if idx == -1:
-            continue
-        after = idx + len(phrase)
-        for ch in _MCQ_CHOICES:
-            ch_pos = padded.find(ch, after)
-            if ch_pos != -1:
-                candidates.append((ch, ch_pos, "phrase"))
-
-    compact = padded.strip()
-    for ch in _MCQ_CHOICES:
-        if compact.startswith(ch) and (len(compact) == 1 or not compact[1].isalpha()):
-            candidates.append((ch, 0, "start"))
-        if compact.endswith(ch) and (len(compact) == 1 or not compact[-2].isalpha()):
-            candidates.append((ch, len(padded) - 1, "end"))
-
-    if not candidates:
-        for ch in _MCQ_CHOICES:
-            if ch in padded:
-                candidates.append((ch, padded.rfind(ch), "fallback"))
-    if not candidates:
-        return ""
-    candidates.sort(key=lambda x: (_MCQ_FORMAT_PRIORITY.get(x[2], 0), x[1]), reverse=True)
-    return candidates[0][0]
-
-
-def _extract_choice_letter(text: str, style: str | None = None) -> str:
-    normalized = _normalize_videomme_eval_style(style)
-    if normalized == "commit949":
-        return _extract_choice_letter_commit949(text)
-    return _extract_choice_letter_current(text)
-
-
-def _strip_videomme_post_prompt(prompt: str) -> str:
-    prompt = (prompt or "").strip()
-    for suffix in (
-        _VIDEOMME_LEGACY_POST_PROMPT,
-        "The best answer is:",
-        "Answer with the option letter only.",
-        "Answer the question with A, B, C, or D.",
-    ):
-        if prompt.endswith(suffix):
-            return prompt[: -len(suffix)].rstrip()
-    return prompt
-
-
-def _split_videomme_question_options(prompt_text: str) -> tuple[str, str]:
-    prompt = _strip_videomme_post_prompt(prompt_text)
-    lines = [line.strip() for line in prompt.splitlines() if line.strip()]
-    if lines and lines[0] == _VIDEOMME_OPTION_PROMPT:
-        lines = lines[1:]
-    first_option = None
-    for idx, line in enumerate(lines):
-        if re.match(r"^[A-D]\s*[\.\)]\s+", line):
-            first_option = idx
-            break
-    if first_option is None:
-        return prompt, ""
-    question = "\n".join(lines[:first_option]).strip()
-    options = "\n".join(lines[first_option:]).strip()
-    return question, options
-
-
-def _to_lmms_videomme_prompt(prompt_text: str, backend: str = "llava", style: str | None = None) -> str:
-    """Use current lmms-eval VideoMME backend-specific prompt variants."""
-    normalized = _normalize_videomme_eval_style(style)
-    if normalized == "commit949":
-        return prompt_text
-
-    backend = str(backend or "").lower()
-    if backend == "qwen3_vl":
-        question, options = _split_videomme_question_options(prompt_text)
-        if options:
-            return f"Question: {question}\nOptions:\n{options}\nAnswer with the option letter only."
-        return f"Question: {_strip_videomme_post_prompt(prompt_text)}\nAnswer with the option letter only."
-
-    prompt = _strip_videomme_post_prompt(prompt_text)
-    if backend == "llava":
-        if not prompt.endswith("The best answer is:"):
-            prompt = f"{prompt}\nThe best answer is:"
-        return prompt
-
-    if not prompt.endswith(_VIDEOMME_LEGACY_POST_PROMPT):
-        prompt = f"{prompt}\n{_VIDEOMME_LEGACY_POST_PROMPT}"
-    return prompt
 
 
 def _stats(values: list[float]) -> dict[str, float | int | None]:
@@ -623,30 +487,9 @@ def _load_llava_model(args: BenchmarkArgs):
     from llava.mm_utils import get_model_name_from_path
 
     model_name = get_model_name_from_path(args.model_path)
-    normalized_model_path = str(args.model_path).replace("\\", "/")
-    is_llava_video_qwen2 = (
-        normalized_model_path == "lmms-lab/LLaVA-Video-7B-Qwen2"
-        or "LLaVA-Video-7B-Qwen2" in normalized_model_path
-        or "models--lmms-lab--LLaVA-Video-7B-Qwen2" in normalized_model_path
-    )
-    normalized_model_path_lower = normalized_model_path.lower()
-    is_llava_onevision_qwen2 = (
-        normalized_model_path_lower == "lmms-lab/llava-onevision-qwen2-7b-ov"
-        or "llava-onevision-qwen2-7b-ov" in normalized_model_path_lower
-        or "models--lmms-lab--llava-onevision-qwen2-7b-ov" in normalized_model_path_lower
-    )
-    if is_llava_video_qwen2:
-        model_name = "LLaVA-Video-7B-Qwen2"
-    elif is_llava_onevision_qwen2:
-        # Snapshot paths end in a hash, so get_model_name_from_path() loses the
-        # qwen marker and the LLaVA builder falls back to LlavaLlamaForCausalLM.
-        # Keep the original repo name here so OneVision loads through LlavaQwen.
-        model_name = "llava-onevision-qwen2-7b-ov"
     overwrite_config = (
         {"mm_spatial_pool_mode": "average", "mm_newline_position": "frame"}
-        if is_llava_video_qwen2
-        else {"mm_spatial_pool_mode": "bilinear"}
-        if is_llava_onevision_qwen2
+        if args.model_path == "lmms-lab/LLaVA-Video-7B-Qwen2"
         else {}
     )
     attn_impl = _resolve_attn_implementation(args.attn_implementation)
@@ -759,68 +602,38 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
     except ImportError as exc:
         raise ImportError("qwen_vl_utils is required for Qwen video processing") from exc
 
-    if _normalize_videomme_eval_style(args.videomme_eval_style) == "commit949":
-        video_content: dict[str, Any] = {
-            "video": video_path,
-            "max_pixels": args.max_pixels,
-            "min_pixels": args.min_pixels,
-        }
-    else:
-        video_content = {
-            "type": "video",
-            "video": video_path,
-            "max_pixels": args.max_pixels,
-            "min_pixels": args.min_pixels,
-        }
-    # lmms-eval/Qwen2.5-VL does not pass nframes into qwen_vl_utils. It decodes
-    # the video first, then uniformly samples max_num_frames afterwards.
-    if backend != "qwen2_5_vl":
-        video_content["nframes"] = args.num_frames
-
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {
             "role": "user",
-            "content": [video_content, {"type": "text", "text": prompt_text}],
+            "content": [
+                {
+                    "video": video_path,
+                    "max_pixels": args.max_pixels,
+                    "min_pixels": args.min_pixels,
+                    "nframes": args.num_frames,
+                },
+                {"type": "text", "text": prompt_text},
+            ],
         },
     ]
 
     video_kwargs: dict[str, Any] = {}
     video_metadata = None
-    if backend == "qwen2_5_vl":
-        images, videos = process_vision_info([messages])
-        if videos is not None:
-            if torch.is_tensor(videos):
-                videos = [videos]
-            elif isinstance(videos, tuple):
-                videos = list(videos)
-            if len(videos) > 0:
-                total_frames = int(videos[0].shape[0])
-                if total_frames > 0 and args.num_frames > 0:
-                    indices = np.linspace(0, total_frames - 1, args.num_frames, dtype=int)
-                    indices = np.unique(indices)
-                    if total_frames - 1 not in indices:
-                        indices = np.append(indices, total_frames - 1)
-                        indices = np.unique(indices)
-                    videos[0] = videos[0][indices]
-    else:
-        try:
-            # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
-            if backend == "qwen3_vl":
-                images, videos, video_kwargs = process_vision_info(
-                    messages,
-                    return_video_kwargs=True,
-                    return_video_metadata=True,
-                    image_patch_size=16,
-                )
-            else:
-                images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-        except TypeError:
-            # Backward compatibility for older qwen_vl_utils versions.
+    try:
+        # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
+        if backend == "qwen3_vl":
             images, videos, video_kwargs = process_vision_info(
                 messages,
                 return_video_kwargs=True,
+                return_video_metadata=True,
+                image_patch_size=16,
             )
+        else:
+            images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    except TypeError:
+        # Backward compatibility for older qwen_vl_utils versions.
+        images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
 
     # qwen_vl_utils may return [(video_tensor, metadata), ...] when return_video_metadata=True.
     if videos is not None and len(videos) > 0 and isinstance(videos[0], tuple):
@@ -828,8 +641,7 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
         videos = list(videos)
         video_metadata = list(video_metadata)
 
-    template_messages = [messages] if backend == "qwen2_5_vl" else messages
-    text = processor.apply_chat_template(template_messages, tokenize=False, add_generation_prompt=True)
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     processor_kwargs = {
         "text": text,
         "images": images,
@@ -860,8 +672,8 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
 
 def _prepare_inputs(model_bundle, args: BenchmarkArgs, sample: dict[str, Any]):
     video_path = _resolve_sample_video_path(sample, args.hf_home)
+    prompt_text = sample["input"]
     backend = model_bundle["backend"]
-    prompt_text = _to_lmms_videomme_prompt(sample["input"], backend, args.videomme_eval_style)
     if backend == "llava":
         return _prepare_llava_inputs(model_bundle, args, prompt_text, video_path)
     return _prepare_qwen_inputs(model_bundle, args, prompt_text, video_path)
@@ -887,42 +699,29 @@ def _clone_inputs(backend: str, prepared_inputs):
     return cloned
 
 
-def _decode_prediction(
-    model_bundle,
-    output_ids: torch.Tensor,
-    prompt_len: int,
-    eval_style: str | None = None,
-) -> tuple[str, int]:
-    backend = model_bundle["backend"]
-    if backend == "llava":
-        # LLaVA-Video generation is driven by inputs_embeds. On recent
-        # transformers versions, generate() can return only newly generated
-        # token ids rather than prompt + generation. Do not blindly slice by
-        # prompt_len in that case, or every prediction becomes empty.
-        generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids
-        gen_tokens = int(generated.shape[1])
-        if gen_tokens == 0:
-            return "", 0
-        tokenizer = model_bundle["tokenizer"]
-        text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
-        answer = _extract_choice_letter(text, eval_style)
-        if answer:
-            return answer, gen_tokens
-        first_token_id = int(generated[0, 0].item())
-        first_token = tokenizer.decode([first_token_id], skip_special_tokens=True)
-        return _extract_choice_letter(first_token, eval_style), gen_tokens
-
+def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) -> tuple[str, int]:
     generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
     gen_tokens = int(generated.shape[1])
     if gen_tokens == 0:
         return "", 0
 
+    backend = model_bundle["backend"]
+    if backend == "llava":
+        tokenizer = model_bundle["tokenizer"]
+        text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+        answer = _extract_choice_letter(text)
+        if answer:
+            return answer, gen_tokens
+        first_token_id = int(generated[0, 0].item())
+        first_token = tokenizer.decode([first_token_id], skip_special_tokens=True)
+        return _extract_choice_letter(first_token), gen_tokens
+
     processor = model_bundle["processor"]
     text = processor.batch_decode(generated, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
-    answer = _extract_choice_letter(text, eval_style)
+    answer = _extract_choice_letter(text)
     if answer:
         return answer, gen_tokens
-    return _extract_choice_letter(text[:8], eval_style), gen_tokens
+    return _extract_choice_letter(text[:8]), gen_tokens
 
 
 def _safe_int_metric(value, fallback: int) -> int:
@@ -932,16 +731,6 @@ def _safe_int_metric(value, fallback: int) -> int:
         return int(value)
     except Exception:
         return fallback
-
-
-def _get_raw_visual_token_metric(model, fallback: int, use_acceleration: bool) -> int:
-    if not use_acceleration or not hasattr(model, "flashvid_config"):
-        return fallback
-    cfg = getattr(model, "flashvid_config")
-    return _safe_int_metric(
-        getattr(cfg, "raw_visual_token_length", None),
-        _safe_int_metric(getattr(cfg, "raw_vision_token_length", None), fallback),
-    )
 
 
 def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: bool) -> tuple[int, int]:
@@ -959,34 +748,113 @@ def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: b
     return final_length, vision_length
 
 
+def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     if not hasattr(model, "flashvid_config"):
         return {
+            "talon_target_tokens_per_frame": None,
+            "talon_adaptive_retention_ratio": None,
+            "talon_complexity_score": None,
+            "talon_target_budget": None,
+            "talon_anchor_tokens": None,
+            "talon_rank_tokens": None,
+            "talon_event_tokens": None,
+            "talon_recall_tokens": None,
+            "talon_persistence_tokens": None,
+            "talon_object_tokens": None,
+            "talon_memory_tokens": None,
+            "talon_rank_cap": None,
+            "talon_chosen_rank": None,
+            "talon_duplicate_index_count": None,
+            "talon_question_aware_active": None,
+            "talon_router_mode_code": None,
+            "talon_router_fused_concentration": None,
+            "talon_router_residual_concentration": None,
+            "talon_router_question_concentration": None,
+            "talon_router_frame_entropy": None,
         }
     cfg = getattr(model, "flashvid_config")
+    target = getattr(cfg, "last_talon_target_tokens_per_frame", None)
     adaptive_ratio = getattr(cfg, "last_adaptive_retention_ratio", None)
+    complexity = getattr(cfg, "last_talon_complexity_score", None)
+    target_budget = getattr(cfg, "last_talon_target_budget", None)
+    anchor_tokens = getattr(cfg, "last_talon_anchor_tokens", None)
+    rank_tokens = getattr(cfg, "last_talon_rank_tokens", None)
+    event_tokens = getattr(cfg, "last_talon_event_tokens", None)
+    recall_tokens = getattr(cfg, "last_talon_recall_tokens", None)
+    persistence_tokens = getattr(cfg, "last_talon_persistence_tokens", None)
+    object_tokens = getattr(cfg, "last_talon_object_tokens", None)
+    memory_tokens = getattr(cfg, "last_talon_memory_tokens", None)
+    rank_cap = getattr(cfg, "last_talon_rank_cap", None)
+    chosen_rank = getattr(cfg, "last_talon_chosen_rank", None)
+    duplicate_count = getattr(cfg, "last_talon_duplicate_index_count", None)
+    question_active = getattr(cfg, "last_talon_question_aware_active", None)
+    router_mode = getattr(cfg, "last_talon_router_mode_code", None)
+    router_fused_conc = getattr(cfg, "last_talon_router_fused_concentration", None)
+    router_residual_conc = getattr(cfg, "last_talon_router_residual_concentration", None)
+    router_question_conc = getattr(cfg, "last_talon_router_question_concentration", None)
+    router_frame_entropy = getattr(cfg, "last_talon_router_frame_entropy", None)
     return {
+        "talon_target_tokens_per_frame": float(target) if target is not None else None,
+        "talon_adaptive_retention_ratio": float(adaptive_ratio) if adaptive_ratio is not None else None,
+        "talon_complexity_score": float(complexity) if complexity is not None else None,
+        "talon_target_budget": float(target_budget) if target_budget is not None else None,
+        "talon_anchor_tokens": float(anchor_tokens) if anchor_tokens is not None else None,
+        "talon_rank_tokens": float(rank_tokens) if rank_tokens is not None else None,
+        "talon_event_tokens": float(event_tokens) if event_tokens is not None else None,
+        "talon_recall_tokens": float(recall_tokens) if recall_tokens is not None else None,
+        "talon_persistence_tokens": float(persistence_tokens) if persistence_tokens is not None else None,
+        "talon_object_tokens": float(object_tokens) if object_tokens is not None else None,
+        "talon_memory_tokens": float(memory_tokens) if memory_tokens is not None else None,
+        "talon_rank_cap": float(rank_cap) if rank_cap is not None else None,
+        "talon_chosen_rank": float(chosen_rank) if chosen_rank is not None else None,
+        "talon_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
+        "talon_question_aware_active": float(bool(question_active)) if question_active is not None else None,
+        "talon_router_mode_code": float(router_mode) if router_mode is not None else None,
+        "talon_router_fused_concentration": float(router_fused_conc) if router_fused_conc is not None else None,
+        "talon_router_residual_concentration": float(router_residual_conc) if router_residual_conc is not None else None,
+        "talon_router_question_concentration": float(router_question_conc) if router_question_conc is not None else None,
+        "talon_router_frame_entropy": float(router_frame_entropy) if router_frame_entropy is not None else None,
     }
 
 
+def _get_talon_core_debug_metrics(model) -> dict[str, float | None]:
     empty = {
+        "talon_core_target_budget": None,
+        "talon_core_residual_mean": None,
+        "talon_core_semantic_tokens": None,
+        "talon_core_innovation_tokens": None,
+        "talon_core_duplicate_index_count": None,
+        "talon_core_question_aware_active": None,
+        "talon_core_budget_min": None,
+        "talon_core_budget_max": None,
+        "talon_core_grid_h": None,
+        "talon_core_grid_w": None,
     }
     if not hasattr(model, "flashvid_config"):
         return empty
     cfg = getattr(model, "flashvid_config")
+    target_budget = getattr(cfg, "last_talon_core_target_budget", None)
+    residual_mean = getattr(cfg, "last_talon_core_residual_mean", None)
+    semantic_tokens = getattr(cfg, "last_talon_core_semantic_tokens", None)
+    innovation_tokens = getattr(cfg, "last_talon_core_innovation_tokens", None)
+    duplicate_count = getattr(cfg, "last_talon_core_duplicate_index_count", None)
+    question_active = getattr(cfg, "last_talon_core_question_aware_active", None)
+    budget_min = getattr(cfg, "last_talon_core_budget_min", None)
+    budget_max = getattr(cfg, "last_talon_core_budget_max", None)
+    grid_h = getattr(cfg, "last_talon_core_grid_h", None)
+    grid_w = getattr(cfg, "last_talon_core_grid_w", None)
     return {
+        "talon_core_target_budget": float(target_budget) if target_budget is not None else None,
+        "talon_core_residual_mean": float(residual_mean) if residual_mean is not None else None,
+        "talon_core_semantic_tokens": float(semantic_tokens) if semantic_tokens is not None else None,
+        "talon_core_innovation_tokens": float(innovation_tokens) if innovation_tokens is not None else None,
+        "talon_core_duplicate_index_count": float(duplicate_count) if duplicate_count is not None else None,
+        "talon_core_question_aware_active": float(bool(question_active)) if question_active is not None else None,
+        "talon_core_budget_min": float(budget_min) if budget_min is not None else None,
+        "talon_core_budget_max": float(budget_max) if budget_max is not None else None,
+        "talon_core_grid_h": float(grid_h) if grid_h is not None else None,
+        "talon_core_grid_w": float(grid_w) if grid_w is not None else None,
     }
-
-
-def _get_graft_debug_metrics(model) -> dict[str, float | None]:
-    empty = {key: None for key in GRAFT_METRIC_KEYS}
-    if not hasattr(model, "flashvid_config"):
-        return empty
-    cfg = getattr(model, "flashvid_config")
-    values: dict[str, float | None] = {}
-    for key in GRAFT_METRIC_KEYS:
-        value = getattr(cfg, f"last_{key}", None)
-        values[key] = float(value) if value is not None else None
-    return values
 
 
 def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_acceleration: bool):
@@ -1005,8 +873,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
                 images=inputs["images"],
                 image_sizes=inputs["image_sizes"],
                 do_sample=False,
-                top_p=1.0,
-                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 modalities=["video"],
             )
@@ -1014,8 +880,6 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             model.generate(
                 **inputs,
                 do_sample=False,
-                top_p=1.0,
-                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 use_cache=True,
             )
@@ -1027,7 +891,35 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     gen_tokens_per_run = []
     compressed_tokens_per_run = []
     vision_tokens_per_run = []
-    graft_metrics_per_run = {key: [] for key in GRAFT_METRIC_KEYS}
+    talon_target_per_run = []
+    talon_complexity_per_run = []
+    talon_target_budget_per_run = []
+    talon_anchor_per_run = []
+    talon_rank_per_run = []
+    talon_event_per_run = []
+    talon_recall_per_run = []
+    talon_persistence_per_run = []
+    talon_object_per_run = []
+    talon_memory_per_run = []
+    talon_rank_cap_per_run = []
+    talon_chosen_rank_per_run = []
+    talon_duplicate_per_run = []
+    talon_question_active_per_run = []
+    talon_router_mode_per_run = []
+    talon_router_fused_conc_per_run = []
+    talon_router_residual_conc_per_run = []
+    talon_router_question_conc_per_run = []
+    talon_router_frame_entropy_per_run = []
+    talon_core_target_budget_per_run = []
+    talon_core_residual_mean_per_run = []
+    talon_core_semantic_per_run = []
+    talon_core_innovation_per_run = []
+    talon_core_duplicate_per_run = []
+    talon_core_question_active_per_run = []
+    talon_core_budget_min_per_run = []
+    talon_core_budget_max_per_run = []
+    talon_core_grid_h_per_run = []
+    talon_core_grid_w_per_run = []
     prompt_len = prepared_inputs["prompt_len"]
     raw_visual_tokens = int(prepared_inputs["raw_visual_tokens"])
 
@@ -1044,43 +936,119 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
                     images=inputs["images"],
                     image_sizes=inputs["image_sizes"],
                     do_sample=False,
-                    top_p=1.0,
-                    num_beams=1,
                     max_new_tokens=args.max_new_tokens,
                     modalities=["video"],
                 )
             return model.generate(
                 **inputs,
                 do_sample=False,
-                top_p=1.0,
-                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 use_cache=True,
             )
 
         output_ids, latency_ms = _timed_call(_generate)
-        answer, gen_tokens = _decode_prediction(model_bundle, output_ids, prompt_len, args.videomme_eval_style)
+        answer, gen_tokens = _decode_prediction(model_bundle, output_ids, prompt_len)
         if run_idx == 0:
             pred_answer = answer
         latencies.append(float(latency_ms))
         gen_tokens_per_run.append(float(gen_tokens))
         final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
-        graft_metrics = _get_graft_debug_metrics(model)
+        debug_metrics = _get_talon_debug_metrics(model)
+        talon_core_metrics = _get_talon_core_debug_metrics(model)
         compressed_tokens_per_run.append(float(final_tokens))
         vision_tokens_per_run.append(float(vision_tokens))
-        for key in GRAFT_METRIC_KEYS:
-            if graft_metrics.get(key) is not None:
-                graft_metrics_per_run[key].append(float(graft_metrics[key]))
+        if debug_metrics["talon_target_tokens_per_frame"] is not None:
+            talon_target_per_run.append(float(debug_metrics["talon_target_tokens_per_frame"]))
+        if debug_metrics["talon_complexity_score"] is not None:
+            talon_complexity_per_run.append(float(debug_metrics["talon_complexity_score"]))
+        if debug_metrics["talon_target_budget"] is not None:
+            talon_target_budget_per_run.append(float(debug_metrics["talon_target_budget"]))
+        if debug_metrics["talon_anchor_tokens"] is not None:
+            talon_anchor_per_run.append(float(debug_metrics["talon_anchor_tokens"]))
+        if debug_metrics["talon_rank_tokens"] is not None:
+            talon_rank_per_run.append(float(debug_metrics["talon_rank_tokens"]))
+        if debug_metrics["talon_event_tokens"] is not None:
+            talon_event_per_run.append(float(debug_metrics["talon_event_tokens"]))
+        if debug_metrics["talon_recall_tokens"] is not None:
+            talon_recall_per_run.append(float(debug_metrics["talon_recall_tokens"]))
+        if debug_metrics["talon_persistence_tokens"] is not None:
+            talon_persistence_per_run.append(float(debug_metrics["talon_persistence_tokens"]))
+        if debug_metrics["talon_object_tokens"] is not None:
+            talon_object_per_run.append(float(debug_metrics["talon_object_tokens"]))
+        if debug_metrics["talon_memory_tokens"] is not None:
+            talon_memory_per_run.append(float(debug_metrics["talon_memory_tokens"]))
+        if debug_metrics["talon_rank_cap"] is not None:
+            talon_rank_cap_per_run.append(float(debug_metrics["talon_rank_cap"]))
+        if debug_metrics["talon_chosen_rank"] is not None:
+            talon_chosen_rank_per_run.append(float(debug_metrics["talon_chosen_rank"]))
+        if debug_metrics["talon_duplicate_index_count"] is not None:
+            talon_duplicate_per_run.append(float(debug_metrics["talon_duplicate_index_count"]))
+        if debug_metrics["talon_question_aware_active"] is not None:
+            talon_question_active_per_run.append(float(debug_metrics["talon_question_aware_active"]))
+        if debug_metrics["talon_router_mode_code"] is not None:
+            talon_router_mode_per_run.append(float(debug_metrics["talon_router_mode_code"]))
+        if debug_metrics["talon_router_fused_concentration"] is not None:
+            talon_router_fused_conc_per_run.append(float(debug_metrics["talon_router_fused_concentration"]))
+        if debug_metrics["talon_router_residual_concentration"] is not None:
+            talon_router_residual_conc_per_run.append(float(debug_metrics["talon_router_residual_concentration"]))
+        if debug_metrics["talon_router_question_concentration"] is not None:
+            talon_router_question_conc_per_run.append(float(debug_metrics["talon_router_question_concentration"]))
+        if debug_metrics["talon_router_frame_entropy"] is not None:
+            talon_router_frame_entropy_per_run.append(float(debug_metrics["talon_router_frame_entropy"]))
+        if talon_core_metrics["talon_core_target_budget"] is not None:
+            talon_core_target_budget_per_run.append(float(talon_core_metrics["talon_core_target_budget"]))
+        if talon_core_metrics["talon_core_residual_mean"] is not None:
+            talon_core_residual_mean_per_run.append(float(talon_core_metrics["talon_core_residual_mean"]))
+        if talon_core_metrics["talon_core_semantic_tokens"] is not None:
+            talon_core_semantic_per_run.append(float(talon_core_metrics["talon_core_semantic_tokens"]))
+        if talon_core_metrics["talon_core_innovation_tokens"] is not None:
+            talon_core_innovation_per_run.append(float(talon_core_metrics["talon_core_innovation_tokens"]))
+        if talon_core_metrics["talon_core_duplicate_index_count"] is not None:
+            talon_core_duplicate_per_run.append(float(talon_core_metrics["talon_core_duplicate_index_count"]))
+        if talon_core_metrics["talon_core_question_aware_active"] is not None:
+            talon_core_question_active_per_run.append(float(talon_core_metrics["talon_core_question_aware_active"]))
+        if talon_core_metrics["talon_core_budget_min"] is not None:
+            talon_core_budget_min_per_run.append(float(talon_core_metrics["talon_core_budget_min"]))
+        if talon_core_metrics["talon_core_budget_max"] is not None:
+            talon_core_budget_max_per_run.append(float(talon_core_metrics["talon_core_budget_max"]))
+        if talon_core_metrics["talon_core_grid_h"] is not None:
+            talon_core_grid_h_per_run.append(float(talon_core_metrics["talon_core_grid_h"]))
+        if talon_core_metrics["talon_core_grid_w"] is not None:
+            talon_core_grid_w_per_run.append(float(talon_core_metrics["talon_core_grid_w"]))
 
     latency_ms = float(np.mean(latencies)) if latencies else None
     generated_tokens = float(np.mean(gen_tokens_per_run)) if gen_tokens_per_run else None
-    raw_visual_tokens = _get_raw_visual_token_metric(model, raw_visual_tokens, use_acceleration)
     compressed_visual_tokens = float(np.mean(compressed_tokens_per_run)) if compressed_tokens_per_run else float(raw_visual_tokens)
     vision_compressed_visual_tokens = float(np.mean(vision_tokens_per_run)) if vision_tokens_per_run else float(raw_visual_tokens)
-    graft_metric_means = {
-        key: float(np.mean(values)) if values else None
-        for key, values in graft_metrics_per_run.items()
-    }
+    talon_target_tokens_per_frame = float(np.mean(talon_target_per_run)) if talon_target_per_run else None
+    talon_complexity_score = float(np.mean(talon_complexity_per_run)) if talon_complexity_per_run else None
+    talon_target_budget = float(np.mean(talon_target_budget_per_run)) if talon_target_budget_per_run else None
+    talon_anchor_tokens = float(np.mean(talon_anchor_per_run)) if talon_anchor_per_run else None
+    talon_rank_tokens = float(np.mean(talon_rank_per_run)) if talon_rank_per_run else None
+    talon_event_tokens = float(np.mean(talon_event_per_run)) if talon_event_per_run else None
+    talon_recall_tokens = float(np.mean(talon_recall_per_run)) if talon_recall_per_run else None
+    talon_persistence_tokens = float(np.mean(talon_persistence_per_run)) if talon_persistence_per_run else None
+    talon_object_tokens = float(np.mean(talon_object_per_run)) if talon_object_per_run else None
+    talon_memory_tokens = float(np.mean(talon_memory_per_run)) if talon_memory_per_run else None
+    talon_rank_cap = float(np.mean(talon_rank_cap_per_run)) if talon_rank_cap_per_run else None
+    talon_chosen_rank = float(np.mean(talon_chosen_rank_per_run)) if talon_chosen_rank_per_run else None
+    talon_duplicate_index_count = float(np.mean(talon_duplicate_per_run)) if talon_duplicate_per_run else None
+    talon_question_aware_active = float(np.mean(talon_question_active_per_run)) if talon_question_active_per_run else None
+    talon_router_mode_code = float(np.mean(talon_router_mode_per_run)) if talon_router_mode_per_run else None
+    talon_router_fused_concentration = float(np.mean(talon_router_fused_conc_per_run)) if talon_router_fused_conc_per_run else None
+    talon_router_residual_concentration = float(np.mean(talon_router_residual_conc_per_run)) if talon_router_residual_conc_per_run else None
+    talon_router_question_concentration = float(np.mean(talon_router_question_conc_per_run)) if talon_router_question_conc_per_run else None
+    talon_router_frame_entropy = float(np.mean(talon_router_frame_entropy_per_run)) if talon_router_frame_entropy_per_run else None
+    talon_core_target_budget = float(np.mean(talon_core_target_budget_per_run)) if talon_core_target_budget_per_run else None
+    talon_core_residual_mean = float(np.mean(talon_core_residual_mean_per_run)) if talon_core_residual_mean_per_run else None
+    talon_core_semantic_tokens = float(np.mean(talon_core_semantic_per_run)) if talon_core_semantic_per_run else None
+    talon_core_innovation_tokens = float(np.mean(talon_core_innovation_per_run)) if talon_core_innovation_per_run else None
+    talon_core_duplicate_index_count = float(np.mean(talon_core_duplicate_per_run)) if talon_core_duplicate_per_run else None
+    talon_core_question_aware_active = float(np.mean(talon_core_question_active_per_run)) if talon_core_question_active_per_run else None
+    talon_core_budget_min = float(np.mean(talon_core_budget_min_per_run)) if talon_core_budget_min_per_run else None
+    talon_core_budget_max = float(np.mean(talon_core_budget_max_per_run)) if talon_core_budget_max_per_run else None
+    talon_core_grid_h = float(np.mean(talon_core_grid_h_per_run)) if talon_core_grid_h_per_run else None
+    talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1093,7 +1061,35 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "raw_visual_tokens": float(raw_visual_tokens),
         "compressed_visual_tokens": compressed_visual_tokens,
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
-        **graft_metric_means,
+        "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
+        "talon_complexity_score": talon_complexity_score,
+        "talon_target_budget": talon_target_budget,
+        "talon_anchor_tokens": talon_anchor_tokens,
+        "talon_rank_tokens": talon_rank_tokens,
+        "talon_event_tokens": talon_event_tokens,
+        "talon_recall_tokens": talon_recall_tokens,
+        "talon_persistence_tokens": talon_persistence_tokens,
+        "talon_object_tokens": talon_object_tokens,
+        "talon_memory_tokens": talon_memory_tokens,
+        "talon_rank_cap": talon_rank_cap,
+        "talon_chosen_rank": talon_chosen_rank,
+        "talon_duplicate_index_count": talon_duplicate_index_count,
+        "talon_question_aware_active": talon_question_aware_active,
+        "talon_router_mode_code": talon_router_mode_code,
+        "talon_router_fused_concentration": talon_router_fused_concentration,
+        "talon_router_residual_concentration": talon_router_residual_concentration,
+        "talon_router_question_concentration": talon_router_question_concentration,
+        "talon_router_frame_entropy": talon_router_frame_entropy,
+        "talon_core_target_budget": talon_core_target_budget,
+        "talon_core_residual_mean": talon_core_residual_mean,
+        "talon_core_semantic_tokens": talon_core_semantic_tokens,
+        "talon_core_innovation_tokens": talon_core_innovation_tokens,
+        "talon_core_duplicate_index_count": talon_core_duplicate_index_count,
+        "talon_core_question_aware_active": talon_core_question_aware_active,
+        "talon_core_budget_min": talon_core_budget_min,
+        "talon_core_budget_max": talon_core_budget_max,
+        "talon_core_grid_h": talon_core_grid_h,
+        "talon_core_grid_w": talon_core_grid_w,
     }
 
 
@@ -1109,7 +1105,6 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "task_category": sample.get("task_category"),
         "sub_category": sample.get("sub_category"),
         "answer": sample.get("answer"),
-        "videomme_eval_style": _normalize_videomme_eval_style(args.videomme_eval_style),
         "pred_answer": "",
         "correct": None,
         "latency_ms": None,
@@ -1118,12 +1113,36 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "raw_visual_tokens": None,
         "compressed_visual_tokens": None,
         "vision_compressed_visual_tokens": None,
+        "talon_target_tokens_per_frame": None,
+        "talon_complexity_score": None,
+        "talon_target_budget": None,
+        "talon_anchor_tokens": None,
+        "talon_rank_tokens": None,
+        "talon_event_tokens": None,
+        "talon_recall_tokens": None,
+        "talon_persistence_tokens": None,
+        "talon_object_tokens": None,
+        "talon_memory_tokens": None,
+        "talon_rank_cap": None,
+        "talon_chosen_rank": None,
+        "talon_duplicate_index_count": None,
+        "talon_question_aware_active": None,
+        "talon_router_mode_code": None,
+        "talon_router_fused_concentration": None,
+        "talon_router_residual_concentration": None,
+        "talon_router_question_concentration": None,
+        "talon_router_frame_entropy": None,
+        "talon_core_target_budget": None,
+        "talon_core_residual_mean": None,
+        "talon_core_semantic_tokens": None,
+        "talon_core_innovation_tokens": None,
+        "talon_core_duplicate_index_count": None,
+        "talon_core_question_aware_active": None,
         "visual_token_reduction_ratio": None,
         "vision_visual_token_reduction_ratio": None,
         "error": None,
         "error_traceback": None,
     }
-    record.update({key: None for key in GRAFT_METRIC_KEYS})
 
     try:
         if use_acceleration and hasattr(model_bundle.get("model"), "flashvid_config"):
@@ -1145,14 +1164,42 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         record.update(
             {
                 "pred_answer": result["pred_answer"],
-                "correct": str(result["pred_answer"]).lower() == str(sample.get("answer")).lower(),
+                "correct": result["pred_answer"] == sample.get("answer"),
                 "latency_ms": result["latency_ms"],
                 "generated_tokens": result["generated_tokens"],
                 "tokens_per_second": result["tokens_per_second"],
                 "raw_visual_tokens": raw_v,
                 "compressed_visual_tokens": compressed_v,
                 "vision_compressed_visual_tokens": vision_compressed_v,
-                **{key: result.get(key) for key in GRAFT_METRIC_KEYS},
+                "talon_target_tokens_per_frame": result.get("talon_target_tokens_per_frame"),
+                "talon_complexity_score": result.get("talon_complexity_score"),
+                "talon_target_budget": result.get("talon_target_budget"),
+                "talon_anchor_tokens": result.get("talon_anchor_tokens"),
+                "talon_rank_tokens": result.get("talon_rank_tokens"),
+                "talon_event_tokens": result.get("talon_event_tokens"),
+                "talon_recall_tokens": result.get("talon_recall_tokens"),
+                "talon_persistence_tokens": result.get("talon_persistence_tokens"),
+                "talon_object_tokens": result.get("talon_object_tokens"),
+                "talon_memory_tokens": result.get("talon_memory_tokens"),
+                "talon_rank_cap": result.get("talon_rank_cap"),
+                "talon_chosen_rank": result.get("talon_chosen_rank"),
+                "talon_duplicate_index_count": result.get("talon_duplicate_index_count"),
+                "talon_question_aware_active": result.get("talon_question_aware_active"),
+                "talon_router_mode_code": result.get("talon_router_mode_code"),
+                "talon_router_fused_concentration": result.get("talon_router_fused_concentration"),
+                "talon_router_residual_concentration": result.get("talon_router_residual_concentration"),
+                "talon_router_question_concentration": result.get("talon_router_question_concentration"),
+                "talon_router_frame_entropy": result.get("talon_router_frame_entropy"),
+                "talon_core_target_budget": result.get("talon_core_target_budget"),
+                "talon_core_residual_mean": result.get("talon_core_residual_mean"),
+                "talon_core_semantic_tokens": result.get("talon_core_semantic_tokens"),
+                "talon_core_innovation_tokens": result.get("talon_core_innovation_tokens"),
+                "talon_core_duplicate_index_count": result.get("talon_core_duplicate_index_count"),
+                "talon_core_question_aware_active": result.get("talon_core_question_aware_active"),
+                "talon_core_budget_min": result.get("talon_core_budget_min"),
+                "talon_core_budget_max": result.get("talon_core_budget_max"),
+                "talon_core_grid_h": result.get("talon_core_grid_h"),
+                "talon_core_grid_w": result.get("talon_core_grid_w"),
                 "visual_token_reduction_ratio": reduction_ratio,
                 "vision_visual_token_reduction_ratio": vision_reduction_ratio,
             }
@@ -1172,7 +1219,6 @@ def _run_phase(
     phase_name: str,
     use_acceleration: bool,
     output_path: str,
-    phase_key: str | None = None,
 ):
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1180,7 +1226,6 @@ def _run_phase(
     with out.open("w", encoding="utf-8") as f:
         for idx, sample in enumerate(samples, 1):
             record = _benchmark_single_sample(model_bundle, args, sample, use_acceleration=use_acceleration)
-            record["method"] = _canonical_method_name(phase_key or phase_name)
 
             # Normalize edge cases so logging/summary is robust:
             # - some exceptions may stringify to empty text;
@@ -1197,34 +1242,7 @@ def _run_phase(
                 if missing:
                     record["error"] = f"missing metrics: {', '.join(missing)}"
 
-            try:
-                line = _jsonl_line(record)
-            except Exception as exc:
-                record = {
-                    "question_id": record.get("question_id"),
-                    "videoID": record.get("videoID"),
-                    "duration": record.get("duration"),
-                    "answer": record.get("answer"),
-                    "pred_answer": record.get("pred_answer", ""),
-                    "correct": None,
-                    "latency_ms": None,
-                    "generated_tokens": None,
-                    "tokens_per_second": None,
-                    "raw_visual_tokens": None,
-                    "compressed_visual_tokens": None,
-                    "vision_compressed_visual_tokens": None,
-                    "visual_token_reduction_ratio": None,
-                    "vision_visual_token_reduction_ratio": None,
-                    "method": _canonical_method_name(phase_key or phase_name),
-                    "error": f"jsonl write failed: {type(exc).__name__}: {str(exc)[:500]}",
-                    "error_traceback": traceback.format_exc(limit=8),
-                }
-                print(
-                    f"[{phase_name}] {idx}/{len(samples)} {record.get('question_id')} "
-                    f"jsonl-write-error: {record['error']}"
-                )
-                line = _jsonl_line(record)
-            f.write(line)
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
             f.flush()
 
             if record["error"]:
@@ -1242,35 +1260,8 @@ def _run_phase(
 
 
 def _read_jsonl(path: str):
-    rows: list[dict[str, Any]] = []
     with Path(path).open(encoding="utf-8") as f:
-        for line_no, line in enumerate(f, 1):
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                snippet = line[max(0, exc.pos - 160) : exc.pos + 160].replace("\n", "\\n")
-                rows.append(
-                    {
-                        "question_id": None,
-                        "correct": None,
-                        "latency_ms": None,
-                        "generated_tokens": None,
-                        "tokens_per_second": None,
-                        "raw_visual_tokens": None,
-                        "compressed_visual_tokens": None,
-                        "vision_compressed_visual_tokens": None,
-                        "visual_token_reduction_ratio": None,
-                        "vision_visual_token_reduction_ratio": None,
-                        "error": (
-                            f"corrupt jsonl line in {path}:{line_no}: "
-                            f"{type(exc).__name__}: {exc.msg} at col {exc.colno}; snippet={snippet}"
-                        ),
-                        "error_traceback": None,
-                    }
-                )
-    return rows
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def _summarize_phase(records: list[dict[str, Any]]):
@@ -1286,20 +1277,162 @@ def _summarize_phase(records: list[dict[str, Any]]):
         for r in valid
         if r.get("vision_compressed_visual_tokens") is not None
     ]
-    reduction = [
-        float(r["visual_token_reduction_ratio"])
+    talon_target = [
+        float(r["talon_target_tokens_per_frame"])
         for r in valid
-        if r.get("visual_token_reduction_ratio") is not None
+        if r.get("talon_target_tokens_per_frame") is not None
     ]
+    talon_complexity = [
+        float(r["talon_complexity_score"])
+        for r in valid
+        if r.get("talon_complexity_score") is not None
+    ]
+    talon_target_budget = [
+        float(r["talon_target_budget"])
+        for r in valid
+        if r.get("talon_target_budget") is not None
+    ]
+    talon_anchor_tokens = [
+        float(r["talon_anchor_tokens"])
+        for r in valid
+        if r.get("talon_anchor_tokens") is not None
+    ]
+    talon_rank_tokens = [
+        float(r["talon_rank_tokens"])
+        for r in valid
+        if r.get("talon_rank_tokens") is not None
+    ]
+    talon_event_tokens = [
+        float(r["talon_event_tokens"])
+        for r in valid
+        if r.get("talon_event_tokens") is not None
+    ]
+    talon_recall_tokens = [
+        float(r["talon_recall_tokens"])
+        for r in valid
+        if r.get("talon_recall_tokens") is not None
+    ]
+    talon_persistence_tokens = [
+        float(r["talon_persistence_tokens"])
+        for r in valid
+        if r.get("talon_persistence_tokens") is not None
+    ]
+    talon_object_tokens = [
+        float(r["talon_object_tokens"])
+        for r in valid
+        if r.get("talon_object_tokens") is not None
+    ]
+    talon_memory_tokens = [
+        float(r["talon_memory_tokens"])
+        for r in valid
+        if r.get("talon_memory_tokens") is not None
+    ]
+    talon_rank_cap = [
+        float(r["talon_rank_cap"])
+        for r in valid
+        if r.get("talon_rank_cap") is not None
+    ]
+    talon_chosen_rank = [
+        float(r["talon_chosen_rank"])
+        for r in valid
+        if r.get("talon_chosen_rank") is not None
+    ]
+    talon_duplicate_count = [
+        float(r["talon_duplicate_index_count"])
+        for r in valid
+        if r.get("talon_duplicate_index_count") is not None
+    ]
+    talon_question_active = [
+        float(r["talon_question_aware_active"])
+        for r in valid
+        if r.get("talon_question_aware_active") is not None
+    ]
+    talon_router_mode = [
+        float(r["talon_router_mode_code"])
+        for r in valid
+        if r.get("talon_router_mode_code") is not None
+    ]
+    talon_router_fused_conc = [
+        float(r["talon_router_fused_concentration"])
+        for r in valid
+        if r.get("talon_router_fused_concentration") is not None
+    ]
+    talon_router_residual_conc = [
+        float(r["talon_router_residual_concentration"])
+        for r in valid
+        if r.get("talon_router_residual_concentration") is not None
+    ]
+    talon_router_question_conc = [
+        float(r["talon_router_question_concentration"])
+        for r in valid
+        if r.get("talon_router_question_concentration") is not None
+    ]
+    talon_router_frame_entropy = [
+        float(r["talon_router_frame_entropy"])
+        for r in valid
+        if r.get("talon_router_frame_entropy") is not None
+    ]
+    talon_core_target_budget = [
+        float(r["talon_core_target_budget"])
+        for r in valid
+        if r.get("talon_core_target_budget") is not None
+    ]
+    talon_core_residual_mean = [
+        float(r["talon_core_residual_mean"])
+        for r in valid
+        if r.get("talon_core_residual_mean") is not None
+    ]
+    talon_core_semantic_tokens = [
+        float(r["talon_core_semantic_tokens"])
+        for r in valid
+        if r.get("talon_core_semantic_tokens") is not None
+    ]
+    talon_core_innovation_tokens = [
+        float(r["talon_core_innovation_tokens"])
+        for r in valid
+        if r.get("talon_core_innovation_tokens") is not None
+    ]
+    talon_core_duplicate_count = [
+        float(r["talon_core_duplicate_index_count"])
+        for r in valid
+        if r.get("talon_core_duplicate_index_count") is not None
+    ]
+    talon_core_question_active = [
+        float(r["talon_core_question_aware_active"])
+        for r in valid
+        if r.get("talon_core_question_aware_active") is not None
+    ]
+    talon_core_budget_min = [
+        float(r["talon_core_budget_min"])
+        for r in valid
+        if r.get("talon_core_budget_min") is not None
+    ]
+    talon_core_budget_max = [
+        float(r["talon_core_budget_max"])
+        for r in valid
+        if r.get("talon_core_budget_max") is not None
+    ]
+    talon_core_grid_h = [
+        float(r["talon_core_grid_h"])
+        for r in valid
+        if r.get("talon_core_grid_h") is not None
+    ]
+    talon_core_grid_w = [
+        float(r["talon_core_grid_w"])
+        for r in valid
+        if r.get("talon_core_grid_w") is not None
+    ]
+    reduction = [float(r["visual_token_reduction_ratio"]) for r in valid if r.get("visual_token_reduction_ratio") is not None]
     vision_reduction = [
         float(r["vision_visual_token_reduction_ratio"])
         for r in valid
         if r.get("vision_visual_token_reduction_ratio") is not None
     ]
 
-    summary = {
-        "num_valid": len(valid),
+    return {
         "num_samples": len(records),
+        "num_valid": len(valid),
+        "num_errors": len(records) - len(valid),
         "accuracy": float(np.mean(correctness)) if correctness else None,
         "latency_ms": _stats(latency),
         "generated_tokens": _stats(gen_tokens),
@@ -1307,24 +1440,39 @@ def _summarize_phase(records: list[dict[str, Any]]):
         "raw_visual_tokens": _stats(raw_visual),
         "compressed_visual_tokens": _stats(compressed_visual),
         "vision_compressed_visual_tokens": _stats(vision_compressed_visual),
+        "talon_target_tokens_per_frame": _stats(talon_target),
+        "talon_complexity_score": _stats(talon_complexity),
+        "talon_target_budget": _stats(talon_target_budget),
+        "talon_anchor_tokens": _stats(talon_anchor_tokens),
+        "talon_rank_tokens": _stats(talon_rank_tokens),
+        "talon_event_tokens": _stats(talon_event_tokens),
+        "talon_recall_tokens": _stats(talon_recall_tokens),
+        "talon_persistence_tokens": _stats(talon_persistence_tokens),
+        "talon_object_tokens": _stats(talon_object_tokens),
+        "talon_memory_tokens": _stats(talon_memory_tokens),
+        "talon_rank_cap": _stats(talon_rank_cap),
+        "talon_chosen_rank": _stats(talon_chosen_rank),
+        "talon_duplicate_index_count": _stats(talon_duplicate_count),
+        "talon_question_aware_active": _stats(talon_question_active),
+        "talon_router_mode_code": _stats(talon_router_mode),
+        "talon_router_fused_concentration": _stats(talon_router_fused_conc),
+        "talon_router_residual_concentration": _stats(talon_router_residual_conc),
+        "talon_router_question_concentration": _stats(talon_router_question_conc),
+        "talon_router_frame_entropy": _stats(talon_router_frame_entropy),
+        "talon_core_target_budget": _stats(talon_core_target_budget),
+        "talon_core_residual_mean": _stats(talon_core_residual_mean),
+        "talon_core_semantic_tokens": _stats(talon_core_semantic_tokens),
+        "talon_core_innovation_tokens": _stats(talon_core_innovation_tokens),
+        "talon_core_duplicate_index_count": _stats(talon_core_duplicate_count),
+        "talon_core_question_aware_active": _stats(talon_core_question_active),
+        "talon_core_budget_min": _stats(talon_core_budget_min),
+        "talon_core_budget_max": _stats(talon_core_budget_max),
+        "talon_core_grid_h": _stats(talon_core_grid_h),
+        "talon_core_grid_w": _stats(talon_core_grid_w),
         "visual_token_reduction_ratio": _stats(reduction),
         "vision_visual_token_reduction_ratio": _stats(vision_reduction),
-        "errors": [r.get("error") for r in records if r.get("error")][:5],
     }
 
-    # Keep GRAFT diagnostics when present, but avoid hard-coding old retired methods.
-    diagnostic_prefixes = ("graft_",)
-    diagnostic_keys = sorted(
-        key
-        for row in valid
-        for key in row.keys()
-        if any(str(key).startswith(prefix) for prefix in diagnostic_prefixes)
-    )
-    for key in diagnostic_keys:
-        vals = [float(r[key]) for r in valid if r.get(key) is not None and isinstance(r.get(key), (int, float, bool))]
-        if vals:
-            summary[key] = _stats(vals)
-    return summary
 
 def _summarize_pairwise_comparison(
     anchor_records: list[dict[str, Any]],
@@ -1349,22 +1497,7 @@ def _summarize_pairwise_comparison(
     vision_token_ratios = []
     reduction_gains = []
     vision_reduction_gains = []
-    both_correct = 0
-    both_wrong = 0
-    anchor_only_correct = 0
-    target_only_correct = 0
     for b, f in matched:
-        b_ok = bool(b.get("correct"))
-        f_ok = bool(f.get("correct"))
-        if b_ok and f_ok:
-            both_correct += 1
-        elif (not b_ok) and (not f_ok):
-            both_wrong += 1
-        elif b_ok and not f_ok:
-            anchor_only_correct += 1
-        elif f_ok and not b_ok:
-            target_only_correct += 1
-
         b_lat = b.get("latency_ms")
         f_lat = f.get("latency_ms")
         if b_lat and f_lat and f_lat > 0:
@@ -1384,10 +1517,6 @@ def _summarize_pairwise_comparison(
 
     return {
         "matched_samples": len(matched),
-        "both_correct": both_correct,
-        "both_wrong": both_wrong,
-        f"{anchor_name}_only_correct": anchor_only_correct,
-        f"{target_name}_only_correct": target_only_correct,
         "latency_speedup_ratio": _stats(latency_ratios),
         f"visual_token_ratio_{target_name}_over_{anchor_name}": _stats(token_ratios),
         f"visual_token_reduction_vs_{anchor_name}": _stats(reduction_gains),
@@ -1402,17 +1531,13 @@ def _add_duration_breakdown(
     baseline_records: Optional[list[dict[str, Any]]] = None,
     flashvid_records: Optional[list[dict[str, Any]]] = None,
     ours_records: Optional[list[dict[str, Any]]] = None,
-    ours_phase_name: str = "ours",
     graphvid_records: Optional[list[dict[str, Any]]] = None,
-    graftvid_records: Optional[list[dict[str, Any]]] = None,
 ) -> None:
-    ours_phase_name = _canonical_method_name(ours_phase_name)
     records_by_phase = {
         "baseline": baseline_records,
         "flashvid": flashvid_records,
-        ours_phase_name: ours_records,
+        "ours": ours_records,
         "graphvid": graphvid_records,
-        "graftvid": graftvid_records,
     }
     durations = ["short", "medium", "long"]
     breakdown: dict[str, Any] = {}
@@ -1436,19 +1561,19 @@ def _add_duration_breakdown(
                 anchor_name="baseline",
                 target_name="flashvid",
             )
-        if "baseline" in phase_records and ours_phase_name in phase_records:
-            bucket["comparison"][f"baseline_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
+        if "baseline" in phase_records and "ours" in phase_records:
+            bucket["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
                 phase_records["baseline"],
-                phase_records[ours_phase_name],
+                phase_records["ours"],
                 anchor_name="baseline",
-                target_name=ours_phase_name,
+                target_name="ours",
             )
-        if "flashvid" in phase_records and ours_phase_name in phase_records:
-            bucket["comparison"][f"flashvid_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
+        if "flashvid" in phase_records and "ours" in phase_records:
+            bucket["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
                 phase_records["flashvid"],
-                phase_records[ours_phase_name],
+                phase_records["ours"],
                 anchor_name="flashvid",
-                target_name=ours_phase_name,
+                target_name="ours",
             )
         if "flashvid" in phase_records and "graphvid" in phase_records:
             bucket["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
@@ -1457,21 +1582,14 @@ def _add_duration_breakdown(
                 anchor_name="flashvid",
                 target_name="graphvid",
             )
-        if "flashvid" in phase_records and "graftvid" in phase_records:
-            bucket["comparison"]["flashvid_vs_graftvid"] = _summarize_pairwise_comparison(
-                phase_records["flashvid"],
-                phase_records["graftvid"],
-                anchor_name="flashvid",
-                target_name="graftvid",
-            )
         breakdown[duration] = bucket
     summary["duration_breakdown"] = breakdown
 
 
 def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
-    # For LLaVA, keep the stable vision-only path unless the caller explicitly
-    # requests inner-LLM pruning with llm_retention_ratio < 1.0.
-    if backend == "llava" and float(args.llm_retention_ratio) >= 0.9999:
+    # LLaVA backend currently has instability in inner-LLM token pruning path.
+    # Keep visual-side compression enabled, but disable LLM pruning for stable benchmarking.
+    if backend == "llava":
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
 
@@ -1497,52 +1615,9 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
-        graph_representative_position=args.graph_representative_position,
-        graph_protection_attn_weight=args.graph_protection_attn_weight,
-        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
-        graph_protection_detail_weight=args.graph_protection_detail_weight,
-        graph_adaptive_detail_protection=args.graph_adaptive_detail_protection,
-        graph_adaptive_detail_boost=args.graph_adaptive_detail_boost,
-        graph_adaptive_protect_boost=args.graph_adaptive_protect_boost,
-        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
-        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
-        graft_temporal_topk=args.graft_temporal_topk,
-        graft_temporal_radius=args.graft_temporal_radius,
-        graft_temporal_skip=args.graft_temporal_skip,
-        graft_global_topk=args.graft_global_topk,
-        graft_input_is_residual=args.graft_input_is_residual,
-        graft_anchor_ratio=args.graft_anchor_ratio,
-        graft_edge_threshold=args.graft_edge_threshold,
-        graft_component_radius_eps=args.graft_component_radius_eps,
-        graft_split_radius_eps=args.graft_split_radius_eps,
-        graft_parent_capacity=args.graft_parent_capacity,
-        graft_mutual_knn=args.graft_mutual_knn,
-        graft_one_token_per_frame=args.graft_one_token_per_frame,
-        graft_spatial_penalty=args.graft_spatial_penalty,
-        graft_importance_penalty=args.graft_importance_penalty,
-        graft_hub_penalty=args.graft_hub_penalty,
-        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
-        graft_scene_threshold=args.graft_scene_threshold,
-        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
-        graft_budget_correction=args.graft_budget_correction,
-        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
-        graft_score_preset=args.graft_score_preset,
-        graft_duration_aware=args.graft_duration_aware,
-        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
-        graft_medium_global_topk=args.graft_medium_global_topk,
-        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
-        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
-        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
-        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
-        graft_long_temporal_skip=args.graft_long_temporal_skip,
-        graft_long_global_topk=args.graft_long_global_topk,
-        graft_long_edge_threshold=args.graft_long_edge_threshold,
-        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
-        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
@@ -1550,9 +1625,188 @@ def _apply_flashvid_original(model, args: BenchmarkArgs, backend: str):
         question_aware_reweighting=False,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=False,
+        talon_transport_radius=args.talon_transport_radius,
+        talon_rank_ratio=args.talon_rank_ratio,
+        talon_rank_min=args.talon_rank_min,
+        talon_rank_max=args.talon_rank_max,
+        talon_budget_scale=args.talon_budget_scale,
+        talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
+        talon_short_target_tokens_per_frame=args.talon_short_target_tokens_per_frame,
+        talon_medium_target_tokens_per_frame=args.talon_medium_target_tokens_per_frame,
+        talon_long_target_tokens_per_frame=args.talon_long_target_tokens_per_frame,
+        talon_min_total_tokens=args.talon_min_total_tokens,
+        talon_fast_rank_plan=args.talon_fast_rank_plan,
+        talon_background_max_ratio=args.talon_background_max_ratio,
+        talon_frame_balanced_selection=args.talon_frame_balanced_selection,
+        talon_basis_method=args.talon_basis_method,
+        talon_basis_oversample=args.talon_basis_oversample,
+        talon_innovation_attention_weight=args.talon_innovation_attention_weight,
+        talon_motion_importance_weight=args.talon_motion_importance_weight,
+        talon_boundary_importance_weight=args.talon_boundary_importance_weight,
+        talon_question_frame_weight=args.talon_question_frame_weight,
+        talon_frame_balanced_memory=args.talon_frame_balanced_memory,
+        talon_memory_mode=args.talon_memory_mode,
+        talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
+        talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
+        talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
+        talon_spatial_anchor_coverage=args.talon_spatial_anchor_coverage,
+        talon_spatial_anchor_ratio=args.talon_spatial_anchor_ratio,
+        talon_spatial_anchor_rows=args.talon_spatial_anchor_rows,
+        talon_spatial_anchor_cols=args.talon_spatial_anchor_cols,
+        talon_spatial_anchor_score=args.talon_spatial_anchor_score,
+        talon_spatial_anchor_apply_to_short=args.talon_spatial_anchor_apply_to_short,
+        talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
+        talon_frame_importance_pooling=args.talon_frame_importance_pooling,
+        talon_frame_importance_topk=args.talon_frame_importance_topk,
+        talon_medium_frame_coverage_floor_ratio=args.talon_medium_frame_coverage_floor_ratio,
+        talon_long_frame_coverage_floor_ratio=args.talon_long_frame_coverage_floor_ratio,
+        talon_frame_local_budget_ratio=args.talon_frame_local_budget_ratio,
+        talon_question_recall_ratio=args.talon_question_recall_ratio,
+        talon_question_recall_qweight=args.talon_question_recall_qweight,
+        talon_persistence_recall_ratio=args.talon_persistence_recall_ratio,
+        talon_persistence_recall_qweight=args.talon_persistence_recall_qweight,
+        talon_persistence_recall_pweight=args.talon_persistence_recall_pweight,
+        talon_persistence_apply_to_short=args.talon_persistence_apply_to_short,
+        talon_persistence_apply_to_medium=args.talon_persistence_apply_to_medium,
+        talon_persistence_apply_to_long=args.talon_persistence_apply_to_long,
+        talon_object_evidence_ratio=args.talon_object_evidence_ratio,
+        talon_object_evidence_qweight=args.talon_object_evidence_qweight,
+        talon_object_evidence_sweight=args.talon_object_evidence_sweight,
+        talon_object_evidence_pweight=args.talon_object_evidence_pweight,
+        talon_object_evidence_apply_to_short=args.talon_object_evidence_apply_to_short,
+        talon_object_evidence_apply_to_medium=args.talon_object_evidence_apply_to_medium,
+        talon_object_evidence_apply_to_long=args.talon_object_evidence_apply_to_long,
+        talon_question_pooling=args.talon_question_pooling,
+        talon_question_pooling_topk=args.talon_question_pooling_topk,
+        talon_question_contrast_weight=args.talon_question_contrast_weight,
+        talon_question_contrast_apply_to_short=args.talon_question_contrast_apply_to_short,
+        talon_monotonic_base_tokens_per_frame=args.talon_monotonic_base_tokens_per_frame,
+        talon_budget_strategy=args.talon_budget_strategy,
+        talon_budget_mode=args.talon_budget_mode,
+        talon_transport_mode=args.talon_transport_mode,
+        talon_transport_temperature=args.talon_transport_temperature,
+        talon_lite_enabled=args.talon_lite_enabled,
+        talon_echo_temperature=args.talon_echo_temperature,
+        talon_echo_topk_neighbors=args.talon_echo_topk_neighbors,
+        talon_echo_residual_weight=args.talon_echo_residual_weight,
+        talon_echo_score_mode=args.talon_echo_score_mode,
+        talon_rd_spectral_weight=args.talon_rd_spectral_weight,
+        talon_rd_innovation_weight=args.talon_rd_innovation_weight,
+        talon_use_question_innovation=args.talon_use_question_innovation,
+        talon_innovation_qweight=args.talon_innovation_qweight,
+        talon_output_mode=args.talon_output_mode,
+        talon_reconstruction_blend=args.talon_reconstruction_blend,
+        talon_anchor_score_weight=args.talon_anchor_score_weight,
+        talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
+        talon_passthrough_ratio=args.talon_passthrough_ratio,
+        talon_passthrough_min=args.talon_passthrough_min,
+        talon_use_segmentation=args.talon_use_segmentation,
+        talon_disable_oversegmentation=args.talon_disable_oversegmentation,
+        talon_max_segments=args.talon_max_segments,
+        talon_deepstack_mode=args.talon_deepstack_mode,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
+        talon_adaptive_target_low=args.talon_adaptive_target_low,
+        talon_adaptive_target_mid=args.talon_adaptive_target_mid,
+        talon_adaptive_target_high=args.talon_adaptive_target_high,
+        talon_complexity_floor=args.talon_complexity_floor,
+        talon_complexity_ceil=args.talon_complexity_ceil,
+        talon_adaptive_gamma=args.talon_adaptive_gamma,
+        talon_adaptive_target_enabled=args.talon_adaptive_target_enabled,
+        talon_force_fixed_target=args.talon_force_fixed_target,
+        talon_target_mean_cap=args.talon_target_mean_cap,
+        talon_unified_selection=args.talon_unified_selection,
+        talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
+        talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
+        talon_background_global_ratio=args.talon_background_global_ratio,
+        talon_event_budget_ratio=args.talon_event_budget_ratio,
+        talon_memory_fused_weight=args.talon_memory_fused_weight,
+        talon_memory_residual_weight=args.talon_memory_residual_weight,
+        talon_memory_frame_weight=args.talon_memory_frame_weight,
+        talon_recall_memory_mode=args.talon_recall_memory_mode,
+        talon_final_fused_weight=args.talon_final_fused_weight,
+        talon_final_residual_weight=args.talon_final_residual_weight,
+        talon_final_frame_weight=args.talon_final_frame_weight,
+        talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
+        talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_event_keep_bonus=args.talon_event_keep_bonus,
+        talon_legacy_base_keep_ratio=args.talon_legacy_base_keep_ratio,
+        talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
+        talon_prior_keep_bonus=args.talon_prior_keep_bonus,
+        talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
+        talon_flash_prior_channel_method=args.talon_flash_prior_channel_method,
+        talon_flash_prior_channel_min_per_frame=args.talon_flash_prior_channel_min_per_frame,
+        talon_flash_prior_channel_max_per_frame=args.talon_flash_prior_channel_max_per_frame,
+        talon_flash_prior_channel_bonus=args.talon_flash_prior_channel_bonus,
+        talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
+        talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
+        talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
+        talon_global_topk_ratio=args.talon_global_topk_ratio,
+        talon_rescue_enabled=args.talon_rescue_enabled,
+        talon_rescue_ratio=args.talon_rescue_ratio,
+        talon_rescue_from_memory_only=args.talon_rescue_from_memory_only,
+        talon_rescue_fused_weight=args.talon_rescue_fused_weight,
+        talon_rescue_residual_weight=args.talon_rescue_residual_weight,
+        talon_rescue_frame_weight=args.talon_rescue_frame_weight,
+        talon_rescue_global_ratio=args.talon_rescue_global_ratio,
+        talon_rerank_with_flash_prior=args.talon_rerank_with_flash_prior,
+        talon_flash_prior_ratio=args.talon_flash_prior_ratio,
+        talon_recall_semantic_ratio=args.talon_recall_semantic_ratio,
+        talon_recall_event_ratio=args.talon_recall_event_ratio,
+        talon_recall_frame_ratio=args.talon_recall_frame_ratio,
+        talon_recall_global_ratio=args.talon_recall_global_ratio,
+        talon_duration_aware=args.talon_duration_aware,
+        talon_medium_anchor_safety_ratio=args.talon_medium_anchor_safety_ratio,
+        talon_medium_event_budget_ratio=args.talon_medium_event_budget_ratio,
+        talon_medium_global_topk_ratio=args.talon_medium_global_topk_ratio,
+        talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
+        talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
+        talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
+        talon_task_aware_event=args.talon_task_aware_event,
+        talon_task_event_attention_weight=args.talon_task_event_attention_weight,
+        talon_task_event_qweight=args.talon_task_event_qweight,
+        talon_visual_task_balance=args.talon_visual_task_balance,
+        talon_visual_task_anchor_ratio=args.talon_visual_task_anchor_ratio,
+        talon_visual_task_event_ratio=args.talon_visual_task_event_ratio,
+        talon_visual_task_recall_ratio=args.talon_visual_task_recall_ratio,
+        talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
+        talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
+        talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
+        talon_adaptive_router=args.talon_adaptive_router,
+        talon_router_apply_to_short=args.talon_router_apply_to_short,
+        talon_router_visual_anchor_ratio=args.talon_router_visual_anchor_ratio,
+        talon_router_visual_event_ratio=args.talon_router_visual_event_ratio,
+        talon_router_visual_recall_ratio=args.talon_router_visual_recall_ratio,
+        talon_router_temporal_anchor_ratio=args.talon_router_temporal_anchor_ratio,
+        talon_router_temporal_event_ratio=args.talon_router_temporal_event_ratio,
+        talon_router_temporal_recall_ratio=args.talon_router_temporal_recall_ratio,
+        talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
+        talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
+        talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
+        talon_router_visual_concentration_threshold=args.talon_router_visual_concentration_threshold,
+        talon_router_low_residual_threshold=args.talon_router_low_residual_threshold,
+        talon_router_temporal_entropy_threshold=args.talon_router_temporal_entropy_threshold,
+        talon_router_temporal_residual_threshold=args.talon_router_temporal_residual_threshold,
+        talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
+        talon_temporal_num_chunks=args.talon_temporal_num_chunks,
+        talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
+        talon_temporal_chunk_score=args.talon_temporal_chunk_score,
+        talon_track_aware=args.talon_track_aware,
+        talon_track_budget_ratio=args.talon_track_budget_ratio,
+        talon_track_tokens_per_slot=args.talon_track_tokens_per_slot,
+        talon_track_score=args.talon_track_score,
+        talon_absorb_dropped_tokens=args.talon_absorb_dropped_tokens,
+        talon_absorb_ratio=args.talon_absorb_ratio,
+        talon_absorb_alpha=args.talon_absorb_alpha,
+        talon_absorb_score=args.talon_absorb_score,
+        talon_summary_replacement=args.talon_summary_replacement,
+        talon_summary_raw_swap=args.talon_summary_raw_swap,
+        talon_summary_ratio=args.talon_summary_ratio,
+        talon_summary_num_chunks=args.talon_summary_num_chunks,
+        talon_summary_pool_topk=args.talon_summary_pool_topk,
+        talon_summary_alpha=args.talon_summary_alpha,
+        talon_summary_score=args.talon_summary_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1571,7 +1825,7 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         segment_threshold=args.segment_threshold,
         min_segment_num=args.min_segment_num,
         complementary_segment=args.complementary_segment,
-        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
+        token_selection_method=args.flashvid_token_selection_method,
         alpha=args.alpha,
         temporal_threshold=args.temporal_threshold,
         temporal_merge_mode="graph",
@@ -1581,166 +1835,13 @@ def _apply_graphvid(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
-        graph_representative_position=args.graph_representative_position,
-        graph_protection_attn_weight=args.graph_protection_attn_weight,
-        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
-        graph_protection_detail_weight=args.graph_protection_detail_weight,
-        graph_adaptive_detail_protection=args.graph_adaptive_detail_protection,
-        graph_adaptive_detail_boost=args.graph_adaptive_detail_boost,
-        graph_adaptive_protect_boost=args.graph_adaptive_protect_boost,
-        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
-        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
-        graft_temporal_topk=args.graft_temporal_topk,
-        graft_temporal_radius=args.graft_temporal_radius,
-        graft_temporal_skip=args.graft_temporal_skip,
-        graft_global_topk=args.graft_global_topk,
-        graft_input_is_residual=args.graft_input_is_residual,
-        graft_anchor_ratio=args.graft_anchor_ratio,
-        graft_edge_threshold=args.graft_edge_threshold,
-        graft_component_radius_eps=args.graft_component_radius_eps,
-        graft_split_radius_eps=args.graft_split_radius_eps,
-        graft_parent_capacity=args.graft_parent_capacity,
-        graft_mutual_knn=args.graft_mutual_knn,
-        graft_one_token_per_frame=args.graft_one_token_per_frame,
-        graft_spatial_penalty=args.graft_spatial_penalty,
-        graft_importance_penalty=args.graft_importance_penalty,
-        graft_hub_penalty=args.graft_hub_penalty,
-        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
-        graft_scene_threshold=args.graft_scene_threshold,
-        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
-        graft_budget_correction=args.graft_budget_correction,
-        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
-        graft_score_preset=args.graft_score_preset,
-        graft_duration_aware=args.graft_duration_aware,
-        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
-        graft_medium_global_topk=args.graft_medium_global_topk,
-        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
-        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
-        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
-        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
-        graft_long_temporal_skip=args.graft_long_temporal_skip,
-        graft_long_global_topk=args.graft_long_global_topk,
-        graft_long_edge_threshold=args.graft_long_edge_threshold,
-        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
-        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant="graphvid",
-        question_aware_reweighting=False,
-        question_reweight_beta=args.question_reweight_beta,
-        adaptive_token_budget=False,
-        decode_policy=args.decode_policy,
-        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
-        decode_update_interval=args.decode_update_interval,
-        decode_start_layer=args.decode_start_layer,
-    )
-
-
-def _apply_graftvid(model, args: BenchmarkArgs, backend: str):
-    from flashvid import flashvid
-    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
-
-    return flashvid(
-        model=model,
-        retention_ratio=args.retention_ratio,
-        do_segment=args.do_segment,
-        segment_threshold=args.segment_threshold,
-        min_segment_num=args.min_segment_num,
-        complementary_segment=args.complementary_segment,
-        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
-        alpha=args.alpha,
-        temporal_threshold=args.temporal_threshold,
-        temporal_merge_mode="graft",
-        graph_temporal_topk=args.graph_temporal_topk,
-        graph_temporal_radius=args.graph_temporal_radius,
-        graph_temporal_skip=args.graph_temporal_skip,
-        graph_merge_protect_ratio=args.graph_merge_protect_ratio,
-        graph_merge_target_ratio=args.graph_merge_target_ratio,
-        graph_merge_representative=args.graph_merge_representative,
-        graph_representative_position=args.graph_representative_position,
-        graph_protection_attn_weight=args.graph_protection_attn_weight,
-        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
-        graph_protection_detail_weight=args.graph_protection_detail_weight,
-        graph_adaptive_detail_protection=args.graph_adaptive_detail_protection,
-        graph_adaptive_detail_boost=args.graph_adaptive_detail_boost,
-        graph_adaptive_protect_boost=args.graph_adaptive_protect_boost,
-        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
-        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
-        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
-        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
-        graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
-        graft_temporal_topk=args.graft_temporal_topk,
-        graft_temporal_radius=args.graft_temporal_radius,
-        graft_temporal_skip=args.graft_temporal_skip,
-        graft_global_topk=args.graft_global_topk,
-        graft_input_is_residual=args.graft_input_is_residual,
-        graft_anchor_ratio=args.graft_anchor_ratio,
-        graft_edge_threshold=args.graft_edge_threshold,
-        graft_component_radius_eps=args.graft_component_radius_eps,
-        graft_split_radius_eps=args.graft_split_radius_eps,
-        graft_parent_capacity=args.graft_parent_capacity,
-        graft_mutual_knn=args.graft_mutual_knn,
-        graft_one_token_per_frame=args.graft_one_token_per_frame,
-        graft_spatial_penalty=args.graft_spatial_penalty,
-        graft_importance_penalty=args.graft_importance_penalty,
-        graft_hub_penalty=args.graft_hub_penalty,
-        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
-        graft_scene_threshold=args.graft_scene_threshold,
-        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
-        graft_budget_correction=args.graft_budget_correction,
-        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
-        graft_score_preset=args.graft_score_preset,
-        graft_duration_aware=args.graft_duration_aware,
-        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
-        graft_medium_global_topk=args.graft_medium_global_topk,
-        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
-        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
-        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
-        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
-        graft_long_temporal_skip=args.graft_long_temporal_skip,
-        graft_long_global_topk=args.graft_long_global_topk,
-        graft_long_edge_threshold=args.graft_long_edge_threshold,
-        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
-        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,
-        expansion=args.expansion,
-        pruning_layer=pruning_layer,
-        llm_retention_ratio=llm_retention_ratio,
-        compression_variant="graftvid",
-        question_aware_reweighting=False,
-        question_reweight_beta=args.question_reweight_beta,
-        adaptive_token_budget=False,
-        decode_policy=args.decode_policy,
-        decode_kv_budget_ratio=args.decode_kv_budget_ratio,
-        decode_update_interval=args.decode_update_interval,
-        decode_start_layer=args.decode_start_layer,
-    )
-
-
-    from flashvid import flashvid
-    pruning_layer, llm_retention_ratio = _resolve_llm_pruning_args(backend, args)
-
-    return flashvid(
-        model=model,
-        retention_ratio=args.retention_ratio,
-        do_segment=args.do_segment,
-        segment_threshold=args.segment_threshold,
-        min_segment_num=args.min_segment_num,
-        complementary_segment=args.complementary_segment,
-        token_selection_method=args.graphvid_token_selection_method or args.token_selection_method,
-        alpha=args.alpha,
-        temporal_threshold=args.temporal_threshold,
-        graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
-        graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
-        graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
-        expansion=args.expansion,
-        pruning_layer=pruning_layer,
-        llm_retention_ratio=llm_retention_ratio,
         question_aware_reweighting=False,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=False,
@@ -1772,73 +1873,201 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         graph_merge_protect_ratio=args.graph_merge_protect_ratio,
         graph_merge_target_ratio=args.graph_merge_target_ratio,
         graph_merge_representative=args.graph_merge_representative,
-        graph_representative_position=args.graph_representative_position,
-        graph_protection_attn_weight=args.graph_protection_attn_weight,
-        graph_protection_novelty_weight=args.graph_protection_novelty_weight,
-        graph_protection_detail_weight=args.graph_protection_detail_weight,
-        graph_adaptive_detail_protection=args.graph_adaptive_detail_protection,
-        graph_adaptive_detail_boost=args.graph_adaptive_detail_boost,
-        graph_adaptive_protect_boost=args.graph_adaptive_protect_boost,
-        graph_merge_importance_penalty=args.graph_merge_importance_penalty,
-        graph_respect_temporal_threshold=args.graph_respect_temporal_threshold,
         graph_final_tokens_per_frame=args.graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=args.graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=args.graph_skip_spatial_merge_when_capped,
-        graft_temporal_topk=args.graft_temporal_topk,
-        graft_temporal_radius=args.graft_temporal_radius,
-        graft_temporal_skip=args.graft_temporal_skip,
-        graft_global_topk=args.graft_global_topk,
-        graft_input_is_residual=args.graft_input_is_residual,
-        graft_anchor_ratio=args.graft_anchor_ratio,
-        graft_edge_threshold=args.graft_edge_threshold,
-        graft_component_radius_eps=args.graft_component_radius_eps,
-        graft_split_radius_eps=args.graft_split_radius_eps,
-        graft_parent_capacity=args.graft_parent_capacity,
-        graft_mutual_knn=args.graft_mutual_knn,
-        graft_one_token_per_frame=args.graft_one_token_per_frame,
-        graft_spatial_penalty=args.graft_spatial_penalty,
-        graft_importance_penalty=args.graft_importance_penalty,
-        graft_hub_penalty=args.graft_hub_penalty,
-        graft_adaptive_aggregation=args.graft_adaptive_aggregation,
-        graft_scene_threshold=args.graft_scene_threshold,
-        graft_min_tokens_per_frame=args.graft_min_tokens_per_frame,
-        graft_budget_correction=args.graft_budget_correction,
-        graft_budget_diversity_weight=args.graft_budget_diversity_weight,
-        graft_score_preset=args.graft_score_preset,
-        graft_duration_aware=args.graft_duration_aware,
-        graft_medium_temporal_skip=args.graft_medium_temporal_skip,
-        graft_medium_global_topk=args.graft_medium_global_topk,
-        graft_medium_edge_threshold=args.graft_medium_edge_threshold,
-        graft_medium_split_radius_eps=args.graft_medium_split_radius_eps,
-        graft_medium_spatial_penalty=args.graft_medium_spatial_penalty,
-        graft_medium_scene_threshold=args.graft_medium_scene_threshold,
-        graft_long_temporal_skip=args.graft_long_temporal_skip,
-        graft_long_global_topk=args.graft_long_global_topk,
-        graft_long_edge_threshold=args.graft_long_edge_threshold,
-        graft_long_split_radius_eps=args.graft_long_split_radius_eps,
-        graft_long_spatial_penalty=args.graft_long_spatial_penalty,
-        graft_long_scene_threshold=args.graft_long_scene_threshold,
         expansion=args.expansion,
         pruning_layer=pruning_layer,
         llm_retention_ratio=llm_retention_ratio,
         compression_variant=args.compression_variant,
-        external_budget_uses_expansion=args.external_budget_uses_expansion,
-        fastvid_DySeg_c=args.fastvid_DySeg_c,
-        fastvid_DySeg_tau=args.fastvid_DySeg_tau,
-        fastvid_DySeg_ignore=args.fastvid_DySeg_ignore,
-        fastvid_STPrune_d=args.fastvid_STPrune_d,
-        fastvid_DTM_p=args.fastvid_DTM_p,
-        fastvid_DTM_beta=args.fastvid_DTM_beta,
-        visionzip_dominant_ratio=args.visionzip_dominant_ratio,
         question_aware_reweighting=args.question_aware_reweighting,
         question_reweight_beta=args.question_reweight_beta,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
         adaptive_budget_high=args.adaptive_budget_high,
+        talon_adaptive_target_low=args.talon_adaptive_target_low,
+        talon_adaptive_target_mid=args.talon_adaptive_target_mid,
+        talon_adaptive_target_high=args.talon_adaptive_target_high,
+        talon_complexity_floor=args.talon_complexity_floor,
+        talon_complexity_ceil=args.talon_complexity_ceil,
+        talon_adaptive_gamma=args.talon_adaptive_gamma,
+        talon_transport_radius=args.talon_transport_radius,
+        talon_rank_ratio=args.talon_rank_ratio,
+        talon_rank_min=args.talon_rank_min,
+        talon_rank_max=args.talon_rank_max,
+        talon_budget_scale=args.talon_budget_scale,
+        talon_target_tokens_per_frame=args.talon_target_tokens_per_frame,
+        talon_short_target_tokens_per_frame=args.talon_short_target_tokens_per_frame,
+        talon_medium_target_tokens_per_frame=args.talon_medium_target_tokens_per_frame,
+        talon_long_target_tokens_per_frame=args.talon_long_target_tokens_per_frame,
+        talon_min_total_tokens=args.talon_min_total_tokens,
+        talon_fast_rank_plan=args.talon_fast_rank_plan,
+        talon_background_max_ratio=args.talon_background_max_ratio,
+        talon_frame_balanced_selection=args.talon_frame_balanced_selection,
+        talon_basis_method=args.talon_basis_method,
+        talon_basis_oversample=args.talon_basis_oversample,
+        talon_innovation_attention_weight=args.talon_innovation_attention_weight,
+        talon_motion_importance_weight=args.talon_motion_importance_weight,
+        talon_boundary_importance_weight=args.talon_boundary_importance_weight,
+        talon_question_frame_weight=args.talon_question_frame_weight,
+        talon_frame_balanced_memory=args.talon_frame_balanced_memory,
+        talon_memory_mode=args.talon_memory_mode,
+        talon_anchor_safety_ratio=args.talon_anchor_safety_ratio,
+        talon_anchor_diversity_weight=args.talon_anchor_diversity_weight,
+        talon_anchor_candidate_multiplier=args.talon_anchor_candidate_multiplier,
+        talon_spatial_anchor_coverage=args.talon_spatial_anchor_coverage,
+        talon_spatial_anchor_ratio=args.talon_spatial_anchor_ratio,
+        talon_spatial_anchor_rows=args.talon_spatial_anchor_rows,
+        talon_spatial_anchor_cols=args.talon_spatial_anchor_cols,
+        talon_spatial_anchor_score=args.talon_spatial_anchor_score,
+        talon_spatial_anchor_apply_to_short=args.talon_spatial_anchor_apply_to_short,
+        talon_frame_coverage_floor_ratio=args.talon_frame_coverage_floor_ratio,
+        talon_frame_importance_pooling=args.talon_frame_importance_pooling,
+        talon_frame_importance_topk=args.talon_frame_importance_topk,
+        talon_medium_frame_coverage_floor_ratio=args.talon_medium_frame_coverage_floor_ratio,
+        talon_long_frame_coverage_floor_ratio=args.talon_long_frame_coverage_floor_ratio,
+        talon_frame_local_budget_ratio=args.talon_frame_local_budget_ratio,
+        talon_question_recall_ratio=args.talon_question_recall_ratio,
+        talon_question_recall_qweight=args.talon_question_recall_qweight,
+        talon_persistence_recall_ratio=args.talon_persistence_recall_ratio,
+        talon_persistence_recall_qweight=args.talon_persistence_recall_qweight,
+        talon_persistence_recall_pweight=args.talon_persistence_recall_pweight,
+        talon_persistence_apply_to_short=args.talon_persistence_apply_to_short,
+        talon_persistence_apply_to_medium=args.talon_persistence_apply_to_medium,
+        talon_persistence_apply_to_long=args.talon_persistence_apply_to_long,
+        talon_object_evidence_ratio=args.talon_object_evidence_ratio,
+        talon_object_evidence_qweight=args.talon_object_evidence_qweight,
+        talon_object_evidence_sweight=args.talon_object_evidence_sweight,
+        talon_object_evidence_pweight=args.talon_object_evidence_pweight,
+        talon_object_evidence_apply_to_short=args.talon_object_evidence_apply_to_short,
+        talon_object_evidence_apply_to_medium=args.talon_object_evidence_apply_to_medium,
+        talon_object_evidence_apply_to_long=args.talon_object_evidence_apply_to_long,
+        talon_question_pooling=args.talon_question_pooling,
+        talon_question_pooling_topk=args.talon_question_pooling_topk,
+        talon_question_contrast_weight=args.talon_question_contrast_weight,
+        talon_question_contrast_apply_to_short=args.talon_question_contrast_apply_to_short,
+        talon_monotonic_base_tokens_per_frame=args.talon_monotonic_base_tokens_per_frame,
+        talon_budget_strategy=args.talon_budget_strategy,
+        talon_budget_mode=args.talon_budget_mode,
+        talon_transport_mode=args.talon_transport_mode,
+        talon_transport_temperature=args.talon_transport_temperature,
+        talon_lite_enabled=args.talon_lite_enabled,
+        talon_echo_temperature=args.talon_echo_temperature,
+        talon_echo_topk_neighbors=args.talon_echo_topk_neighbors,
+        talon_echo_residual_weight=args.talon_echo_residual_weight,
+        talon_echo_score_mode=args.talon_echo_score_mode,
+        talon_rd_spectral_weight=args.talon_rd_spectral_weight,
+        talon_rd_innovation_weight=args.talon_rd_innovation_weight,
+        talon_use_question_innovation=args.talon_use_question_innovation,
+        talon_innovation_qweight=args.talon_innovation_qweight,
+        talon_output_mode=args.talon_output_mode,
+        talon_reconstruction_blend=args.talon_reconstruction_blend,
+        talon_anchor_score_weight=args.talon_anchor_score_weight,
+        talon_min_anchor_per_frame=args.talon_min_anchor_per_frame,
+        talon_passthrough_ratio=args.talon_passthrough_ratio,
+        talon_passthrough_min=args.talon_passthrough_min,
+        talon_use_segmentation=args.talon_use_segmentation,
+        talon_disable_oversegmentation=args.talon_disable_oversegmentation,
+        talon_max_segments=args.talon_max_segments,
+        talon_deepstack_mode=args.talon_deepstack_mode,
         memory_token_ratio=args.memory_token_ratio,
         memory_token_min=args.memory_token_min,
         memory_token_max=args.memory_token_max,
+        talon_adaptive_target_enabled=args.talon_adaptive_target_enabled,
+        talon_force_fixed_target=args.talon_force_fixed_target,
+        talon_target_mean_cap=args.talon_target_mean_cap,
+        talon_unified_selection=args.talon_unified_selection,
+        talon_low_budget_mode_threshold=args.talon_low_budget_mode_threshold,
+        talon_low_budget_rank_cap=args.talon_low_budget_rank_cap,
+        talon_background_global_ratio=args.talon_background_global_ratio,
+        talon_event_budget_ratio=args.talon_event_budget_ratio,
+        talon_memory_fused_weight=args.talon_memory_fused_weight,
+        talon_memory_residual_weight=args.talon_memory_residual_weight,
+        talon_memory_frame_weight=args.talon_memory_frame_weight,
+        talon_recall_memory_mode=args.talon_recall_memory_mode,
+        talon_final_fused_weight=args.talon_final_fused_weight,
+        talon_final_residual_weight=args.talon_final_residual_weight,
+        talon_final_frame_weight=args.talon_final_frame_weight,
+        talon_anchor_keep_bonus=args.talon_anchor_keep_bonus,
+        talon_recall_keep_bonus=args.talon_recall_keep_bonus,
+        talon_event_keep_bonus=args.talon_event_keep_bonus,
+        talon_legacy_base_keep_ratio=args.talon_legacy_base_keep_ratio,
+        talon_prior_candidate_ratio=args.talon_prior_candidate_ratio,
+        talon_prior_keep_bonus=args.talon_prior_keep_bonus,
+        talon_flash_prior_channel_ratio=args.talon_flash_prior_channel_ratio,
+        talon_flash_prior_channel_method=args.talon_flash_prior_channel_method,
+        talon_flash_prior_channel_min_per_frame=args.talon_flash_prior_channel_min_per_frame,
+        talon_flash_prior_channel_max_per_frame=args.talon_flash_prior_channel_max_per_frame,
+        talon_flash_prior_channel_bonus=args.talon_flash_prior_channel_bonus,
+        talon_final_anchor_min_ratio=args.talon_final_anchor_min_ratio,
+        talon_final_recall_min_ratio=args.talon_final_recall_min_ratio,
+        talon_force_anchor_recall_quota=args.talon_force_anchor_recall_quota,
+        talon_global_topk_ratio=args.talon_global_topk_ratio,
+        talon_rescue_enabled=args.talon_rescue_enabled,
+        talon_rescue_ratio=args.talon_rescue_ratio,
+        talon_rescue_from_memory_only=args.talon_rescue_from_memory_only,
+        talon_rescue_fused_weight=args.talon_rescue_fused_weight,
+        talon_rescue_residual_weight=args.talon_rescue_residual_weight,
+        talon_rescue_frame_weight=args.talon_rescue_frame_weight,
+        talon_rescue_global_ratio=args.talon_rescue_global_ratio,
+        talon_rerank_with_flash_prior=args.talon_rerank_with_flash_prior,
+        talon_flash_prior_ratio=args.talon_flash_prior_ratio,
+        talon_recall_semantic_ratio=args.talon_recall_semantic_ratio,
+        talon_recall_event_ratio=args.talon_recall_event_ratio,
+        talon_recall_frame_ratio=args.talon_recall_frame_ratio,
+        talon_recall_global_ratio=args.talon_recall_global_ratio,
+        talon_duration_aware=args.talon_duration_aware,
+        talon_medium_anchor_safety_ratio=args.talon_medium_anchor_safety_ratio,
+        talon_medium_event_budget_ratio=args.talon_medium_event_budget_ratio,
+        talon_medium_global_topk_ratio=args.talon_medium_global_topk_ratio,
+        talon_long_anchor_safety_ratio=args.talon_long_anchor_safety_ratio,
+        talon_long_event_budget_ratio=args.talon_long_event_budget_ratio,
+        talon_long_global_topk_ratio=args.talon_long_global_topk_ratio,
+        talon_task_aware_event=args.talon_task_aware_event,
+        talon_task_event_attention_weight=args.talon_task_event_attention_weight,
+        talon_task_event_qweight=args.talon_task_event_qweight,
+        talon_visual_task_balance=args.talon_visual_task_balance,
+        talon_visual_task_anchor_ratio=args.talon_visual_task_anchor_ratio,
+        talon_visual_task_event_ratio=args.talon_visual_task_event_ratio,
+        talon_visual_task_recall_ratio=args.talon_visual_task_recall_ratio,
+        talon_knowledge_visual_anchor_ratio=args.talon_knowledge_visual_anchor_ratio,
+        talon_knowledge_visual_event_ratio=args.talon_knowledge_visual_event_ratio,
+        talon_knowledge_visual_recall_ratio=args.talon_knowledge_visual_recall_ratio,
+        talon_adaptive_router=args.talon_adaptive_router,
+        talon_router_apply_to_short=args.talon_router_apply_to_short,
+        talon_router_visual_anchor_ratio=args.talon_router_visual_anchor_ratio,
+        talon_router_visual_event_ratio=args.talon_router_visual_event_ratio,
+        talon_router_visual_recall_ratio=args.talon_router_visual_recall_ratio,
+        talon_router_temporal_anchor_ratio=args.talon_router_temporal_anchor_ratio,
+        talon_router_temporal_event_ratio=args.talon_router_temporal_event_ratio,
+        talon_router_temporal_recall_ratio=args.talon_router_temporal_recall_ratio,
+        talon_router_balanced_anchor_ratio=args.talon_router_balanced_anchor_ratio,
+        talon_router_balanced_event_ratio=args.talon_router_balanced_event_ratio,
+        talon_router_balanced_recall_ratio=args.talon_router_balanced_recall_ratio,
+        talon_router_visual_concentration_threshold=args.talon_router_visual_concentration_threshold,
+        talon_router_low_residual_threshold=args.talon_router_low_residual_threshold,
+        talon_router_temporal_entropy_threshold=args.talon_router_temporal_entropy_threshold,
+        talon_router_temporal_residual_threshold=args.talon_router_temporal_residual_threshold,
+        talon_temporal_chunk_aware=args.talon_temporal_chunk_aware,
+        talon_temporal_num_chunks=args.talon_temporal_num_chunks,
+        talon_temporal_chunk_min_ratio=args.talon_temporal_chunk_min_ratio,
+        talon_temporal_chunk_score=args.talon_temporal_chunk_score,
+        talon_track_aware=args.talon_track_aware,
+        talon_track_budget_ratio=args.talon_track_budget_ratio,
+        talon_track_tokens_per_slot=args.talon_track_tokens_per_slot,
+        talon_track_score=args.talon_track_score,
+        talon_absorb_dropped_tokens=args.talon_absorb_dropped_tokens,
+        talon_absorb_ratio=args.talon_absorb_ratio,
+        talon_absorb_alpha=args.talon_absorb_alpha,
+        talon_absorb_score=args.talon_absorb_score,
+        talon_summary_replacement=args.talon_summary_replacement,
+        talon_summary_raw_swap=args.talon_summary_raw_swap,
+        talon_summary_ratio=args.talon_summary_ratio,
+        talon_summary_num_chunks=args.talon_summary_num_chunks,
+        talon_summary_pool_topk=args.talon_summary_pool_topk,
+        talon_summary_alpha=args.talon_summary_alpha,
+        talon_summary_score=args.talon_summary_score,
         decode_policy=args.decode_policy,
         decode_kv_budget_ratio=args.decode_kv_budget_ratio,
         decode_update_interval=args.decode_update_interval,
@@ -1848,7 +2077,6 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
 
 def _print_header(args: BenchmarkArgs, backend: str):
     effective_attn = _resolve_attn_implementation(args.attn_implementation)
-    ours_phase_name = _ours_phase_key(args)
     print(SEPARATOR)
     print("Unified Benchmark: Accuracy + Token + Latency + Speedup")
     print(SEPARATOR)
@@ -1863,22 +2091,27 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Frames        : {args.num_frames}")
     print(f"Warmup/Runs   : {args.num_warmup}/{args.num_runs}")
     print(f"Max new tokens: {args.max_new_tokens}")
-    print(f"VideoMME eval : {_normalize_videomme_eval_style(args.videomme_eval_style)}")
     print(
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
-        f"{ours_phase_name}={args.run_ours}, graphvid={args.run_graphvid}, "
-        f"graftvid={args.run_graftvid}"
+        f"ours={args.run_ours}, graphvid={args.run_graphvid}"
     )
     print(f"Phase reload  : {args.reload_model_each_phase}")
     if args.run_ours:
         duration_targets = (
+            f"{args.talon_short_target_tokens_per_frame}/"
+            f"{args.talon_medium_target_tokens_per_frame}/"
+            f"{args.talon_long_target_tokens_per_frame}"
         )
         print(
-            f"{_phase_display_name(ours_phase_name)} config: "
+            "Ours config   : "
             f"variant={args.compression_variant}, qa={args.question_aware_reweighting}, "
             f"temporal_merge={args.temporal_merge_mode}, "
+            f"adaptive={args.adaptive_token_budget}, budget={args.talon_budget_strategy}, "
+            f"scale={args.talon_budget_scale}, target_per_frame={args.talon_target_tokens_per_frame}, "
             f"duration_targets={duration_targets}, "
+            f"event_cap={args.talon_event_budget_ratio:.2f}, "
+            f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
     if args.run_graphvid:
         print(
@@ -1887,28 +2120,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
             f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
-            f"rep={args.graph_merge_representative}, "
-            f"pos={args.graph_representative_position}, "
-            f"detail_w={args.graph_protection_detail_weight:.2f}, "
-            f"adaptive_detail={args.graph_adaptive_detail_protection}, "
-            f"penalty={args.graph_merge_importance_penalty:.2f}, "
-            f"respect_thr={args.graph_respect_temporal_threshold}"
-        )
-    if args.run_graftvid:
-        print(
-            "GRAFT-VID config: "
-            f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
-            f"skip={args.graft_temporal_skip}, global_topk={args.graft_global_topk}, "
-            f"residual_input={args.graft_input_is_residual}, "
-            f"anchor={(args.graft_anchor_ratio if args.graft_anchor_ratio is not None else (0.15 if args.graft_input_is_residual else 0.65)):.2f}, "
-            f"edge_thr={args.graft_edge_threshold:.2f}, radius_eps={args.graft_component_radius_eps:.3f}, "
-            f"split_eps={args.graft_split_radius_eps:.3f}, capacity={args.graft_parent_capacity}, "
-            f"mutual={args.graft_mutual_knn}, one_frame={args.graft_one_token_per_frame}, "
-            f"spatial_pen={args.graft_spatial_penalty:.2f}, imp_pen={args.graft_importance_penalty:.2f}, "
-            f"hub_pen={args.graft_hub_penalty:.2f}, adaptive={args.graft_adaptive_aggregation}, "
-            f"scene_thr={args.graft_scene_threshold:.2f}, minpf={args.graft_min_tokens_per_frame}, "
-            f"budget_fix={args.graft_budget_correction}, budget_div={args.graft_budget_diversity_weight:.2f}, "
-            f"score={args.graft_score_preset}, dur_aware={args.graft_duration_aware}"
+            f"rep={args.graph_merge_representative}"
         )
     print(SEPARATOR)
 
@@ -1917,51 +2129,101 @@ def _print_summary(summary: dict[str, Any]):
     print(SEPARATOR)
     print("Summary")
     print(SEPARATOR)
-    for phase_name in _phase_order(summary):
+    for phase_name in ("baseline", "flashvid", "ours", "graphvid"):
         phase = summary.get(phase_name)
         if phase is None:
             continue
-        acc = phase.get("accuracy")
+        acc = phase["accuracy"]
         acc_text = f"{acc * 100:.2f}%" if acc is not None else "N/A"
-        print(f"[{phase_name}] valid={phase.get('num_valid', 0)}/{phase.get('num_samples', 0)} acc={acc_text}")
-        lat_mean = phase.get("latency_ms", {}).get("mean")
-        vt_mean = phase.get("compressed_visual_tokens", {}).get("mean")
-        vision_vt_mean = phase.get("vision_compressed_visual_tokens", {}).get("mean")
-        red_mean = phase.get("visual_token_reduction_ratio", {}).get("mean")
-        vision_red_mean = phase.get("vision_visual_token_reduction_ratio", {}).get("mean")
+        print(f"[{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}")
+        lat_mean = phase["latency_ms"]["mean"]
+        vt_mean = phase["compressed_visual_tokens"]["mean"]
+        vision_vt_mean = phase["vision_compressed_visual_tokens"]["mean"]
+        talon_target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
+        talon_complexity_mean = phase.get("talon_complexity_score", {}).get("mean")
+        talon_budget_mean = phase.get("talon_target_budget", {}).get("mean")
+        talon_anchor_mean = phase.get("talon_anchor_tokens", {}).get("mean")
+        talon_rank_mean = phase.get("talon_rank_tokens", {}).get("mean")
+        talon_event_mean = phase.get("talon_event_tokens", {}).get("mean")
+        talon_recall_mean = phase.get("talon_recall_tokens", {}).get("mean")
+        talon_persistence_mean = phase.get("talon_persistence_tokens", {}).get("mean")
+        talon_object_mean = phase.get("talon_object_tokens", {}).get("mean")
+        talon_memory_mean = phase.get("talon_memory_tokens", {}).get("mean")
+        talon_rank_cap_mean = phase.get("talon_rank_cap", {}).get("mean")
+        talon_chosen_rank_mean = phase.get("talon_chosen_rank", {}).get("mean")
+        talon_dup_mean = phase.get("talon_duplicate_index_count", {}).get("mean")
+        talon_question_active_mean = phase.get("talon_question_aware_active", {}).get("mean")
+        talon_router_mode_mean = phase.get("talon_router_mode_code", {}).get("mean")
+        talon_router_fused_mean = phase.get("talon_router_fused_concentration", {}).get("mean")
+        talon_router_resid_mean = phase.get("talon_router_residual_concentration", {}).get("mean")
+        talon_router_q_mean = phase.get("talon_router_question_concentration", {}).get("mean")
+        talon_router_entropy_mean = phase.get("talon_router_frame_entropy", {}).get("mean")
+        talon_core_budget_mean = phase.get("talon_core_target_budget", {}).get("mean")
+        talon_core_residual_mean = phase.get("talon_core_residual_mean", {}).get("mean")
+        talon_core_semantic_mean = phase.get("talon_core_semantic_tokens", {}).get("mean")
+        talon_core_innovation_mean = phase.get("talon_core_innovation_tokens", {}).get("mean")
+        talon_core_dup_mean = phase.get("talon_core_duplicate_index_count", {}).get("mean")
+        talon_core_question_active_mean = phase.get("talon_core_question_aware_active", {}).get("mean")
+        talon_core_budget_min_mean = phase.get("talon_core_budget_min", {}).get("mean")
+        talon_core_budget_max_mean = phase.get("talon_core_budget_max", {}).get("mean")
+        talon_core_grid_h_mean = phase.get("talon_core_grid_h", {}).get("mean")
+        talon_core_grid_w_mean = phase.get("talon_core_grid_w", {}).get("mean")
+        red_mean = phase["visual_token_reduction_ratio"]["mean"]
+        vision_red_mean = phase["vision_visual_token_reduction_ratio"]["mean"]
         if lat_mean is not None:
             print(f"  latency mean: {lat_mean:.2f} ms")
         if vt_mean is not None:
             print(f"  final visual tokens mean: {vt_mean:.2f}")
         if vision_vt_mean is not None:
             print(f"  vision-side tokens mean: {vision_vt_mean:.2f}")
-
-        graft_count_mean = phase.get("graft_component_count", {}).get("mean")
-        if graft_count_mean is not None:
-            graft_size_mean = phase.get("graft_avg_component_size", {}).get("mean")
-            graft_max_size_mean = phase.get("graft_max_component_size", {}).get("mean")
-            graft_radius_mean = phase.get("graft_radius_mean", {}).get("mean")
+        if talon_target_mean is not None:
+            print(f"  talon target/frame mean: {talon_target_mean:.2f}")
+        if talon_complexity_mean is not None:
+            print(f"  talon complexity mean: {talon_complexity_mean:.4f}")
+        if talon_budget_mean is not None:
+            print(f"  talon target budget mean: {talon_budget_mean:.2f}")
+        if talon_anchor_mean is not None:
+            print(f"  talon anchor/event/recall mean: {talon_anchor_mean:.2f}/{(talon_event_mean or 0.0):.2f}/{(talon_recall_mean or 0.0):.2f}")
+        if talon_persistence_mean is not None and talon_persistence_mean > 0:
+            print(f"  talon persistence recall mean: {talon_persistence_mean:.2f}")
+        if talon_object_mean is not None and talon_object_mean > 0:
+            print(f"  talon object evidence mean: {talon_object_mean:.2f}")
+        if talon_rank_mean is not None:
+            print(f"  talon rank/memory mean: {talon_rank_mean:.2f}/{(talon_memory_mean or 0.0):.2f}")
+        if talon_rank_cap_mean is not None:
+            print(f"  talon rank cap/chosen mean: {talon_rank_cap_mean:.2f}/{(talon_chosen_rank_mean or 0.0):.2f}")
+        if talon_dup_mean is not None:
+            print(f"  talon duplicate index mean: {talon_dup_mean:.2f}")
+        if talon_question_active_mean is not None:
+            print(f"  talon question-aware active mean: {talon_question_active_mean:.2f}")
+        if talon_router_mode_mean is not None and talon_router_mode_mean > 0:
+            print(f"  talon router mode code mean: {talon_router_mode_mean:.2f} (1=visual,2=temporal,3=balanced)")
+        if talon_router_fused_mean is not None:
             print(
-                "  graft components avg/max/radius mean: "
-                f"{graft_count_mean:.2f}/{(graft_size_mean or 0.0):.2f}/"
-                f"{(graft_max_size_mean or 0.0):.2f}/{(graft_radius_mean or 0.0):.4f}"
+                "  talon router fused/residual/question/entropy mean: "
+                f"{talon_router_fused_mean:.3f}/{(talon_router_resid_mean or 0.0):.3f}/"
+                f"{(talon_router_q_mean or 0.0):.3f}/{(talon_router_entropy_mean or 0.0):.3f}"
             )
-            graft_radius_max_mean = phase.get("graft_radius_max", {}).get("mean")
-            if graft_radius_max_mean is not None:
-                print(f"  graft radius max mean: {graft_radius_max_mean:.4f}")
-            graft_edges_mean = phase.get("graft_edges_considered", {}).get("mean")
-            if graft_edges_mean is not None:
-                graft_accept_mean = phase.get("graft_edges_accepted", {}).get("mean")
-                graft_mutual_rej_mean = phase.get("graft_mutual_rejected", {}).get("mean")
-                graft_radius_rej_mean = phase.get("graft_radius_rejected", {}).get("mean")
-                graft_capacity_rej_mean = phase.get("graft_capacity_rejected", {}).get("mean")
-                graft_same_frame_rej_mean = phase.get("graft_same_frame_rejected", {}).get("mean")
-                print(
-                    "  graft edges considered/accepted/rej(m/r/c/sf) mean: "
-                    f"{graft_edges_mean:.2f}/{(graft_accept_mean or 0.0):.2f}/"
-                    f"{(graft_mutual_rej_mean or 0.0):.2f}/{(graft_radius_rej_mean or 0.0):.2f}/"
-                    f"{(graft_capacity_rej_mean or 0.0):.2f}/{(graft_same_frame_rej_mean or 0.0):.2f}"
-                )
+        if talon_core_budget_mean is not None:
+            print(f"  talon-core target budget mean: {talon_core_budget_mean:.2f}")
+        if talon_core_residual_mean is not None:
+            print(f"  talon-core residual mean: {talon_core_residual_mean:.6f}")
+        if talon_core_semantic_mean is not None:
+            print(
+                "  talon-core semantic/innovation mean: "
+                f"{talon_core_semantic_mean:.2f}/{(talon_core_innovation_mean or 0.0):.2f}"
+            )
+        if talon_core_dup_mean is not None:
+            print(f"  talon-core duplicate index mean: {talon_core_dup_mean:.2f}")
+        if talon_core_question_active_mean is not None:
+            print(f"  talon-core question-aware active mean: {talon_core_question_active_mean:.2f}")
+        if talon_core_budget_min_mean is not None:
+            print(
+                "  talon-core frame budget min/max mean: "
+                f"{talon_core_budget_min_mean:.2f}/{(talon_core_budget_max_mean or 0.0):.2f}"
+            )
+        if talon_core_grid_h_mean is not None:
+            print(f"  talon-core grid H/W mean: {talon_core_grid_h_mean:.2f}/{(talon_core_grid_w_mean or 0.0):.2f}")
         if red_mean is not None:
             print(f"  final token reduction mean: {red_mean * 100:.2f}%")
         if vision_red_mean is not None:
@@ -1970,22 +2232,28 @@ def _print_summary(summary: dict[str, Any]):
     comparison = summary.get("comparison", {})
     if comparison:
         print("[comparison]")
-        for key in sorted(comparison):
-            comp = comparison[key]
+        for key in ("baseline_vs_flashvid", "baseline_vs_ours", "flashvid_vs_ours", "flashvid_vs_graphvid"):
+            comp = comparison.get(key)
             if comp is None:
                 continue
-            print(f"  [{key}] matched={comp.get('matched_samples', 0)}")
-            if "_vs_" in key:
-                anchor_name, target_name = key.split("_vs_", 1)
-                print(
-                    "    paired correctness: "
-                    f"both_correct={comp.get('both_correct', 0)} both_wrong={comp.get('both_wrong', 0)} "
-                    f"anchor_only={comp.get(f'{anchor_name}_only_correct', 0)} "
-                    f"target_only={comp.get(f'{target_name}_only_correct', 0)}"
-                )
-            lat_sp = comp.get("latency_speedup_ratio", {}).get("mean")
+            lat_sp = comp["latency_speedup_ratio"]["mean"]
+            ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
+            reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
+            vision_ratio_key = next((k for k in comp.keys() if k.startswith("vision_token_ratio_")), None)
+            vision_reduction_key = next((k for k in comp.keys() if k.startswith("vision_token_reduction_vs_")), None)
+            token_red = comp[reduction_key]["mean"] if reduction_key else None
+            vision_token_red = comp[vision_reduction_key]["mean"] if vision_reduction_key else None
+            print(f"  [{key}] matched={comp['matched_samples']}")
             if lat_sp is not None:
                 print(f"    latency speedup: {lat_sp:.3f}x")
+            if ratio_key and comp[ratio_key]["mean"] is not None:
+                print(f"    {ratio_key}: {comp[ratio_key]['mean']:.3f}")
+            if token_red is not None:
+                print(f"    token reduction: {token_red * 100:.2f}%")
+            if vision_ratio_key and comp[vision_ratio_key]["mean"] is not None:
+                print(f"    {vision_ratio_key}: {comp[vision_ratio_key]['mean']:.3f}")
+            if vision_token_red is not None:
+                print(f"    vision-side token reduction: {vision_token_red * 100:.2f}%")
 
     duration_breakdown = summary.get("duration_breakdown", {})
     if duration_breakdown:
@@ -1996,7 +2264,7 @@ def _print_summary(summary: dict[str, Any]):
                 continue
             phase_values = [
                 bucket.get(phase_name)
-                for phase_name in _phase_order(summary)
+                for phase_name in ("baseline", "flashvid", "ours", "graphvid")
                 if bucket.get(phase_name) is not None
             ]
             if not phase_values or all(int(phase.get("num_samples", 0) or 0) == 0 for phase in phase_values):
@@ -2005,7 +2273,7 @@ def _print_summary(summary: dict[str, Any]):
                 print("[by duration]")
                 printed_header = True
             print(f"  [{duration}]")
-            for phase_name in _phase_order(summary):
+            for phase_name in ("baseline", "flashvid", "ours", "graphvid"):
                 phase = bucket.get(phase_name)
                 if phase is None:
                     continue
@@ -2013,34 +2281,53 @@ def _print_summary(summary: dict[str, Any]):
                 acc_text = f"{acc * 100:.2f}%" if acc is not None else "N/A"
                 vt_mean = phase.get("compressed_visual_tokens", {}).get("mean")
                 vision_vt_mean = phase.get("vision_compressed_visual_tokens", {}).get("mean")
-                line = f"    [{phase_name}] valid={phase.get('num_valid', 0)}/{phase.get('num_samples', 0)} acc={acc_text}"
+                target_mean = phase.get("talon_target_tokens_per_frame", {}).get("mean")
+                channel = (
+                    phase.get("talon_anchor_tokens", {}).get("mean"),
+                    phase.get("talon_event_tokens", {}).get("mean"),
+                    phase.get("talon_recall_tokens", {}).get("mean"),
+                )
+                line = f"    [{phase_name}] valid={phase['num_valid']}/{phase['num_samples']} acc={acc_text}"
                 if vt_mean is not None:
                     line += f" vtoken={vt_mean:.2f}"
                 if vision_vt_mean is not None:
                     line += f" vision={vision_vt_mean:.2f}"
+                if target_mean is not None:
+                    line += f" target/frame={target_mean:.2f}"
+                if channel[0] is not None:
+                    line += f" a/e/r={channel[0]:.1f}/{(channel[1] or 0.0):.1f}/{(channel[2] or 0.0):.1f}"
                 print(line)
+            comp_key = "flashvid_vs_ours"
+            comp = bucket.get("comparison", {}).get(comp_key)
+            if comp is None:
+                comp_key = "flashvid_vs_graphvid"
+                comp = bucket.get("comparison", {}).get(comp_key)
+            if comp is not None:
+                ratio_key = next((k for k in comp.keys() if k.startswith("visual_token_ratio_")), None)
+                reduction_key = next((k for k in comp.keys() if k.startswith("visual_token_reduction_vs_")), None)
+                ratio = comp[ratio_key]["mean"] if ratio_key else None
+                reduction = comp[reduction_key]["mean"] if reduction_key else None
+                comp_line = f"    [{comp_key}] matched={comp['matched_samples']}"
+                if ratio is not None:
+                    comp_line += f" ratio={ratio:.3f}"
+                if reduction is not None:
+                    comp_line += f" token_reduction={reduction * 100:.2f}%"
+                print(comp_line)
     print(SEPARATOR)
 
+
 def run(args: BenchmarkArgs):
-    ours_phase_name = _ours_phase_key(args)
-    ours_output_path = _ours_output_path(args, ours_phase_name)
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
-    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid or args.run_graftvid):
-        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid/run_graftvid")
+    if not (args.run_baseline or args.run_flashvid or args.run_ours or args.run_graphvid):
+        raise ValueError("At least one phase must be enabled: run_baseline/run_flashvid/run_ours/run_graphvid")
 
     model_bundle = _load_backend_model(args)
     backend = model_bundle["backend"]
     _print_header(args, backend)
     if backend == "llava":
-        if float(args.llm_retention_ratio) >= 0.9999:
-            print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
-        else:
-            print(
-                "[info] LLaVA backend: inner-LLM pruning is enabled "
-                f"(pruning_layer={args.pruning_layer}, llm_retention_ratio={args.llm_retention_ratio})."
-            )
+        print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
     print(f"Loaded {len(samples)} samples.\n")
     if args.reload_model_each_phase:
         model_bundle["model"] = None
@@ -2050,13 +2337,7 @@ def run(args: BenchmarkArgs):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    total_phases = (
-        int(args.run_baseline)
-        + int(args.run_flashvid)
-        + int(args.run_ours)
-        + int(args.run_graphvid)
-        + int(args.run_graftvid)
-    )
+    total_phases = int(args.run_baseline) + int(args.run_flashvid) + int(args.run_ours) + int(args.run_graphvid)
     phase_idx = 1
     def _acquire_phase_bundle():
         if args.reload_model_each_phase:
@@ -2094,6 +2375,10 @@ def run(args: BenchmarkArgs):
     if args.run_flashvid:
         print(f"\nPhase {phase_idx}/{total_phases}: FlashVID ...")
         print(
+            "[talon-active][flashvid] "
+            f"path={'unified' if args.talon_unified_selection else 'legacy'}, "
+            f"rerank={args.talon_rerank_with_flash_prior}, rescue={args.talon_rescue_enabled}, "
+            f"fast_rank={args.talon_fast_rank_plan}, qaware={args.question_aware_reweighting}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
@@ -2119,12 +2404,7 @@ def run(args: BenchmarkArgs):
             f"skip={args.graph_temporal_skip}, protect={args.graph_merge_protect_ratio:.2f}, "
             f"target_ratio={args.graph_merge_target_ratio:.2f}, final_tpf={args.graph_final_tokens_per_frame}, "
             f"skip_spatial={args.graph_skip_spatial_merge_when_capped}, "
-            f"rep={args.graph_merge_representative}, "
-            f"pos={args.graph_representative_position}, "
-            f"detail_w={args.graph_protection_detail_weight:.2f}, "
-            f"adaptive_detail={args.graph_adaptive_detail_protection}, "
-            f"penalty={args.graph_merge_importance_penalty:.2f}, "
-            f"respect_thr={args.graph_respect_temporal_threshold}"
+            f"rep={args.graph_merge_representative}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
@@ -2142,43 +2422,18 @@ def run(args: BenchmarkArgs):
             _release_phase_bundle(phase_bundle)
         phase_idx += 1
 
-    if args.run_graftvid:
-        print(f"\nPhase {phase_idx}/{total_phases}: GRAFT-VID ...")
-        print(
-            "[graftvid-active] "
-            f"merge=graft, topk={args.graft_temporal_topk}, radius={args.graft_temporal_radius}, "
-            f"skip={args.graft_temporal_skip}, global_topk={args.graft_global_topk}, "
-            f"residual_input={args.graft_input_is_residual}, "
-            f"anchor={(args.graft_anchor_ratio if args.graft_anchor_ratio is not None else (0.15 if args.graft_input_is_residual else 0.65)):.2f}, "
-            f"edge_thr={args.graft_edge_threshold:.2f}, eps={args.graft_component_radius_eps:.3f}, "
-            f"capacity={args.graft_parent_capacity}, mutual={args.graft_mutual_knn}, "
-            f"one_frame={args.graft_one_token_per_frame}, scene_thr={args.graft_scene_threshold:.2f}, "
-            f"minpf={args.graft_min_tokens_per_frame}, budget_fix={args.graft_budget_correction}, "
-            f"budget_div={args.graft_budget_diversity_weight:.2f}, score={args.graft_score_preset}, "
-            f"dur_aware={args.graft_duration_aware}"
-        )
-        phase_bundle = _acquire_phase_bundle()
-        phase_backend = phase_bundle["backend"]
-        phase_bundle["model"] = _apply_graftvid(phase_bundle["model"], args, phase_backend)
-        try:
-            _run_phase(
-                model_bundle=phase_bundle,
-                args=args,
-                samples=samples,
-                phase_name="GraftVID",
-                use_acceleration=True,
-                output_path=args.graftvid_output,
-            )
-        finally:
-            _release_phase_bundle(phase_bundle)
-        phase_idx += 1
-
     if args.run_ours:
-        ours_display_name = _phase_display_name(ours_phase_name)
-        print(f"\nPhase {phase_idx}/{total_phases}: {ours_display_name} ...")
+        print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
         print(
+            "[talon-active][ours] "
             f"path=clean, qaware={args.question_aware_reweighting}, "
             f"variant={args.compression_variant}, merge={args.temporal_merge_mode}, "
+            f"target/frame={args.talon_target_tokens_per_frame}, "
+            f"duration_targets={args.talon_short_target_tokens_per_frame}/"
+            f"{args.talon_medium_target_tokens_per_frame}/"
+            f"{args.talon_long_target_tokens_per_frame}, "
+            f"rank_max={args.talon_rank_max}, "
+            f"anchor_div={args.talon_anchor_diversity_weight:.2f}"
         )
         phase_bundle = _acquire_phase_bundle()
         phase_backend = phase_bundle["backend"]
@@ -2188,10 +2443,9 @@ def run(args: BenchmarkArgs):
                 model_bundle=phase_bundle,
                 args=args,
                 samples=samples,
-                phase_name=ours_display_name,
+                phase_name="Ours",
                 use_acceleration=True,
-                output_path=ours_output_path,
-                phase_key=ours_phase_name,
+                output_path=args.ours_output,
             )
         finally:
             _release_phase_bundle(phase_bundle)
@@ -2201,7 +2455,6 @@ def run(args: BenchmarkArgs):
     flashvid_records = None
     ours_records = None
     graphvid_records = None
-    graftvid_records = None
     if args.run_baseline:
         baseline_records = _read_jsonl(args.baseline_output)
         summary["baseline"] = _summarize_phase(baseline_records)
@@ -2209,14 +2462,11 @@ def run(args: BenchmarkArgs):
         flashvid_records = _read_jsonl(args.flashvid_output)
         summary["flashvid"] = _summarize_phase(flashvid_records)
     if args.run_ours:
-        ours_records = _read_jsonl(ours_output_path)
-        summary[ours_phase_name] = _summarize_phase(ours_records)
+        ours_records = _read_jsonl(args.ours_output)
+        summary["ours"] = _summarize_phase(ours_records)
     if args.run_graphvid:
         graphvid_records = _read_jsonl(args.graphvid_output)
         summary["graphvid"] = _summarize_phase(graphvid_records)
-    if args.run_graftvid:
-        graftvid_records = _read_jsonl(args.graftvid_output)
-        summary["graftvid"] = _summarize_phase(graftvid_records)
 
     if baseline_records is not None and flashvid_records is not None:
         summary["comparison"]["baseline_vs_flashvid"] = _summarize_pairwise_comparison(
@@ -2226,18 +2476,18 @@ def run(args: BenchmarkArgs):
             target_name="flashvid",
         )
     if baseline_records is not None and ours_records is not None:
-        summary["comparison"][f"baseline_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
+        summary["comparison"]["baseline_vs_ours"] = _summarize_pairwise_comparison(
             baseline_records,
             ours_records,
             anchor_name="baseline",
-            target_name=ours_phase_name,
+            target_name="ours",
         )
     if flashvid_records is not None and ours_records is not None:
-        summary["comparison"][f"flashvid_vs_{ours_phase_name}"] = _summarize_pairwise_comparison(
+        summary["comparison"]["flashvid_vs_ours"] = _summarize_pairwise_comparison(
             flashvid_records,
             ours_records,
             anchor_name="flashvid",
-            target_name=ours_phase_name,
+            target_name="ours",
         )
     if flashvid_records is not None and graphvid_records is not None:
         summary["comparison"]["flashvid_vs_graphvid"] = _summarize_pairwise_comparison(
@@ -2246,21 +2496,12 @@ def run(args: BenchmarkArgs):
             anchor_name="flashvid",
             target_name="graphvid",
         )
-    if flashvid_records is not None and graftvid_records is not None:
-        summary["comparison"]["flashvid_vs_graftvid"] = _summarize_pairwise_comparison(
-            flashvid_records,
-            graftvid_records,
-            anchor_name="flashvid",
-            target_name="graftvid",
-        )
     _add_duration_breakdown(
         summary,
         baseline_records=baseline_records,
         flashvid_records=flashvid_records,
         ours_records=ours_records,
-        ours_phase_name=ours_phase_name,
         graphvid_records=graphvid_records,
-        graftvid_records=graftvid_records,
     )
 
     summary_path = Path(args.summary_output_json)

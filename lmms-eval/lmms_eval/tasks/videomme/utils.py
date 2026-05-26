@@ -151,8 +151,6 @@ def videomme_doc_to_visual(doc):
 
 
 def videomme_doc_to_text(doc, lmms_eval_specific_kwargs=None):
-    if doc.get("input"):
-        return doc["input"]
 
     if "format" in lmms_eval_specific_kwargs and lmms_eval_specific_kwargs["format"] == "qwen3_vl":
         return videomme_doc_to_text_qwen3vl(doc, lmms_eval_specific_kwargs)
@@ -298,9 +296,9 @@ def videomme_process_results(doc, results):
     pred_ans = extract_characters_regex(pred)
     gt_ans = doc["answer"]
 
-    category = doc.get("domain", doc.get("category", "Unknown"))
+    category = doc["domain"]
     sub_category = doc["sub_category"]
-    task_category = doc.get("task_type", doc.get("task_category", "Unknown"))
+    task_category = doc["task_type"]
     # score: 0/1 correctness for stderr calculation
     # videoID: for clustered stderr (questions from same video are correlated)
     score = 1.0 if pred_ans.lower() == gt_ans.lower() else 0.0

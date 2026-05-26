@@ -54,6 +54,128 @@ def _set_qwen3vl_bypass_flags(model: Qwen3VLModel, active: bool) -> None:
             setattr(cfg, "flashvid_bypass_active", active)
 
 
+def _call_qwen3vl_original_pipeline(self: Qwen3VLModel, **kwargs):
+    originals = {
+        (Qwen3VLVisionAttention, "forward"): Qwen3VLVisionAttention.forward,
+        (Qwen3VLVisionBlock, "forward"): Qwen3VLVisionBlock.forward,
+        (Qwen3VLVisionModel, "forward"): Qwen3VLVisionModel.forward,
+        (Qwen3VLModel, "forward"): Qwen3VLModel.forward,
+        (Qwen3VLTextAttention, "forward"): Qwen3VLTextAttention.forward,
+        (Qwen3VLTextDecoderLayer, "forward"): Qwen3VLTextDecoderLayer.forward,
+        (Qwen3VLTextModel, "forward"): Qwen3VLTextModel.forward,
+        (Qwen3VLModel, "get_image_features"): Qwen3VLModel.get_image_features,
+        (Qwen3VLModel, "get_video_features"): Qwen3VLModel.get_video_features,
+    }
+    try:
+        Qwen3VLVisionAttention.forward = Qwen3VLVisionAttention._flashvid_original_forward
+        Qwen3VLVisionBlock.forward = Qwen3VLVisionBlock._flashvid_original_forward
+        Qwen3VLVisionModel.forward = Qwen3VLVisionModel._flashvid_original_forward
+        Qwen3VLModel.forward = Qwen3VLModel._flashvid_original_forward
+        Qwen3VLTextAttention.forward = Qwen3VLTextAttention._flashvid_original_forward
+        Qwen3VLTextDecoderLayer.forward = Qwen3VLTextDecoderLayer._flashvid_original_forward
+        Qwen3VLTextModel.forward = Qwen3VLTextModel._flashvid_original_forward
+        Qwen3VLModel.get_image_features = Qwen3VLModel._flashvid_original_get_image_features
+        Qwen3VLModel.get_video_features = Qwen3VLModel._flashvid_original_get_video_features
+        return Qwen3VLModel._flashvid_original_forward(self, **kwargs)
+    finally:
+        for (cls, attr), fn in originals.items():
+            setattr(cls, attr, fn)
+
+
+def _call_qwen3vl_original_text_stack(language_model: Qwen3VLTextModel, **kwargs):
+    originals = {
+        (Qwen3VLTextAttention, "forward"): Qwen3VLTextAttention.forward,
+        (Qwen3VLTextDecoderLayer, "forward"): Qwen3VLTextDecoderLayer.forward,
+        (Qwen3VLTextModel, "forward"): Qwen3VLTextModel.forward,
+    }
+    try:
+        Qwen3VLTextAttention.forward = Qwen3VLTextAttention._flashvid_original_forward
+        Qwen3VLTextDecoderLayer.forward = Qwen3VLTextDecoderLayer._flashvid_original_forward
+        Qwen3VLTextModel.forward = Qwen3VLTextModel._flashvid_original_forward
+        return Qwen3VLTextModel._flashvid_original_forward(language_model, **kwargs)
+    finally:
+        for (cls, attr), fn in originals.items():
+            setattr(cls, attr, fn)
+
+
+def _talon_full_bypass_eligible(
+    flashvid_config: Optional[FlashVidConfig],
+    video_grid_thw: Optional[torch.LongTensor],
+    spatial_merge_size: int,
+    pixel_values_videos: Optional[torch.Tensor],
+) -> bool:
+    if flashvid_config is None or pixel_values_videos is None or video_grid_thw is None:
+        return False
+    variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+    if variant != "talon":
+        return False
+    if bool(getattr(flashvid_config, "adaptive_token_budget", False)):
+        return False
+    if float(getattr(flashvid_config, "retention_ratio", 1.0)) < 0.9999:
+        return False
+    if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
+        return False
+    decode_policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
+    if decode_policy not in ("none", "off", "disabled"):
+        return False
+    frame_target = int(getattr(flashvid_config, "talon_target_tokens_per_frame", 0) or 0)
+    if frame_target <= 0:
+        return False
+    num_visual_tokens = int((video_grid_thw[0][1].item() * video_grid_thw[0][2].item()) // max(1, spatial_merge_size**2))
+    return frame_target >= num_visual_tokens
+
+
+def _use_original_qwen3vl_text_stack(flashvid_config: Optional[FlashVidConfig]) -> bool:
+    if flashvid_config is None:
+        return False
+    variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower()
+    if variant != "talon":
+        return False
+    if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999:
+        return False
+    decode_policy = str(getattr(flashvid_config, "decode_policy", "none") or "none").strip().lower()
+    if decode_policy not in ("none", "off", "disabled"):
+        return False
+    return True
+
+
+def _prefuse_deepstack_visual_embeds(
+    inputs_embeds: torch.Tensor,
+    visual_pos_masks: Optional[torch.Tensor],
+    deepstack_visual_embeds: Optional[list[torch.Tensor]],
+    scale: float = 0.35,
+) -> torch.Tensor:
+    if visual_pos_masks is None or deepstack_visual_embeds is None or len(deepstack_visual_embeds) == 0:
+        return inputs_embeds
+    if visual_pos_masks.ndim != 2 or inputs_embeds.ndim != 3:
+        return inputs_embeds
+    visual_mask = visual_pos_masks[0]
+    if int(visual_mask.sum().item()) <= 0:
+        return inputs_embeds
+    fused = torch.stack([x.to(dtype=inputs_embeds.dtype, device=inputs_embeds.device) for x in deepstack_visual_embeds], dim=0).mean(dim=0)
+    if fused.shape[0] != int(visual_mask.sum().item()) or fused.shape[-1] != inputs_embeds.shape[-1]:
+        return inputs_embeds
+    updated = inputs_embeds.clone()
+    updated[:, visual_mask] = updated[:, visual_mask] + float(scale) * fused.unsqueeze(0)
+    return updated
+
+
+def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
+    mode = str(getattr(flashvid_config, "talon_deepstack_mode", "keep") or "keep").strip().lower()
+    if mode in ("keep", "on", "enabled", "true"):
+        return True
+    if mode in ("disable", "off", "disabled", "none", "false"):
+        return False
+
+    output_mode = str(getattr(flashvid_config, "talon_output_mode", "manifold") or "manifold").strip().lower()
+    if output_mode not in ("manifold", "manifold_raw", "raw"):
+        return False
+    if abs(float(getattr(flashvid_config, "talon_reconstruction_blend", 0.0))) > 1e-6:
+        return False
+    memory_mode = str(getattr(flashvid_config, "talon_memory_mode", "raw") or "raw").strip().lower()
+    return memory_mode in ("raw", "anchor", "anchors", "select")
+
+
 def Qwen3VLVisionAttention_forward(
     self: Qwen3VLVisionAttention,
     hidden_states: torch.Tensor,
@@ -255,6 +377,27 @@ def Qwen3VLModel_forward(
         raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
     flashvid_config: Optional[FlashVidConfig] = getattr(self, "flashvid_config", None)
+    spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
+    if _talon_full_bypass_eligible(
+        flashvid_config=flashvid_config,
+        video_grid_thw=video_grid_thw,
+        spatial_merge_size=spatial_merge,
+        pixel_values_videos=pixel_values_videos,
+    ):
+        return _call_qwen3vl_original_pipeline(
+            self,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            cache_position=cache_position,
+            **kwargs,
+        )
 
     if inputs_embeds is None:
         inputs_embeds = self.get_input_embeddings()(input_ids)
@@ -389,8 +532,13 @@ def Qwen3VLModel_forward(
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
         flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
-        if deepstack_visual_embeds is not None:
-            # Keep DeepStack visual embeddings aligned with the compressed visual sequence.
+        if (
+            str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "talon"
+            and not _talon_should_keep_deepstack(flashvid_config)
+        ):
+            deepstack_visual_embeds = None
+        elif deepstack_visual_embeds is not None:
+            # Keep DeepStack aligned only when TALON outputs stay on the raw-token manifold.
             deepstack_visual_embeds = [deepstack_visual_embed[keep_visual_global_indices] for deepstack_visual_embed in deepstack_visual_embeds]
         keep_global_indexes = (
             torch.cat(
@@ -413,17 +561,34 @@ def Qwen3VLModel_forward(
         cache_position = cache_position[keep_global_indexes]
         visual_pos_masks = visual_pos_masks[:, keep_global_indexes]
 
-    outputs = self.language_model(
-        input_ids=None,
-        position_ids=position_ids,
-        attention_mask=attention_mask,
-        past_key_values=past_key_values,
-        inputs_embeds=inputs_embeds,
-        cache_position=cache_position,
-        visual_pos_masks=visual_pos_masks,
-        deepstack_visual_embeds=deepstack_visual_embeds,
-        **kwargs,
-    )
+    if _use_original_qwen3vl_text_stack(flashvid_config):
+        inputs_embeds = _prefuse_deepstack_visual_embeds(
+            inputs_embeds=inputs_embeds,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+        )
+        outputs = _call_qwen3vl_original_text_stack(
+            self.language_model,
+            input_ids=None,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            cache_position=cache_position,
+            **kwargs,
+        )
+    else:
+        outputs = self.language_model(
+            input_ids=None,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            cache_position=cache_position,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+            **kwargs,
+        )
 
     return Qwen3VLModelOutputWithPast(
         last_hidden_state=outputs.last_hidden_state,
@@ -514,12 +679,11 @@ def Qwen3VLTextModel_forward(
         raise ValueError("FlashVid configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
-    enable_inner_pruning = is_prefill and float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
 
     # decoder layers
     for layer_idx, decoder_layer in enumerate(self.layers):
         # Only prunes visual tokens at prefilling stage.
-        if enable_inner_pruning:
+        if is_prefill:
             if layer_idx == flashvid_config.pruning_layer - 1:
                 kwargs["output_attentions"] = True
             elif layer_idx == flashvid_config.pruning_layer:
