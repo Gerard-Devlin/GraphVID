@@ -106,9 +106,11 @@ def _append_graphvid_args(cmd: list[str], args: argparse.Namespace, merge_mode: 
             str(args.graph_final_frame_floor_ratio),
         ]
     )
-    cmd.append("--graph_respect_temporal_threshold" if args.graph_respect_temporal_threshold else "--no-graph_respect_temporal_threshold")
-    cmd.append("--graph_adaptive_detail_protection" if args.graph_adaptive_detail_protection else "--no-graph_adaptive_detail_protection")
-    cmd.append("--graph_skip_spatial_merge_when_capped" if args.graph_skip_spatial_merge_when_capped else "--no-graph_skip_spatial_merge_when_capped")
+    # bench_all_metrics.py uses HfArgumentParser; pass bool values explicitly
+    # instead of argparse-style --no-* flags.
+    cmd.extend(["--graph_respect_temporal_threshold", str(bool(args.graph_respect_temporal_threshold))])
+    cmd.extend(["--graph_adaptive_detail_protection", str(bool(args.graph_adaptive_detail_protection))])
+    cmd.extend(["--graph_skip_spatial_merge_when_capped", str(bool(args.graph_skip_spatial_merge_when_capped))])
 
 
 def _append_graftvid_args(cmd: list[str], args: argparse.Namespace) -> None:
