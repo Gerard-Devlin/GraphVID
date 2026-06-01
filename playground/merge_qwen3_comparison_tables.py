@@ -195,10 +195,11 @@ def _sort_key(row: dict[str, Any]) -> tuple[float, int, str]:
         "flashvid": 0,
         "graphvid": 1,
         "fastvid": 2,
-        "visionzip": 3,
-        "prunevid": 4,
-        "talon": 5,
-        "ours": 5,
+        "fastgraphvid": 3,
+        "visionzip": 4,
+        "prunevid": 5,
+        "talon": 6,
+        "ours": 6,
     }
     rate_text = str(row.get("retention_ratio") or "0").replace("%", "")
     try:

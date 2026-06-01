@@ -11,7 +11,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_METHODS = ("fastvid", "visionzip")
+SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid")
 
 
 def _artifact_method_name(method: str) -> str:
@@ -181,6 +181,14 @@ def main() -> None:
     parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
     parser.add_argument("--fastvid_DTM_p", type=int, default=4)
     parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
+    parser.add_argument("--fastgraph_temporal_radius", type=int, default=1)
+    parser.add_argument("--fastgraph_temporal_skip", type=int, default=1)
+    parser.add_argument("--fastgraph_temporal_topk", type=int, default=2)
+    parser.add_argument("--fastgraph_edge_threshold", type=float, default=0.0)
+    parser.add_argument("--fastgraph_protect_ratio", type=float, default=0.15)
+    parser.add_argument("--fastgraph_attn_weight", type=float, default=0.55)
+    parser.add_argument("--fastgraph_novelty_weight", type=float, default=0.30)
+    parser.add_argument("--fastgraph_density_weight", type=float, default=0.15)
     parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     args = parser.parse_args()
 
@@ -264,6 +272,22 @@ def main() -> None:
             str(args.fastvid_DTM_p),
             "--fastvid_DTM_beta",
             str(args.fastvid_DTM_beta),
+            "--fastgraph_temporal_radius",
+            str(args.fastgraph_temporal_radius),
+            "--fastgraph_temporal_skip",
+            str(args.fastgraph_temporal_skip),
+            "--fastgraph_temporal_topk",
+            str(args.fastgraph_temporal_topk),
+            "--fastgraph_edge_threshold",
+            str(args.fastgraph_edge_threshold),
+            "--fastgraph_protect_ratio",
+            str(args.fastgraph_protect_ratio),
+            "--fastgraph_attn_weight",
+            str(args.fastgraph_attn_weight),
+            "--fastgraph_novelty_weight",
+            str(args.fastgraph_novelty_weight),
+            "--fastgraph_density_weight",
+            str(args.fastgraph_density_weight),
             "--visionzip_dominant_ratio",
             str(args.visionzip_dominant_ratio),
         ]
