@@ -98,6 +98,16 @@ def flashvid(
     graph_final_tokens_per_frame: int = 0,
     graph_final_frame_floor_ratio: float = 0.55,
     graph_skip_spatial_merge_when_capped: bool = True,
+    fastgraph_ats_ratio: float = 0.60,
+    fastgraph_budget_uses_expansion: bool = True,
+    fastgraph_temporal_radius: int = 1,
+    fastgraph_temporal_skip: int = 1,
+    fastgraph_temporal_topk: int = 2,
+    fastgraph_edge_threshold: float = 0.0,
+    fastgraph_protect_ratio: float = 0.15,
+    fastgraph_attn_weight: float = 0.55,
+    fastgraph_novelty_weight: float = 0.30,
+    fastgraph_density_weight: float = 0.15,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -322,6 +332,7 @@ def flashvid(
         min_keep_per_frame (int, optional): Minimum retained token count after TAM for each frame.
         compression_variant (str, optional): "flashvid" keeps original ADTS+TSTM;
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
+            "fastgraphvid" keeps an ATS branch plus GraphSTM residual medoids;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -445,8 +456,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid")
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|fastgraphvid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
 
@@ -478,6 +489,16 @@ def flashvid(
         graph_final_tokens_per_frame=graph_final_tokens_per_frame,
         graph_final_frame_floor_ratio=graph_final_frame_floor_ratio,
         graph_skip_spatial_merge_when_capped=graph_skip_spatial_merge_when_capped,
+        fastgraph_ats_ratio=fastgraph_ats_ratio,
+        fastgraph_budget_uses_expansion=fastgraph_budget_uses_expansion,
+        fastgraph_temporal_radius=fastgraph_temporal_radius,
+        fastgraph_temporal_skip=fastgraph_temporal_skip,
+        fastgraph_temporal_topk=fastgraph_temporal_topk,
+        fastgraph_edge_threshold=fastgraph_edge_threshold,
+        fastgraph_protect_ratio=fastgraph_protect_ratio,
+        fastgraph_attn_weight=fastgraph_attn_weight,
+        fastgraph_novelty_weight=fastgraph_novelty_weight,
+        fastgraph_density_weight=fastgraph_density_weight,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

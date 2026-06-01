@@ -34,6 +34,18 @@ class FlashVidConfig:
     graph_final_frame_floor_ratio: float = field(default=0.55)
     graph_skip_spatial_merge_when_capped: bool = field(default=True)
 
+    # FastGraphVID: ATS salient branch + GraphSTM residual medoids.
+    fastgraph_ats_ratio: float = field(default=0.60)
+    fastgraph_budget_uses_expansion: bool = field(default=True)
+    fastgraph_temporal_radius: int = field(default=1)
+    fastgraph_temporal_skip: int = field(default=1)
+    fastgraph_temporal_topk: int = field(default=2)
+    fastgraph_edge_threshold: float = field(default=0.0)
+    fastgraph_protect_ratio: float = field(default=0.15)
+    fastgraph_attn_weight: float = field(default=0.55)
+    fastgraph_novelty_weight: float = field(default=0.30)
+    fastgraph_density_weight: float = field(default=0.15)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
