@@ -7,9 +7,10 @@ import torch
 import torch.nn.functional as F
 
 from flashvid.configuration_flashvid import FlashVidConfig
+from flashvid.token_selection import TokenSelectionMethod
+from flashvid.utils import ALL_TOKEN_SELECTION_METHOD
 
 from .common import _cfg_float, _cfg_int, _effective_ratio, _record_adapter_metrics
-from .fastvid import _fastvid_segment_sizes
 
 
 def _grid_hw(num_visual_tokens: int, config: FlashVidConfig) -> tuple[int, int]:
@@ -110,7 +111,15 @@ def _temporal_novelty(
     return novelty
 
 
-def _select_graph_medoids_for_segment(
+def _resolve_token_selection_method(config: FlashVidConfig) -> TokenSelectionMethod:
+    method = getattr(config, "token_selection_method", TokenSelectionMethod.ADTS_v2)
+    try:
+        return TokenSelectionMethod(method)
+    except ValueError:
+        return TokenSelectionMethod.ADTS_STABLE
+
+
+def _select_graphstm_medoids(
     *,
     video_features: torch.Tensor,
     normed: torch.Tensor,
@@ -252,36 +261,40 @@ def fastgraphvid_compression(
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """FastVID-budgeted GraphVID medoid compression for Qwen3 visual tokens.
+    """ATS + GraphSTM compression for Qwen3 visual tokens.
 
-    FastVID supplies dynamic temporal segmentation and the salient/context budget
-    split. GraphVID-style temporal graph coarsening then chooses raw residual
-    medoids inside each segment instead of synthesizing DTM averaged tokens.
+    This sidecar method follows FastVID's STPrune spirit: ATS preserves salient
+    per-frame details, while a GraphVID-style spatiotemporal graph keeps raw
+    residual medoids as the contextual branch. It does not call FastVID DySeg or
+    synthesize averaged DTM tokens.
     """
     frame_num, frame_token_len, feat_dim = video_features.shape
     device = video_features.device
     ratio = _effective_ratio(flashvid_config)
-    stprune_d = max(0.0, min(1.0, _cfg_float(flashvid_config, "fastvid_STPrune_d", 0.4)))
+    ats_ratio = max(0.0, min(1.0, _cfg_float(flashvid_config, "fastgraph_ats_ratio", 0.60)))
 
     frame_retain_num = max(1, min(frame_token_len, int(frame_token_len * ratio)))
-    frame_salient_num = frame_retain_num - int(frame_retain_num * stprune_d)
-    frame_salient_num = max(0, min(frame_token_len, frame_salient_num))
-    frame_context_num = max(0, frame_retain_num - frame_salient_num)
+    frame_ats_num = max(0, min(frame_token_len, int(round(frame_retain_num * ats_ratio))))
+    frame_graphstm_num = max(0, frame_retain_num - frame_ats_num)
 
     all_indices = torch.arange(frame_num * frame_token_len, dtype=torch.long, device=device).view(frame_num, frame_token_len)
     attn = cls_attention.float()
-    salient_mask = torch.zeros((frame_num, frame_token_len), dtype=torch.bool, device=device)
-    final_tokens: list[torch.Tensor] = []
+    ats_mask = torch.zeros((frame_num, frame_token_len), dtype=torch.bool, device=device)
     keep_indices: list[torch.Tensor] = []
 
-    if frame_salient_num > 0:
-        salient_idx = torch.topk(attn, k=frame_salient_num, dim=1, largest=True).indices
-        batch_idx = torch.arange(frame_num, dtype=torch.long, device=device).unsqueeze(1).expand(-1, frame_salient_num)
-        salient_mask[batch_idx, salient_idx] = True
-        final_tokens.append(video_features[batch_idx, salient_idx].reshape(-1, feat_dim))
-        keep_indices.append(all_indices[batch_idx, salient_idx].reshape(-1))
+    if frame_ats_num > 0:
+        selection_method = _resolve_token_selection_method(flashvid_config)
+        additional_kwargs = {"cls_attention": attn} if "attn" in selection_method.value else {}
+        _, ats_idx = ALL_TOKEN_SELECTION_METHOD[selection_method](
+            features=video_features,
+            num_retained_tokens=frame_ats_num,
+            **additional_kwargs,
+        )
+        batch_idx = torch.arange(frame_num, dtype=torch.long, device=device).unsqueeze(1).expand(-1, frame_ats_num)
+        ats_mask[batch_idx, ats_idx] = True
+        keep_indices.append(all_indices.gather(1, ats_idx).reshape(-1))
 
-    residual_mask = ~salient_mask
+    residual_mask = ~ats_mask
     normed = F.normalize(video_features.float(), p=2, dim=-1, eps=1e-6)
     novelty = _temporal_novelty(
         normed,
@@ -298,30 +311,21 @@ def fastgraphvid_compression(
     density_weight = _cfg_float(flashvid_config, "fastgraph_density_weight", 0.15)
     quality = attn_weight * attn_norm + novelty_weight * novelty + density_weight * density
 
-    segment_sizes = _fastvid_segment_sizes(video_features.mean(dim=1), flashvid_config)
-    cursor = 0
-    for seg_len in segment_sizes:
-        end = min(frame_num, cursor + int(seg_len))
-        if end <= cursor:
-            continue
-        seg_mask = torch.zeros_like(residual_mask)
-        seg_mask[cursor:end] = residual_mask[cursor:end]
-        target = int(frame_context_num * (end - cursor))
-        context_tokens, context_indices = _select_graph_medoids_for_segment(
+    graphstm_target = int(frame_graphstm_num * frame_num)
+    if graphstm_target > 0:
+        _, graphstm_indices = _select_graphstm_medoids(
             video_features=video_features,
             normed=normed,
-            candidate_mask=seg_mask,
+            candidate_mask=residual_mask,
             quality=quality,
             global_indices=all_indices,
-            target_count=target,
+            target_count=graphstm_target,
             config=flashvid_config,
         )
-        if context_indices.numel() > 0:
-            final_tokens.append(context_tokens)
-            keep_indices.append(context_indices)
-        cursor = end
+        if graphstm_indices.numel() > 0:
+            keep_indices.append(graphstm_indices)
 
-    if not final_tokens:
+    if not keep_indices:
         hidden_states = video_features.reshape(-1, feat_dim)[:1]
         selected = torch.zeros((1,), dtype=torch.long, device=device)
     else:
@@ -335,10 +339,10 @@ def fastgraphvid_compression(
     flashvid_config.vision_token_length = int(hidden_states.shape[0])
     flashvid_config.llm_token_length = None
     flashvid_config.visual_token_length = int(hidden_states.shape[0])
-    setattr(flashvid_config, "last_fastgraph_segment_count", float(len(segment_sizes)))
+    setattr(flashvid_config, "last_fastgraph_ats_ratio", float(ats_ratio))
     setattr(flashvid_config, "last_fastgraph_frame_retain_num", float(frame_retain_num))
-    setattr(flashvid_config, "last_fastgraph_frame_salient_num", float(frame_salient_num))
-    setattr(flashvid_config, "last_fastgraph_frame_context_num", float(frame_context_num))
+    setattr(flashvid_config, "last_fastgraph_frame_ats_num", float(frame_ats_num))
+    setattr(flashvid_config, "last_fastgraph_frame_graphstm_num", float(frame_graphstm_num))
     _record_adapter_metrics(
         flashvid_config,
         variant="fastgraphvid",

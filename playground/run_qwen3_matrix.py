@@ -220,6 +220,8 @@ def _build_command(
             str(args.fastvid_DTM_p),
             "--fastvid_DTM_beta",
             str(args.fastvid_DTM_beta),
+            "--fastgraph_ats_ratio",
+            str(args.fastgraph_ats_ratio),
             "--fastgraph_temporal_radius",
             str(args.fastgraph_temporal_radius),
             "--fastgraph_temporal_skip",
@@ -501,6 +503,7 @@ def main() -> None:
     parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
     parser.add_argument("--fastvid_DTM_p", type=int, default=4)
     parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
+    parser.add_argument("--fastgraph_ats_ratio", type=float, default=0.60)
     parser.add_argument("--fastgraph_temporal_radius", type=int, default=1)
     parser.add_argument("--fastgraph_temporal_skip", type=int, default=1)
     parser.add_argument("--fastgraph_temporal_topk", type=int, default=2)
