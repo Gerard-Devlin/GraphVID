@@ -291,32 +291,128 @@ class BenchmarkArgs:
     summary_output_json: str = field(default="logs/efficiency/summary_all_metrics.json")
 
 
-def _extract_choice_letter(text: str) -> str:
+def _normalize_choice_letters(valid_choices: str | list[str] | tuple[str, ...] | None) -> str:
+    if not valid_choices:
+        return "ABCD"
+    letters: list[str] = []
+    iterable = valid_choices if not isinstance(valid_choices, str) else list(valid_choices)
+    for item in iterable:
+        letter = str(item).strip().upper()[:1]
+        if re.fullmatch(r"[A-Z]", letter) and letter not in letters:
+            letters.append(letter)
+    return "".join(letters) or "ABCD"
+
+
+def _strip_choice_prefix(text: str) -> str:
+    return re.sub(r"^\s*[A-Z]\s*[\.\)]\s*", "", str(text or "").strip(), flags=re.IGNORECASE)
+
+
+def _extract_labeled_option(option) -> tuple[str, str] | None:
+    if option is None:
+        return None
+    text = str(option).strip()
+    if not text:
+        return None
+    match = re.match(r"^\s*([A-Z])\s*[\.\)]\s*(.+?)\s*$", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).upper(), match.group(2).strip()
+
+
+def _infer_choice_info(sample: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    option_text_by_letter: dict[str, str] = {}
+
+    def add_option(letter: str, option_text: str = ""):
+        letter = (letter or "").strip().upper()[:1]
+        if not re.fullmatch(r"[A-Z]", letter):
+            return
+        option_text = _strip_choice_prefix(option_text)
+        option_text_by_letter.setdefault(letter, option_text)
+
+    for key in ("choice_labels", "choices_labels", "valid_choices"):
+        labels = sample.get(key)
+        if isinstance(labels, (list, tuple)):
+            for label in labels:
+                add_option(str(label))
+
+    for key in ("option", "options", "choices"):
+        options = sample.get(key)
+        if isinstance(options, dict):
+            for label, option_text in options.items():
+                add_option(str(label), str(option_text))
+        elif isinstance(options, (list, tuple)):
+            for idx, option in enumerate(options):
+                labeled = _extract_labeled_option(option)
+                if labeled:
+                    add_option(*labeled)
+                elif idx < 26:
+                    add_option(chr(ord("A") + idx), str(option))
+
+    prompt = str(sample.get("input") or "")
+    for match in re.finditer(r"(?m)^\s*([A-Z])\s*[\.\)]\s*(.+?)\s*$", prompt):
+        add_option(match.group(1), match.group(2))
+
+    answer = str(sample.get("answer") or "").strip().upper()
+    if re.fullmatch(r"[A-Z]", answer):
+        add_option(answer)
+
+    return _normalize_choice_letters(list(option_text_by_letter.keys())), option_text_by_letter
+
+
+def _extract_choice_letter(
+    text: str,
+    valid_choices: str | list[str] | tuple[str, ...] | None = None,
+    option_text_by_letter: dict[str, str] | None = None,
+) -> str:
     if not text:
         return ""
-    t = (text or "").strip().upper()
+    raw = (text or "").strip()
+    t = raw.upper()
     if not t:
         return ""
+    valid_choice_letters = _normalize_choice_letters(valid_choices)
+    choice_class = re.escape(valid_choice_letters)
 
     # 1) Strict single-token answer forms: "A", "(B)", "C.", "[D]".
-    m = re.match(r"^\s*[\(\[]?\s*([ABCD])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?[\s]*$", t)
+    m = re.match(rf"^\s*[\(\[]?\s*([{choice_class}])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?[\s]*$", t)
     if m:
         return m.group(1)
 
     # 2) Common prefixed forms: "Answer: B", "Option C", "Choice is D".
     prefixed_patterns = [
-        r"\b(?:ANSWER|OPTION|CHOICE)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
-        r"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([ABCD])\b",
+        rf"\b(?:ANSWER|OPTION|CHOICE)\b\s*(?:IS)?\s*[:=\-]?\s*[\(\[]?\s*([{choice_class}])\b",
+        rf"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([{choice_class}])\b",
     ]
     for pat in prefixed_patterns:
         m = re.search(pat, t)
         if m:
             return m.group(1)
 
-    # 3) Fallback: first standalone option token (avoid letters inside words).
-    m = re.search(r"\b([ABCD])\b", t)
+    # 3) Standalone option tokens, including LMMS-Eval-style "(A)", "A ", and "A.".
+    m = re.search(rf"[\(\[]\s*([{choice_class}])\s*[\)\]]", t)
     if m:
         return m.group(1)
+    m = re.search(rf"\b([{choice_class}])\s*\.", t)
+    if m:
+        return m.group(1)
+    m = re.search(rf"\b([{choice_class}])\b", t)
+    if m:
+        return m.group(1)
+
+    # 4) LMMS-Eval also falls back to option text matching for verbose generations.
+    if option_text_by_letter:
+        raw_lower = raw.lower()
+        matches: list[tuple[int, str]] = []
+        for letter in valid_choice_letters:
+            option_text = _strip_choice_prefix(option_text_by_letter.get(letter, ""))
+            if len(option_text.split()) < 2:
+                continue
+            idx = raw_lower.find(option_text.lower())
+            if idx >= 0:
+                matches.append((idx, letter))
+        if matches:
+            matches.sort(key=lambda item: item[0])
+            return matches[0][1]
     return ""
 
 
@@ -674,9 +770,14 @@ def _prepare_inputs(model_bundle, args: BenchmarkArgs, sample: dict[str, Any]):
     video_path = _resolve_sample_video_path(sample, args.hf_home)
     prompt_text = sample["input"]
     backend = model_bundle["backend"]
+    valid_choice_letters, option_text_by_letter = _infer_choice_info(sample)
     if backend == "llava":
-        return _prepare_llava_inputs(model_bundle, args, prompt_text, video_path)
-    return _prepare_qwen_inputs(model_bundle, args, prompt_text, video_path)
+        prepared = _prepare_llava_inputs(model_bundle, args, prompt_text, video_path)
+    else:
+        prepared = _prepare_qwen_inputs(model_bundle, args, prompt_text, video_path)
+    prepared["valid_choice_letters"] = valid_choice_letters
+    prepared["option_text_by_letter"] = option_text_by_letter
+    return prepared
 
 
 def _clone_inputs(backend: str, prepared_inputs):
@@ -699,7 +800,13 @@ def _clone_inputs(backend: str, prepared_inputs):
     return cloned
 
 
-def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) -> tuple[str, int]:
+def _decode_prediction(
+    model_bundle,
+    output_ids: torch.Tensor,
+    prompt_len: int,
+    valid_choice_letters: str | list[str] | tuple[str, ...] | None = None,
+    option_text_by_letter: dict[str, str] | None = None,
+) -> tuple[str, int]:
     generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
     gen_tokens = int(generated.shape[1])
     if gen_tokens == 0:
@@ -709,19 +816,19 @@ def _decode_prediction(model_bundle, output_ids: torch.Tensor, prompt_len: int) 
     if backend == "llava":
         tokenizer = model_bundle["tokenizer"]
         text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
-        answer = _extract_choice_letter(text)
+        answer = _extract_choice_letter(text, valid_choice_letters, option_text_by_letter)
         if answer:
             return answer, gen_tokens
         first_token_id = int(generated[0, 0].item())
         first_token = tokenizer.decode([first_token_id], skip_special_tokens=True)
-        return _extract_choice_letter(first_token), gen_tokens
+        return _extract_choice_letter(first_token, valid_choice_letters, option_text_by_letter), gen_tokens
 
     processor = model_bundle["processor"]
     text = processor.batch_decode(generated, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
-    answer = _extract_choice_letter(text)
+    answer = _extract_choice_letter(text, valid_choice_letters, option_text_by_letter)
     if answer:
         return answer, gen_tokens
-    return _extract_choice_letter(text[:8]), gen_tokens
+    return _extract_choice_letter(text[:8], valid_choice_letters, option_text_by_letter), gen_tokens
 
 
 def _safe_int_metric(value, fallback: int) -> int:
@@ -947,7 +1054,13 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             )
 
         output_ids, latency_ms = _timed_call(_generate)
-        answer, gen_tokens = _decode_prediction(model_bundle, output_ids, prompt_len)
+        answer, gen_tokens = _decode_prediction(
+            model_bundle,
+            output_ids,
+            prompt_len,
+            prepared_inputs.get("valid_choice_letters"),
+            prepared_inputs.get("option_text_by_letter"),
+        )
         if run_idx == 0:
             pred_answer = answer
         latencies.append(float(latency_ms))
