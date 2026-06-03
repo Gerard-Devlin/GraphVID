@@ -524,6 +524,23 @@ def _move_structure_to_device(obj: Any, device: torch.device) -> Any:
     return obj
 
 
+def _sample_frame_paths_from_dir(frame_dir: str, num_frames: int) -> list[str]:
+    path = Path(frame_dir)
+    frame_paths = sorted(
+        [
+            p
+            for p in path.iterdir()
+            if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        ]
+    )
+    if not frame_paths:
+        raise FileNotFoundError(f"missing image frames under video frame directory: {path}")
+    if len(frame_paths) > num_frames > 0:
+        indices = np.linspace(0, len(frame_paths) - 1, num_frames, dtype=int)
+        frame_paths = [frame_paths[int(i)] for i in indices]
+    return [p.resolve().as_uri() for p in frame_paths]
+
+
 def _resolve_video_path(video_id: str, hf_home_override: str | None) -> str:
     if hf_home_override:
         hf_home = Path(hf_home_override)
@@ -698,13 +715,17 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
     except ImportError as exc:
         raise ImportError("qwen_vl_utils is required for Qwen video processing") from exc
 
+    video_source: str | list[str]
+    video_source = _sample_frame_paths_from_dir(video_path, args.num_frames) if Path(video_path).is_dir() else video_path
+
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {
             "role": "user",
             "content": [
                 {
-                    "video": video_path,
+                    "type": "video",
+                    "video": video_source,
                     "max_pixels": args.max_pixels,
                     "min_pixels": args.min_pixels,
                     "nframes": args.num_frames,
