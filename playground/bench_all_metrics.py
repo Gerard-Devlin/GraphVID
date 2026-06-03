@@ -541,6 +541,59 @@ def _sample_frame_paths_from_dir(frame_dir: str, num_frames: int) -> list[str]:
     return [p.resolve().as_uri() for p in frame_paths]
 
 
+def _build_qwen_messages(
+    prompt_text: str,
+    video_source: str | list[str],
+    args: BenchmarkArgs,
+    nframes: int | None,
+) -> list[dict[str, Any]]:
+    video_content: dict[str, Any] = {
+        "type": "video",
+        "video": video_source,
+        "max_pixels": args.max_pixels,
+        "min_pixels": args.min_pixels,
+    }
+    if nframes is not None and nframes > 0:
+        video_content["nframes"] = int(nframes)
+    return [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {
+            "role": "user",
+            "content": [
+                video_content,
+                {"type": "text", "text": prompt_text},
+            ],
+        },
+    ]
+
+
+def _parse_qwen_nframes_limit(error: ValueError) -> int | None:
+    match = re.search(r"nframes should in interval \[\d+,\s*(\d+)\], but got (\d+)", str(error))
+    if not match:
+        return None
+    max_allowed = int(match.group(1))
+    requested = int(match.group(2))
+    if max_allowed < 2 or requested <= max_allowed:
+        return None
+    return max_allowed
+
+
+def _process_qwen_vision_info(process_vision_info, messages: list[dict[str, Any]], backend: str):
+    try:
+        # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
+        if backend == "qwen3_vl":
+            return process_vision_info(
+                messages,
+                return_video_kwargs=True,
+                return_video_metadata=True,
+                image_patch_size=16,
+            )
+        return process_vision_info(messages, return_video_kwargs=True)
+    except TypeError:
+        # Backward compatibility for older qwen_vl_utils versions.
+        return process_vision_info(messages, return_video_kwargs=True)
+
+
 def _resolve_video_path(video_id: str, hf_home_override: str | None) -> str:
     if hf_home_override:
         hf_home = Path(hf_home_override)
@@ -717,40 +770,23 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
 
     video_source: str | list[str]
     video_source = _sample_frame_paths_from_dir(video_path, args.num_frames) if Path(video_path).is_dir() else video_path
-
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "video",
-                    "video": video_source,
-                    "max_pixels": args.max_pixels,
-                    "min_pixels": args.min_pixels,
-                    "nframes": args.num_frames,
-                },
-                {"type": "text", "text": prompt_text},
-            ],
-        },
-    ]
+    requested_nframes = int(args.num_frames or 0)
+    if isinstance(video_source, list) and requested_nframes > 0:
+        requested_nframes = min(requested_nframes, len(video_source))
 
     video_kwargs: dict[str, Any] = {}
     video_metadata = None
-    try:
-        # Qwen3-VL prefers explicit video metadata for timestamp-aware prompts.
-        if backend == "qwen3_vl":
-            images, videos, video_kwargs = process_vision_info(
-                messages,
-                return_video_kwargs=True,
-                return_video_metadata=True,
-                image_patch_size=16,
-            )
-        else:
-            images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-    except TypeError:
-        # Backward compatibility for older qwen_vl_utils versions.
-        images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    messages = _build_qwen_messages(prompt_text, video_source, args, requested_nframes)
+    while True:
+        try:
+            images, videos, video_kwargs = _process_qwen_vision_info(process_vision_info, messages, backend)
+            break
+        except ValueError as exc:
+            fallback_nframes = _parse_qwen_nframes_limit(exc)
+            if fallback_nframes is None or fallback_nframes == requested_nframes:
+                raise
+            requested_nframes = fallback_nframes
+            messages = _build_qwen_messages(prompt_text, video_source, args, requested_nframes)
 
     # qwen_vl_utils may return [(video_tensor, metadata), ...] when return_video_metadata=True.
     if videos is not None and len(videos) > 0 and isinstance(videos[0], tuple):
