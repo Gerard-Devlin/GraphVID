@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-import decord
 import numpy as np
 import torch
 from accelerate import Accelerator, DistributedType
@@ -51,6 +50,31 @@ def _safe_nframes_for_video(total_frames: Optional[int], requested: int) -> int:
     if total_frames >= 2:
         capped = max(2, min(capped, total_frames))
     return capped
+
+
+def _parse_qwen_nframes_limit(error: ValueError) -> Optional[int]:
+    match = re.search(r"nframes should in interval \[\d+,\s*(\d+)\], but got \d+", str(error))
+    if not match:
+        return None
+    max_allowed = int(match.group(1))
+    if max_allowed < 2:
+        return None
+    if max_allowed > 2 and max_allowed % 2 == 1:
+        max_allowed -= 1
+    return max(2, max_allowed)
+
+
+def _set_video_frame_limit(messages: List[List[dict]], nframes: int) -> None:
+    for message in messages:
+        for turn in message:
+            content = turn.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "video":
+                    part.pop("fps", None)
+                    part.pop("max_frames", None)
+                    part["nframes"] = int(nframes)
 
 
 def _release_video_file_cache(paths: List[str]) -> None:
@@ -529,14 +553,6 @@ class Qwen3_VL(lmms):
                     for visual in visual_list[i]:
                         if isinstance(visual, str) and visual.lower().endswith(VIDEO_SUFFIXES):  # Video file
                             video_paths_to_release.append(visual)
-                            total_frames = None
-                            vr = None
-                            try:
-                                vr = decord.VideoReader(visual)
-                                total_frames = len(vr)
-                            finally:
-                                if vr is not None:
-                                    del vr
                             video_item = {
                                 "type": "video",
                                 "video": visual,
@@ -545,9 +561,9 @@ class Qwen3_VL(lmms):
                             }
                             if self.fps is not None:
                                 video_item["fps"] = self.fps
-                                video_item["max_frames"] = _safe_nframes_for_video(total_frames, self.max_num_frames)
+                                video_item["max_frames"] = int(self.max_num_frames)
                             else:
-                                video_item["nframes"] = _safe_nframes_for_video(total_frames, self.max_num_frames)
+                                video_item["nframes"] = int(self.max_num_frames)
                             processed_visuals.append(video_item)
                         elif isinstance(visual, Image.Image):  # Handle both single and multiple images
                             processed_visuals.append(
@@ -591,12 +607,20 @@ class Qwen3_VL(lmms):
                 batched_messages.append(message)
             texts = self.processor.apply_chat_template(batched_messages, tokenize=False, add_generation_prompt=True)
             # TODO: refactor code to allow return_video_kwargs and return_video_metadata
-            image_inputs, video_inputs = process_vision_info(
-                batched_messages,
-                return_video_kwargs=False,
-                image_patch_size=16,
-                return_video_metadata=False,
-            )
+            while True:
+                try:
+                    image_inputs, video_inputs = process_vision_info(
+                        batched_messages,
+                        return_video_kwargs=False,
+                        image_patch_size=16,
+                        return_video_metadata=False,
+                    )
+                    break
+                except ValueError as exc:
+                    fallback_nframes = _parse_qwen_nframes_limit(exc)
+                    if fallback_nframes is None:
+                        raise
+                    _set_video_frame_limit(batched_messages, fallback_nframes)
             if video_inputs is not None:
                 total_frames = video_inputs[0].shape[0]
                 if total_frames > self.max_num_frames:
@@ -667,6 +691,7 @@ class Qwen3_VL(lmms):
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
+            del inputs, cont, generated_ids_trimmed, image_inputs, video_inputs
             for i, ans in enumerate(answers):
                 for term in until:
                     if len(term) > 0:
@@ -683,6 +708,9 @@ class Qwen3_VL(lmms):
                 # eval_logger.debug(f"Model Raw Response: {ans}")
                 # eval_logger.debug(f"Model Clean Response: {clean_ans}")
             if video_paths_to_release:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
                 _release_video_file_cache(video_paths_to_release)
                 gc.collect()
             # reorder this group of results back to original unsorted form
