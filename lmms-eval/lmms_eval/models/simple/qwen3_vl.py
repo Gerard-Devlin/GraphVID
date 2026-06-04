@@ -1,3 +1,5 @@
+import gc
+import os
 import re
 import sys
 from pathlib import Path
@@ -32,6 +34,40 @@ if not _has_qwen_vl:
 
 
 SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastvid", "visionzip", "fastgraphvid")
+VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv", ".webm")
+
+
+def _safe_nframes_for_video(total_frames: Optional[int], requested: int) -> int:
+    if total_frames is None:
+        return int(requested)
+    total_frames = int(total_frames)
+    requested = int(requested)
+    if total_frames <= 0:
+        return requested
+    capped = min(requested, total_frames)
+    if capped > 2 and capped % 2 == 1:
+        capped -= 1
+    if total_frames >= 2:
+        capped = max(2, min(capped, total_frames))
+    return capped
+
+
+def _release_video_file_cache(paths: List[str]) -> None:
+    if os.environ.get("LMMS_EVAL_FADVISE_DONTNEED", "1").lower() in {"0", "false", "no"}:
+        return
+    if not hasattr(os, "posix_fadvise") or not hasattr(os, "POSIX_FADV_DONTNEED"):
+        return
+    for path in dict.fromkeys(paths):
+        if not isinstance(path, str) or not os.path.isfile(path):
+            continue
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
 
 
 def _install_qwen3_baseline_adapter_patch() -> None:
@@ -452,6 +488,7 @@ class Qwen3_VL(lmms):
             split = split[0]
             visual_list = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]
             gen_kwargs = all_gen_kwargs[0]
+            video_paths_to_release = []
 
             # Set default until or update values from gen_kwargs if present
             until = gen_kwargs.get("until", [self.tokenizer.decode(self.eot_token_id)])
@@ -484,19 +521,28 @@ class Qwen3_VL(lmms):
                 processed_visuals = []
                 if visual_list[i] is not None:
                     for visual in visual_list[i]:
-                        if isinstance(visual, str) and visual.endswith((".mp4", ".avi", ".mov")):  # Video file
-                            vr = decord.VideoReader(visual)
-                            first_frame = vr[0].asnumpy()
-                            height, width = first_frame.shape[:2]
-                            # max_pixels = height * width
-                            processed_visuals.append(
-                                {
-                                    "type": "video",
-                                    "video": visual,
-                                    "max_pixels": self.max_pixels,
-                                    "min_pixels": self.min_pixels,
-                                }
-                            )
+                        if isinstance(visual, str) and visual.lower().endswith(VIDEO_SUFFIXES):  # Video file
+                            video_paths_to_release.append(visual)
+                            total_frames = None
+                            vr = None
+                            try:
+                                vr = decord.VideoReader(visual)
+                                total_frames = len(vr)
+                            finally:
+                                if vr is not None:
+                                    del vr
+                            video_item = {
+                                "type": "video",
+                                "video": visual,
+                                "max_pixels": self.max_pixels,
+                                "min_pixels": self.min_pixels,
+                            }
+                            if self.fps is not None:
+                                video_item["fps"] = self.fps
+                                video_item["max_frames"] = _safe_nframes_for_video(total_frames, self.max_num_frames)
+                            else:
+                                video_item["nframes"] = _safe_nframes_for_video(total_frames, self.max_num_frames)
+                            processed_visuals.append(video_item)
                         elif isinstance(visual, Image.Image):  # Handle both single and multiple images
                             processed_visuals.append(
                                 {
@@ -547,14 +593,15 @@ class Qwen3_VL(lmms):
             )
             if video_inputs is not None:
                 total_frames = video_inputs[0].shape[0]
-                indices = np.linspace(0, total_frames - 1, self.max_num_frames, dtype=int)
-                # Ensure unique indices if linspace produces duplicates for few frames
-                indices = np.unique(indices)
-                # Append the last frame index if not already included
-                if total_frames - 1 not in indices:
-                    indices = np.append(indices, total_frames - 1)
-                    indices = np.unique(indices)  # Ensure uniqueness again
-                video_inputs[0] = video_inputs[0][indices]
+                if total_frames > self.max_num_frames:
+                    indices = np.linspace(0, total_frames - 1, self.max_num_frames, dtype=int)
+                    # Ensure unique indices if linspace produces duplicates for few frames
+                    indices = np.unique(indices)
+                    # Append the last frame index if not already included
+                    if total_frames - 1 not in indices:
+                        indices = np.append(indices, total_frames - 1)
+                        indices = np.unique(indices)  # Ensure uniqueness again
+                    video_inputs[0] = video_inputs[0][indices]
             if self.batch_size > 1:
                 inputs = self.processor(
                     text=texts,
@@ -629,6 +676,9 @@ class Qwen3_VL(lmms):
                 # eval_logger.debug(f"Question: {context}")
                 # eval_logger.debug(f"Model Raw Response: {ans}")
                 # eval_logger.debug(f"Model Clean Response: {clean_ans}")
+            if video_paths_to_release:
+                _release_video_file_cache(video_paths_to_release)
+                gc.collect()
             # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)
 
