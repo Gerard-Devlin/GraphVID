@@ -1,4 +1,6 @@
 import re
+import sys
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import decord
@@ -27,6 +29,44 @@ from lmms_eval.models.model_utils.reasoning_model_utils import (
 process_vision_info, _has_qwen_vl = optional_import("qwen_vl_utils", "process_vision_info")
 if not _has_qwen_vl:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
+
+
+SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastvid", "visionzip", "fastgraphvid")
+
+
+def _install_qwen3_baseline_adapter_patch() -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    import flashvid.modeling_qwen3_vl as modeling_qwen3_vl
+    from playground.qwen3_baseline_adapters import adapter_baseline_compression
+
+    original = getattr(
+        modeling_qwen3_vl,
+        "_lmms_eval_original_flashvid_compression",
+        modeling_qwen3_vl.flashvid_compression,
+    )
+    modeling_qwen3_vl._lmms_eval_original_flashvid_compression = original
+
+    def patched_flashvid_compression(
+        *,
+        video_features,
+        cls_attention,
+        flashvid_config,
+        question_features=None,
+    ):
+        variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+        if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
+            return adapter_baseline_compression(video_features, cls_attention, flashvid_config)
+        return original(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
+
+    modeling_qwen3_vl.flashvid_compression = patched_flashvid_compression
 
 
 @register_model("qwen3_vl")
@@ -63,6 +103,7 @@ class Qwen3_VL(lmms):
         complementary_segment: bool = True,
         # ADTS and TSTM parameters
         token_selection_method: str = "attn_div_v2",
+        flashvid_token_selection_method: Optional[str] = None,
         alpha: float = 0.7,
         temporal_threshold: float = 0.8,
         dynamic_temporal_threshold: bool = False,
@@ -78,7 +119,34 @@ class Qwen3_VL(lmms):
         question_aware_reweighting: bool = False,
         question_reweight_beta: float = 0.35,
         graph_topk: int = 4,
+        graph_temporal_topk: Optional[int] = None,
         graph_temporal_radius: int = 1,
+        graph_temporal_skip: int = 1,
+        graph_merge_protect_ratio: float = 0.15,
+        graph_merge_target_ratio: float = 0.65,
+        graph_merge_representative: str = "medoid",
+        graph_final_tokens_per_frame: int = 0,
+        graph_final_frame_floor_ratio: float = 0.55,
+        graph_skip_spatial_merge_when_capped: bool = True,
+        fastgraph_ats_ratio: float = 0.60,
+        fastgraph_budget_uses_expansion: bool = True,
+        fastgraph_temporal_radius: int = 1,
+        fastgraph_temporal_skip: int = 1,
+        fastgraph_temporal_topk: int = 2,
+        fastgraph_edge_threshold: float = 0.0,
+        fastgraph_protect_ratio: float = 0.15,
+        fastgraph_attn_weight: float = 0.55,
+        fastgraph_novelty_weight: float = 0.30,
+        fastgraph_density_weight: float = 0.15,
+        adapter_budget_uses_expansion: bool = True,
+        external_budget_uses_expansion: bool = True,
+        fastvid_DySeg_c: int = 8,
+        fastvid_DySeg_tau: float = 0.90,
+        fastvid_DySeg_ignore: float = 0.95,
+        fastvid_STPrune_d: float = 0.40,
+        fastvid_DTM_p: int = 4,
+        fastvid_DTM_beta: float = 0.60,
+        visionzip_dominant_ratio: float = 0.85,
         slot_base_roles: int = 5,
         slot_max_per_segment: int = 64,
         slot_role_allocation: str = "motion,interaction,detail,scene,background",
@@ -162,6 +230,16 @@ class Qwen3_VL(lmms):
         if enable_flashvid:
             from flashvid import flashvid
 
+            variant = str(compression_variant).strip().lower()
+            effective_token_selection_method = flashvid_token_selection_method or token_selection_method
+            flashvid_init_variant = variant
+            if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
+                _install_qwen3_baseline_adapter_patch()
+                # Install the standard Qwen3 FlashVID hook first, then switch
+                # runtime compression through flashvid_config. This preserves
+                # each adapter algorithm while using the official lmms-eval path.
+                flashvid_init_variant = "flashvid"
+
             self._model = flashvid(
                 model=self._model,
                 retention_ratio=retention_ratio,
@@ -170,7 +248,7 @@ class Qwen3_VL(lmms):
                 segment_threshold=segment_threshold,
                 min_segment_num=min_segment_num,
                 complementary_segment=complementary_segment,
-                token_selection_method=token_selection_method,
+                token_selection_method=effective_token_selection_method,
                 alpha=alpha,
                 temporal_threshold=temporal_threshold,
                 dynamic_temporal_threshold=dynamic_temporal_threshold,
@@ -181,11 +259,28 @@ class Qwen3_VL(lmms):
                 temporal_local_radius=temporal_local_radius,
                 temporal_hysteresis=temporal_hysteresis,
                 min_keep_per_frame=min_keep_per_frame,
-                compression_variant=compression_variant,
+                compression_variant=flashvid_init_variant,
                 question_aware_reweighting=question_aware_reweighting,
                 question_reweight_beta=question_reweight_beta,
-                graph_topk=graph_topk,
+                graph_temporal_topk=graph_temporal_topk if graph_temporal_topk is not None else graph_topk,
                 graph_temporal_radius=graph_temporal_radius,
+                graph_temporal_skip=graph_temporal_skip,
+                graph_merge_protect_ratio=graph_merge_protect_ratio,
+                graph_merge_target_ratio=graph_merge_target_ratio,
+                graph_merge_representative=graph_merge_representative,
+                graph_final_tokens_per_frame=graph_final_tokens_per_frame,
+                graph_final_frame_floor_ratio=graph_final_frame_floor_ratio,
+                graph_skip_spatial_merge_when_capped=graph_skip_spatial_merge_when_capped,
+                fastgraph_ats_ratio=fastgraph_ats_ratio,
+                fastgraph_budget_uses_expansion=fastgraph_budget_uses_expansion,
+                fastgraph_temporal_radius=fastgraph_temporal_radius,
+                fastgraph_temporal_skip=fastgraph_temporal_skip,
+                fastgraph_temporal_topk=fastgraph_temporal_topk,
+                fastgraph_edge_threshold=fastgraph_edge_threshold,
+                fastgraph_protect_ratio=fastgraph_protect_ratio,
+                fastgraph_attn_weight=fastgraph_attn_weight,
+                fastgraph_novelty_weight=fastgraph_novelty_weight,
+                fastgraph_density_weight=fastgraph_density_weight,
                 slot_base_roles=slot_base_roles,
                 slot_max_per_segment=slot_max_per_segment,
                 slot_role_allocation=slot_role_allocation,
@@ -221,6 +316,27 @@ class Qwen3_VL(lmms):
                 decode_update_interval=decode_update_interval,
                 decode_start_layer=decode_start_layer,
             )
+            if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
+                cfg = getattr(self._model, "flashvid_config")
+                setattr(cfg, "compression_variant", variant)
+                setattr(cfg, "adapter_budget_uses_expansion", bool(adapter_budget_uses_expansion))
+                setattr(cfg, "external_budget_uses_expansion", bool(external_budget_uses_expansion))
+                setattr(cfg, "fastvid_DySeg_c", int(fastvid_DySeg_c))
+                setattr(cfg, "fastvid_DySeg_tau", float(fastvid_DySeg_tau))
+                setattr(cfg, "fastvid_DySeg_ignore", float(fastvid_DySeg_ignore))
+                setattr(cfg, "fastvid_STPrune_d", float(fastvid_STPrune_d))
+                setattr(cfg, "fastvid_DTM_p", int(fastvid_DTM_p))
+                setattr(cfg, "fastvid_DTM_beta", float(fastvid_DTM_beta))
+                setattr(cfg, "fastgraph_ats_ratio", float(fastgraph_ats_ratio))
+                setattr(cfg, "fastgraph_temporal_radius", int(fastgraph_temporal_radius))
+                setattr(cfg, "fastgraph_temporal_skip", int(fastgraph_temporal_skip))
+                setattr(cfg, "fastgraph_temporal_topk", int(fastgraph_temporal_topk))
+                setattr(cfg, "fastgraph_edge_threshold", float(fastgraph_edge_threshold))
+                setattr(cfg, "fastgraph_protect_ratio", float(fastgraph_protect_ratio))
+                setattr(cfg, "fastgraph_attn_weight", float(fastgraph_attn_weight))
+                setattr(cfg, "fastgraph_novelty_weight", float(fastgraph_novelty_weight))
+                setattr(cfg, "fastgraph_density_weight", float(fastgraph_density_weight))
+                setattr(cfg, "visionzip_dominant_ratio", float(visionzip_dominant_ratio))
             # print(f"[INFO] Enable FlashVID with retention_ratio={retention_ratio}, expansion={expansion}, do_segment={do_segment}, segment_threshold={segment_threshold}, min_segment_num={min_segment_num}, complementary_segment={complementary_segment}, token_selection_method={token_selection_method}, alpha={alpha}, temporal_threshold={temporal_threshold}, pruning_layer={pruning_layer}, llm_retention_ratio={llm_retention_ratio}")
 
         self._model.eval()
