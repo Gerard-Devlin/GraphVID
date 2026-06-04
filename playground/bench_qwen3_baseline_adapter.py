@@ -119,6 +119,7 @@ def _build_bench_args(cli: argparse.Namespace):
     args.limit = cli.limit
     args.shuffle = False
     args.duration_filter = cli.duration_filter
+    args.videomme_eval_style = cli.videomme_eval_style
     args.num_frames = cli.num_frames
     args.min_pixels = cli.min_pixels
     args.max_pixels = cli.max_pixels
@@ -163,6 +164,7 @@ def main() -> None:
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--limit", type=int, default=900)
     parser.add_argument("--duration_filter", default="short")
+    parser.add_argument("--videomme_eval_style", default="jsonl")
     parser.add_argument("--num_frames", type=int, default=32)
     parser.add_argument("--min_pixels", type=int, default=64 * 28 * 28)
     parser.add_argument("--max_pixels", type=int, default=256 * 28 * 28)

@@ -205,6 +205,8 @@ def _build_command(
             method_tag,
             "--duration_filter",
             args.duration_filter,
+            "--videomme_eval_style",
+            args.videomme_eval_style,
             "--token_selection_method",
             args.token_selection_method,
             "--adapter_budget_uses_expansion" if args.adapter_budget_uses_expansion else "--no-adapter_budget_uses_expansion",
@@ -269,6 +271,10 @@ def _build_command(
         str(total_limit),
         "--num_frames",
         str(args.num_frames),
+        "--min_pixels",
+        str(args.min_pixels),
+        "--max_pixels",
+        str(args.max_pixels),
         "--num_warmup",
         str(args.num_warmup),
         "--num_runs",
@@ -291,6 +297,8 @@ def _build_command(
         str(args.llm_retention_ratio),
         "--tag",
         method_tag,
+        "--videomme_eval_style",
+        args.videomme_eval_style,
     ]
     if args.gpu_ids:
         cmd.extend(["--gpu_ids", args.gpu_ids])
@@ -461,6 +469,7 @@ def main() -> None:
     parser.add_argument("--min_pixels", type=int, default=64 * 28 * 28)
     parser.add_argument("--max_pixels", type=int, default=256 * 28 * 28)
     parser.add_argument("--duration_filter", default="")
+    parser.add_argument("--videomme_eval_style", default="jsonl")
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)

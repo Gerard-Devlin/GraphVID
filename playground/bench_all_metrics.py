@@ -39,6 +39,16 @@ class BenchmarkArgs:
     num_frames: int = field(default=64)
     max_pixels: int = field(default=256 * 28 * 28)
     min_pixels: int = field(default=64 * 28 * 28)
+    videomme_eval_style: str = field(
+        default="jsonl",
+        metadata={
+            "help": (
+                "VideoMME prompt/parser style: jsonl keeps sample['input']; "
+                "lmms_eval_default rebuilds the default lmms-eval prompt; "
+                "lmms_eval_qwen3 rebuilds the qwen3_vl-specific lmms-eval prompt."
+            )
+        },
+    )
 
     # Runtime
     num_warmup: int = field(default=1)
@@ -357,6 +367,128 @@ def _infer_choice_info(sample: dict[str, Any]) -> tuple[str, dict[str, str]]:
         add_option(answer)
 
     return _normalize_choice_letters(list(option_text_by_letter.keys())), option_text_by_letter
+
+
+def _videomme_eval_style(args: BenchmarkArgs) -> str:
+    return str(getattr(args, "videomme_eval_style", "jsonl") or "jsonl").strip().lower()
+
+
+def _is_videomme_sample(sample: dict[str, Any]) -> bool:
+    dataset = str(sample.get("dataset") or "").strip().lower()
+    if dataset == "videomme":
+        return True
+    return (
+        bool(sample.get("videoID"))
+        and str(sample.get("duration") or "").strip().lower() in {"short", "medium", "long"}
+        and ("task_category" in sample or "sub_category" in sample)
+    )
+
+
+def _parse_videomme_question_options(sample: dict[str, Any]) -> tuple[str, list[str]]:
+    question = str(sample.get("question") or "").strip()
+    raw_options = sample.get("options")
+    options: list[str] = []
+
+    if isinstance(raw_options, dict):
+        for label, text in raw_options.items():
+            label_text = str(label).strip().upper()[:1]
+            option_text = str(text).strip()
+            if re.fullmatch(r"[A-Z]", label_text) and not re.match(r"^\s*[A-Z]\s*[\.\)]", option_text):
+                options.append(f"{label_text}. {option_text}")
+            elif option_text:
+                options.append(option_text)
+    elif isinstance(raw_options, (list, tuple)):
+        for idx, text in enumerate(raw_options):
+            option_text = str(text).strip()
+            if option_text:
+                if not re.match(r"^\s*[A-Z]\s*[\.\)]", option_text) and idx < 26:
+                    option_text = f"{chr(ord('A') + idx)}. {option_text}"
+                options.append(option_text)
+
+    if question and options:
+        return question, options
+
+    prompt = str(sample.get("input") or "").strip()
+    if not prompt:
+        return question, options
+
+    # Existing JSONLs store the full prompt. Recover the doc fields so the
+    # lmms-eval prompt can be rebuilt exactly for the selected model family.
+    prompt = re.split(
+        r"\n\s*(?:Answer with the option's letter from the given choices directly\.|"
+        r"The best answer is:|Answer with the option letter only\.)\s*$",
+        prompt,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+    prompt = re.sub(r"(?is)^\s*Select the best answer.*?correct option\.\s*", "", prompt).strip()
+    prompt = re.sub(r"(?is)^\s*Question:\s*", "", prompt).strip()
+    prompt = re.sub(r"(?im)^\s*Options:\s*$", "", prompt).strip()
+
+    option_matches = list(re.finditer(r"(?m)^\s*([A-Z])\s*[\.\)]\s*(.+?)\s*$", prompt))
+    if option_matches:
+        if not question:
+            question = prompt[: option_matches[0].start()].strip()
+        if not options:
+            for match in option_matches:
+                options.append(f"{match.group(1).upper()}. {match.group(2).strip()}")
+    elif not question:
+        question = prompt
+    return question, options
+
+
+def _build_videomme_prompt(sample: dict[str, Any], args: BenchmarkArgs) -> str:
+    style = _videomme_eval_style(args)
+    if style in {"jsonl", "current", "legacy"} or not _is_videomme_sample(sample):
+        return str(sample["input"])
+
+    question, options = _parse_videomme_question_options(sample)
+    if not question or not options:
+        # Keep the old prompt if the JSONL is not VideoMME-shaped.
+        return str(sample["input"])
+
+    option_block = "\n".join(options)
+    if style in {"lmms_eval", "lmms_eval_default", "lmms-eval"}:
+        option_prompt = (
+            "Select the best answer to the following multiple-choice question based on the video and the subtitles.\n"
+            "Respond with only the letter (A, B, C, or D) of the correct option."
+        )
+        post_prompt = "\nAnswer with the option's letter from the given choices directly."
+        return option_prompt + "\n" + question + "\n" + option_block + "\n" + post_prompt
+    if style in {"lmms_eval_qwen3", "lmms_eval_qwen3_vl", "qwen3_lmms_eval"}:
+        return f"Question: {question}\nOptions:\n{option_block}\nAnswer with the option letter only."
+    raise ValueError(
+        f"unsupported videomme_eval_style={style!r}; "
+        "choose jsonl, lmms_eval_default, or lmms_eval_qwen3"
+    )
+
+
+def _extract_choice_letter_lmms_eval(text: str) -> str:
+    if not text:
+        return ""
+    try:
+        from lmms_eval.tasks._task_utils.mcq_extract import extract_mcq_answer
+
+        return str(extract_mcq_answer(text, choices=["A", "B", "C", "D"]) or "").strip().upper()[:1]
+    except Exception:
+        # Fallback mirrors the common lmms-eval MCQ extraction behavior without
+        # adding option-text matching, so it is less permissive than our legacy parser.
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        patterns = [
+            r"^\s*[\(\[]?\s*([A-Da-d])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?\s*$",
+            r"\b(?:ANSWER|OPTION|CHOICE)\b\s*(?:IS)?\s*[:=\-]?\s*[\(\[]?\s*([A-Da-d])\b",
+            r"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([A-Da-d])\b",
+            r"[\(\[]\s*([A-Da-d])\s*[\)\]]",
+            r"\b([A-Da-d])\s*\.",
+            r"\b([A-Da-d])\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, raw, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+        return ""
 
 
 def _extract_choice_letter(
@@ -803,6 +935,8 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
         "return_tensors": "pt",
         **video_kwargs,
     }
+    if backend == "qwen3_vl" and _videomme_eval_style(args).startswith("lmms_eval"):
+        processor_kwargs["do_resize"] = False
     if video_metadata is not None:
         processor_kwargs["video_metadata"] = video_metadata
 
@@ -825,7 +959,7 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
 
 def _prepare_inputs(model_bundle, args: BenchmarkArgs, sample: dict[str, Any]):
     video_path = _resolve_sample_video_path(sample, args.hf_home)
-    prompt_text = sample["input"]
+    prompt_text = _build_videomme_prompt(sample, args)
     backend = model_bundle["backend"]
     valid_choice_letters, option_text_by_letter = _infer_choice_info(sample)
     if backend == "llava":
@@ -863,6 +997,7 @@ def _decode_prediction(
     prompt_len: int,
     valid_choice_letters: str | list[str] | tuple[str, ...] | None = None,
     option_text_by_letter: dict[str, str] | None = None,
+    videomme_eval_style: str = "jsonl",
 ) -> tuple[str, int]:
     generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
     gen_tokens = int(generated.shape[1])
@@ -870,9 +1005,12 @@ def _decode_prediction(
         return "", 0
 
     backend = model_bundle["backend"]
+    use_lmms_parser = str(videomme_eval_style or "").strip().lower().startswith("lmms_eval")
     if backend == "llava":
         tokenizer = model_bundle["tokenizer"]
         text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+        if use_lmms_parser:
+            return _extract_choice_letter_lmms_eval(text), gen_tokens
         answer = _extract_choice_letter(text, valid_choice_letters, option_text_by_letter)
         if answer:
             return answer, gen_tokens
@@ -882,6 +1020,8 @@ def _decode_prediction(
 
     processor = model_bundle["processor"]
     text = processor.batch_decode(generated, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
+    if use_lmms_parser:
+        return _extract_choice_letter_lmms_eval(text), gen_tokens
     answer = _extract_choice_letter(text, valid_choice_letters, option_text_by_letter)
     if answer:
         return answer, gen_tokens
@@ -1117,6 +1257,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             prompt_len,
             prepared_inputs.get("valid_choice_letters"),
             prepared_inputs.get("option_text_by_letter"),
+            _videomme_eval_style(args),
         )
         if run_idx == 0:
             pred_answer = answer
@@ -1275,6 +1416,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "task_category": sample.get("task_category"),
         "sub_category": sample.get("sub_category"),
         "answer": sample.get("answer"),
+        "eval_style": _videomme_eval_style(args),
         "pred_answer": "",
         "correct": None,
         "latency_ms": None,
@@ -2261,6 +2403,7 @@ def _print_header(args: BenchmarkArgs, backend: str):
     print(f"Frames        : {args.num_frames}")
     print(f"Warmup/Runs   : {args.num_warmup}/{args.num_runs}")
     print(f"Max new tokens: {args.max_new_tokens}")
+    print(f"VideoMME eval : {_videomme_eval_style(args)}")
     print(
         "Run phases    : "
         f"baseline={args.run_baseline}, flashvid={args.run_flashvid}, "
@@ -2620,7 +2763,16 @@ def run(args: BenchmarkArgs):
         finally:
             _release_phase_bundle(phase_bundle)
 
-    summary: dict[str, Any] = {"comparison": {}}
+    summary: dict[str, Any] = {
+        "config": {
+            "videomme_eval_style": _videomme_eval_style(args),
+            "num_frames": int(args.num_frames),
+            "min_pixels": int(args.min_pixels),
+            "max_pixels": int(args.max_pixels),
+            "max_new_tokens": int(args.max_new_tokens),
+        },
+        "comparison": {},
+    }
     baseline_records = None
     flashvid_records = None
     ours_records = None
