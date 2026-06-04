@@ -1,4 +1,5 @@
 import gc
+import inspect
 import os
 import re
 import sys
@@ -276,7 +277,7 @@ class Qwen3_VL(lmms):
                 # each adapter algorithm while using the official lmms-eval path.
                 flashvid_init_variant = "flashvid"
 
-            self._model = flashvid(
+            flashvid_kwargs = dict(
                 model=self._model,
                 retention_ratio=retention_ratio,
                 expansion=expansion,
@@ -352,6 +353,11 @@ class Qwen3_VL(lmms):
                 decode_update_interval=decode_update_interval,
                 decode_start_layer=decode_start_layer,
             )
+            supported_flashvid_args = set(inspect.signature(flashvid).parameters)
+            dropped_flashvid_args = sorted(set(flashvid_kwargs) - supported_flashvid_args)
+            if dropped_flashvid_args:
+                eval_logger.debug(f"Dropping unsupported FlashVID wrapper args: {dropped_flashvid_args}")
+            self._model = flashvid(**{k: v for k, v in flashvid_kwargs.items() if k in supported_flashvid_args})
             if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
                 cfg = getattr(self._model, "flashvid_config")
                 setattr(cfg, "compression_variant", variant)
