@@ -28,6 +28,7 @@ LOG_SAMPLES_SUFFIX="${LOG_SAMPLES_SUFFIX:-qwen3_vl}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 GEN_KWARGS="${GEN_KWARGS:-max_new_tokens=16,temperature=0}"
 LIMIT="${LIMIT:-}"
+LOG_SAMPLES="${LOG_SAMPLES:-1}"
 
 MAX_NUM_FRAMES="${MAX_NUM_FRAMES:-32}"
 MIN_PIXELS="${MIN_PIXELS:-50176}"
@@ -138,10 +139,14 @@ for method in $(split_csv "$METHODS"); do
         --tasks "$task"
         --batch_size "$BATCH_SIZE"
         --gen_kwargs "$GEN_KWARGS"
-        --log_samples
-        --log_samples_suffix "${LOG_SAMPLES_SUFFIX}_${method}_r${retention_ratio}"
         --output_path "$OUTPUT_PATH"
       )
+      if [[ "$LOG_SAMPLES" == "1" || "$LOG_SAMPLES" == "true" || "$LOG_SAMPLES" == "True" ]]; then
+        cmd+=(
+          --log_samples
+          --log_samples_suffix "${LOG_SAMPLES_SUFFIX}_${method}_r${retention_ratio}"
+        )
+      fi
       if [[ -n "$LIMIT" ]]; then
         cmd+=(--limit "$LIMIT")
       fi
