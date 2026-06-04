@@ -6,11 +6,12 @@ import torch
 
 from flashvid.configuration_flashvid import FlashVidConfig
 
+from .curvevid import curvevid_compression
 from .fastvid import fastvid_compression
 from .fastgraphvid import fastgraphvid_compression
 from .visionzip import visionzip_compression
 
-SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastvid", "visionzip", "fastgraphvid")
+SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastvid", "visionzip", "fastgraphvid", "curvevid")
 
 
 def adapter_baseline_compression(
@@ -23,6 +24,8 @@ def adapter_baseline_compression(
         return fastvid_compression(video_features, cls_attention, flashvid_config)
     if variant == "fastgraphvid":
         return fastgraphvid_compression(video_features, cls_attention, flashvid_config)
+    if variant == "curvevid":
+        return curvevid_compression(video_features, cls_attention, flashvid_config)
     if variant == "visionzip":
         return visionzip_compression(video_features, cls_attention, flashvid_config)
     if variant == "prunevid":

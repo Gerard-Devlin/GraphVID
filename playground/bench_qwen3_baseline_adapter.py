@@ -10,7 +10,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid")
+SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid", "curvevid")
 
 
 def _install_adapter_compression_patch(method: str) -> None:
@@ -74,6 +74,9 @@ def _patch_bench_apply_ours(method: str, adapter_args: argparse.Namespace) -> No
         setattr(cfg, "fastgraph_attn_weight", float(adapter_args.fastgraph_attn_weight))
         setattr(cfg, "fastgraph_novelty_weight", float(adapter_args.fastgraph_novelty_weight))
         setattr(cfg, "fastgraph_density_weight", float(adapter_args.fastgraph_density_weight))
+        setattr(cfg, "curvevid_temperature", float(adapter_args.curvevid_temperature))
+        setattr(cfg, "curvevid_mix", float(adapter_args.curvevid_mix))
+        setattr(cfg, "curvevid_min_per_frame", int(adapter_args.curvevid_min_per_frame))
         setattr(cfg, "visionzip_dominant_ratio", float(adapter_args.visionzip_dominant_ratio))
         return model
 
@@ -194,6 +197,9 @@ def main() -> None:
     parser.add_argument("--fastgraph_attn_weight", type=float, default=0.55)
     parser.add_argument("--fastgraph_novelty_weight", type=float, default=0.30)
     parser.add_argument("--fastgraph_density_weight", type=float, default=0.15)
+    parser.add_argument("--curvevid_temperature", type=float, default=0.70)
+    parser.add_argument("--curvevid_mix", type=float, default=0.65)
+    parser.add_argument("--curvevid_min_per_frame", type=int, default=1)
     parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     cli = parser.parse_args()
 

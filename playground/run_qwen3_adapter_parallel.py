@@ -13,7 +13,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid")
+SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid", "curvevid")
 
 
 def _artifact_method_name(method: str) -> str:
@@ -192,6 +192,9 @@ def main() -> None:
     parser.add_argument("--fastgraph_attn_weight", type=float, default=0.55)
     parser.add_argument("--fastgraph_novelty_weight", type=float, default=0.30)
     parser.add_argument("--fastgraph_density_weight", type=float, default=0.15)
+    parser.add_argument("--curvevid_temperature", type=float, default=0.70)
+    parser.add_argument("--curvevid_mix", type=float, default=0.65)
+    parser.add_argument("--curvevid_min_per_frame", type=int, default=1)
     parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     args = parser.parse_args()
 
@@ -293,6 +296,12 @@ def main() -> None:
             str(args.fastgraph_novelty_weight),
             "--fastgraph_density_weight",
             str(args.fastgraph_density_weight),
+            "--curvevid_temperature",
+            str(args.curvevid_temperature),
+            "--curvevid_mix",
+            str(args.curvevid_mix),
+            "--curvevid_min_per_frame",
+            str(args.curvevid_min_per_frame),
             "--visionzip_dominant_ratio",
             str(args.visionzip_dominant_ratio),
         ]
