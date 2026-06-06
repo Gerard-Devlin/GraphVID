@@ -30,6 +30,8 @@ METHODS="${METHODS:-flashvid,fastgraphvid}"
 RATES="${RATES:-0.10}"
 SRC_JSONL="${SRC_JSONL:-assets/videomme.jsonl}"
 CHUNK_SIZE="${CHUNK_SIZE:-300}"
+FADVISE_INTERVAL="${FADVISE_INTERVAL:-20}"
+FADVISE_DURING_RUN="${FADVISE_DURING_RUN:-1}"
 TAG="${TAG:-qwen3_videomme_chunks_r10_${CHUNK_SIZE}_$(date +%Y%m%d_%H%M%S)}"
 RUN_DIR="${RUN_DIR:-logs/lmms_eval_videomme/${TAG}}"
 CHUNK_DIR="${RUN_DIR}/chunks"
@@ -84,6 +86,7 @@ YAML
 
 printf '[chunk-run] methods=%s rates=%s\n' "$METHODS" "$RATES"
 printf '[chunk-run] source=%s chunk_size=%s\n' "$SRC_JSONL" "$CHUNK_SIZE"
+printf '[chunk-run] fadvise_during_run=%s interval=%ss\n' "$FADVISE_DURING_RUN" "$FADVISE_INTERVAL"
 printf '[chunk-run] run_dir=%s\n' "$RUN_DIR"
 
 python - "$SRC_JSONL" "$CHUNK_DIR" "$CHUNK_SIZE" <<'PY'
@@ -161,6 +164,41 @@ record_mem() {
   } | tee -a "${RUN_DIR}/memory.log"
 }
 
+record_mem_quiet() {
+  local label="$1"
+  {
+    echo "=== ${label} ==="
+    date
+    cat /sys/fs/cgroup/memory.current 2>/dev/null || true
+    grep -E '^(anon|file|active_file|inactive_file) ' /sys/fs/cgroup/memory.stat 2>/dev/null || true
+  } >> "${RUN_DIR}/memory.log"
+}
+
+start_fadvise_loop() {
+  local label="$1"
+  case "$FADVISE_DURING_RUN" in
+    1|true|True|yes|Yes) ;;
+    *) return 0 ;;
+  esac
+  (
+    while true; do
+      sleep "$FADVISE_INTERVAL" || exit 0
+      printf '[fadvise-loop] label=%s\n' "$label" >> "${RUN_DIR}/memory.log"
+      fadvise_videos >> "${RUN_DIR}/memory.log" 2>&1 || true
+      record_mem_quiet "during_${label}"
+    done
+  ) &
+  echo "$!"
+}
+
+stop_fadvise_loop() {
+  local pid="${1:-}"
+  if [[ -n "$pid" ]]; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+}
+
 split_csv() {
   local text="$1"
   text="${text//,/ }"
@@ -191,6 +229,7 @@ for method in $(split_csv "$METHODS"); do
         "$method" "$rate" "$idx" "$start" "$end" "$count" | tee -a "${RUN_DIR}/launcher.log"
       record_mem "before_${method}_r${rate}_${name}"
 
+      janitor_pid="$(start_fadvise_loop "${method}_r${rate}_${name}")"
       set +e
       METHODS="$method" \
       RATES="$rate" \
@@ -198,6 +237,7 @@ for method in $(split_csv "$METHODS"); do
       OUTPUT_PATH="$out_dir" \
       bash scripts/qwen3_vl.sh > "$log" 2>&1
       code=$?
+      stop_fadvise_loop "$janitor_pid"
       set -e
 
       echo "${method},${rate},${idx},${start},${end},${count},${code},${log},${out_dir}" >> "$status_csv"
