@@ -176,6 +176,7 @@ record_mem_quiet() {
 
 start_fadvise_loop() {
   local label="$1"
+  janitor_pid=""
   case "$FADVISE_DURING_RUN" in
     1|true|True|yes|Yes) ;;
     *) return 0 ;;
@@ -188,7 +189,7 @@ start_fadvise_loop() {
       record_mem_quiet "during_${label}"
     done
   ) &
-  echo "$!"
+  janitor_pid="$!"
 }
 
 stop_fadvise_loop() {
@@ -229,7 +230,8 @@ for method in $(split_csv "$METHODS"); do
         "$method" "$rate" "$idx" "$start" "$end" "$count" | tee -a "${RUN_DIR}/launcher.log"
       record_mem "before_${method}_r${rate}_${name}"
 
-      janitor_pid="$(start_fadvise_loop "${method}_r${rate}_${name}")"
+      janitor_pid=""
+      start_fadvise_loop "${method}_r${rate}_${name}"
       set +e
       METHODS="$method" \
       RATES="$rate" \
