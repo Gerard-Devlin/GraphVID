@@ -44,8 +44,7 @@ class BenchmarkArgs:
         metadata={
             "help": (
                 "VideoMME prompt/parser style: jsonl keeps sample['input']; "
-                "lmms_eval_default rebuilds the default lmms-eval prompt; "
-                "lmms_eval_qwen3 rebuilds the qwen3_vl-specific lmms-eval prompt."
+                "lmms_eval_default rebuilds the default lmms-eval prompt."
             )
         },
     )
@@ -455,11 +454,9 @@ def _build_videomme_prompt(sample: dict[str, Any], args: BenchmarkArgs) -> str:
         )
         post_prompt = "\nAnswer with the option's letter from the given choices directly."
         return option_prompt + "\n" + question + "\n" + option_block + "\n" + post_prompt
-    if style in {"lmms_eval_qwen3", "lmms_eval_qwen3_vl", "qwen3_lmms_eval"}:
-        return f"Question: {question}\nOptions:\n{option_block}\nAnswer with the option letter only."
     raise ValueError(
         f"unsupported videomme_eval_style={style!r}; "
-        "choose jsonl, lmms_eval_default, or lmms_eval_qwen3"
+        "choose jsonl or lmms_eval_default"
     )
 
 

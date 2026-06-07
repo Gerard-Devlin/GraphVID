@@ -386,8 +386,6 @@ def _launch_shards(args: argparse.Namespace, gpu_ids: list[int], work_dir: Path)
             args.dataset_jsonl,
             "--duration_filter",
             args.duration_filter,
-            "--videomme_eval_style",
-            args.videomme_eval_style,
             "--start_index",
             str(start),
             "--limit",
@@ -579,7 +577,6 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--dataset_jsonl", default="assets/videomme.jsonl")
     parser.add_argument("--duration_filter", default="", help="Comma-separated durations: short,medium,long.")
-    parser.add_argument("--videomme_eval_style", default="jsonl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--total_limit", type=int, default=200)

@@ -155,7 +155,6 @@ def main() -> None:
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--total_limit", type=int, default=900)
     parser.add_argument("--duration_filter", default="")
-    parser.add_argument("--videomme_eval_style", default="jsonl")
     parser.add_argument("--num_frames", type=int, default=32)
     parser.add_argument("--min_pixels", type=int, default=64 * 28 * 28)
     parser.add_argument("--max_pixels", type=int, default=256 * 28 * 28)
@@ -244,8 +243,6 @@ def main() -> None:
             str(limit),
             "--duration_filter",
             args.duration_filter,
-            "--videomme_eval_style",
-            args.videomme_eval_style,
             "--num_frames",
             str(args.num_frames),
             "--min_pixels",

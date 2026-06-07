@@ -79,11 +79,6 @@ MAX_PIXELS="${MAX_PIXELS:-200704}"      # 256 * 28 * 28
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
-# Keep the historical JSONL prompt/parser by default so old benchmark numbers
-# remain comparable. Set VIDEOMME_EVAL_STYLE=lmms_eval_qwen3 only for a new
-# lmms-eval-compatible rerun.
-VIDEOMME_EVAL_STYLE="${VIDEOMME_EVAL_STYLE:-jsonl}"
-
 # Parallel launcher controls. run_qwen3_matrix.py will shard each run.
 CUDA_DEVICES="${CUDA_DEVICES:-}"
 MAX_GPUS="${MAX_GPUS:-4}"
@@ -121,7 +116,6 @@ echo " Methods    : ${METHODS_CSV}"
 echo " Ratios     : ${RATES_CSV}"
 echo " Frames     : ${MAX_NUM_FRAMES}"
 echo " Pixels     : min=${MIN_PIXELS}, max=${MAX_PIXELS}"
-echo " Eval style : ${VIDEOMME_EVAL_STYLE}"
 echo " Max GPUs   : ${MAX_GPUS}, GPU_IDS=${CUDA_DEVICES:-auto}"
 echo " Logs       : ${BASE_LOG_DIR}/${RUN_TAG}"
 echo "========================================"
@@ -166,7 +160,6 @@ for task_idx in "${!TASK_NAMES[@]}"; do
     --llm_retention_ratio "${LLM_RETENTION_RATIO}"
     --token_selection_method "${TOKEN_SELECTION_METHOD}"
     --graphvid_token_selection_method "${GRAPHVID_TOKEN_SELECTION_METHOD}"
-    --videomme_eval_style "${VIDEOMME_EVAL_STYLE}"
   )
 
   if [[ -n "${DURATION_FILTER}" ]]; then
