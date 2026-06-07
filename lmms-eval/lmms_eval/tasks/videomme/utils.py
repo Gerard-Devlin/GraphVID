@@ -370,8 +370,34 @@ def _extract_choice_letter(text, valid_choices=None, option_text_by_letter=None)
     return ""
 
 
+def _extract_choice_letter_lmms_eval(text):
+    if not text:
+        return ""
+    try:
+        from lmms_eval.tasks._task_utils.mcq_extract import extract_mcq_answer
+
+        return str(extract_mcq_answer(text, choices=["A", "B", "C", "D"]) or "").strip().upper()[:1]
+    except Exception:
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        patterns = [
+            r"^\s*[\(\[]?\s*([A-Da-d])\s*[\)\].,:;!?\u3002\uff0c\uff1a\uff1b]?\s*$",
+            r"\b(?:ANSWER|OPTION|CHOICE)\b\s*(?:IS)?\s*[:=\-]?\s*[\(\[]?\s*([A-Da-d])\b",
+            r"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([A-Da-d])\b",
+            r"[\(\[]\s*([A-Da-d])\s*[\)\]]",
+            r"\b([A-Da-d])\s*\.",
+            r"\b([A-Da-d])\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, raw, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+        return ""
+
+
 def extract_characters_regex(s, valid_choices=None, option_text_by_letter=None):
-    return _extract_choice_letter(s, valid_choices, option_text_by_letter)
+    return _extract_choice_letter_lmms_eval(s)
 
 
 matrices = []

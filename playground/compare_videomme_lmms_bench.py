@@ -128,6 +128,9 @@ def _extract_doc_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sample_question_id(sample: dict[str, Any]) -> str:
+    payload = _sample_metric_payload(sample)
+    if payload and payload.get("question_id") is not None:
+        return str(payload.get("question_id"))
     doc = _extract_doc_from_sample(sample)
     for container in (sample, doc):
         for key in ("question_id", "questionId", "id"):
@@ -138,6 +141,9 @@ def _sample_question_id(sample: dict[str, Any]) -> str:
 
 
 def _sample_prediction(sample: dict[str, Any]) -> str:
+    payload = _sample_metric_payload(sample)
+    if payload and payload.get("pred_answer") is not None:
+        return str(payload.get("pred_answer"))
     keys = ("pred_answer", "filtered_resps", "resps", "response", "prediction", "pred", "exact_match")
     for key in keys:
         value = sample.get(key)
@@ -156,9 +162,6 @@ def _sample_prediction(sample: dict[str, Any]) -> str:
             else:
                 continue
         return str(value)
-    payload = _sample_metric_payload(sample)
-    if payload and payload.get("pred_answer") is not None:
-        return str(payload.get("pred_answer"))
     return ""
 
 
