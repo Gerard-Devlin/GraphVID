@@ -30,6 +30,10 @@ BATCH_SIZE="${BATCH_SIZE:-1}"
 GEN_KWARGS="${GEN_KWARGS:-max_new_tokens=16,temperature=0}"
 LIMIT="${LIMIT:-}"
 LOG_SAMPLES="${LOG_SAMPLES:-1}"
+FADVISE_DURING_RUN="${FADVISE_DURING_RUN:-1}"
+FADVISE_INTERVAL="${FADVISE_INTERVAL:-20}"
+FADVISE_ROOTS="${FADVISE_ROOTS:-$HF_HOME/videomme/data:$HF_HOME/videomme:/root/autodl-tmp/videomme_raw}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 
 MAX_NUM_FRAMES="${MAX_NUM_FRAMES:-32}"
 MIN_PIXELS="${MIN_PIXELS:-50176}"
@@ -85,6 +89,60 @@ split_csv() {
   # shellcheck disable=SC2086
   printf '%s\n' $text
 }
+
+fadvise_cached_video_files() {
+  FADVISE_ROOTS="$FADVISE_ROOTS" "$PYTHON_BIN" - <<'PY'
+import os
+from pathlib import Path
+
+roots = [Path(p) for p in os.environ.get("FADVISE_ROOTS", "").split(":") if p]
+suffixes = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".zip"}
+count = 0
+for root in roots:
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in suffixes:
+            continue
+        try:
+            fd = os.open(str(path), os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+            count += 1
+        except Exception:
+            pass
+print(f"[fadvise-loop] files={count}", flush=True)
+PY
+}
+
+janitor_pid=""
+start_fadvise_loop() {
+  local label="$1"
+  janitor_pid=""
+  case "$FADVISE_DURING_RUN" in
+    1|true|True|yes|Yes) ;;
+    *) return 0 ;;
+  esac
+  (
+    while true; do
+      sleep "$FADVISE_INTERVAL" || exit 0
+      printf '[fadvise-loop] label=%s time=%s\n' "$label" "$(date '+%F %T')" >&2
+      fadvise_cached_video_files >&2 || true
+    done
+  ) &
+  janitor_pid="$!"
+}
+
+stop_fadvise_loop() {
+  local pid="${1:-}"
+  if [[ -n "$pid" ]]; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+}
+trap 'stop_fadvise_loop "${janitor_pid:-}"' EXIT INT TERM
 
 base_model_args() {
   printf 'pretrained=%s,max_num_frames=%s,min_pixels=%s,max_pixels=%s,attn_implementation=%s' \
@@ -154,7 +212,16 @@ for method in $(split_csv "$METHODS"); do
       echo "[lmms-eval] method=$method rate=$retention_ratio task=$task"
       echo "[lmms-eval] ${cmd[*]}"
       if [[ "${DRY_RUN:-0}" != "1" ]]; then
+        janitor_pid=""
+        start_fadvise_loop "${method}_r${retention_ratio}_${task}"
+        set +e
         "${cmd[@]}"
+        code=$?
+        stop_fadvise_loop "$janitor_pid"
+        set -e
+        if [[ "$code" -ne 0 ]]; then
+          exit "$code"
+        fi
       fi
     done
   done

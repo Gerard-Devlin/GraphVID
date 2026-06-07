@@ -648,11 +648,28 @@ class Qwen3_VL(lmms):
             return -len(toks), x[0]
 
         pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
-        # we group requests by their generation_kwargs,
-        # so that we don't try to execute e.g. greedy sampling and temp=0.8 sampling
-        # in the same batch.
-        re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
-        chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
+        # Keep VideoMME execution order aligned with bench_all_metrics. lmms-eval's
+        # default length-based reordering is fine for pure text, but video
+        # compression can be sensitive to per-process CUDA/RNG ordering.
+        preserve_order = os.environ.get("LMMS_EVAL_PRESERVE_REQUEST_ORDER", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        if preserve_order:
+            request_args = [reg.args for reg in requests]
+            chunks = [request_args[i : i + self.batch_size] for i in range(0, len(request_args), self.batch_size)]
+            re_ords = None
+        else:
+            # We group requests by their generation kwargs, so that we don't try
+            # to execute e.g. greedy sampling and temp=0.8 sampling in one batch.
+            re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
+            chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
+        if self.rank == 0 and os.environ.get("LMMS_EVAL_DEBUG_ORDER", "0").lower() in {"1", "true", "yes"}:
+            eval_logger.info(
+                f"Qwen3_VL generate_until file={__file__} preserve_order={preserve_order} "
+                f"requests={len(requests)} chunks={len(chunks)} batch_size={self.batch_size}"
+            )
         for chunk in chunks:
             inputs, contexts, gen_kwargs, until, video_paths_to_release = self._preprocess_chunk(chunk)
 
@@ -677,7 +694,7 @@ class Qwen3_VL(lmms):
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
-            del inputs, cont, generated_ids_trimmed, image_inputs, video_inputs
+            del inputs, cont, generated_ids_trimmed
             for i, ans in enumerate(answers):
                 for term in until:
                     if len(term) > 0:
@@ -700,7 +717,8 @@ class Qwen3_VL(lmms):
                 _release_video_file_cache(video_paths_to_release)
                 gc.collect()
             # reorder this group of results back to original unsorted form
-        res = re_ords.get_original(res)
+        if re_ords is not None:
+            res = re_ords.get_original(res)
 
         pbar.close()
         return res

@@ -457,7 +457,7 @@ def _build_videomme_prompt(sample: dict[str, Any], args: BenchmarkArgs) -> str:
     option_block = "\n".join(options)
     if style in {"lmms_eval", "lmms_eval_default", "lmms-eval"}:
         option_prompt = (
-            "Select the best answer to the following multiple-choice question based on the video and the subtitles.\n"
+            "Select the best answer to the following multiple-choice question based on the video and the subtitles. "
             "Respond with only the letter (A, B, C, or D) of the correct option."
         )
         post_prompt = "\nAnswer with the option's letter from the given choices directly."

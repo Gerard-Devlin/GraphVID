@@ -30,6 +30,7 @@ MAX_NUM_FRAMES="${MAX_NUM_FRAMES:-32}"
 MIN_PIXELS="${MIN_PIXELS:-50176}"
 MAX_PIXELS="${MAX_PIXELS:-200704}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
+VIDEOMME_EVAL_STYLE="${VIDEOMME_EVAL_STYLE:-lmms_eval_default}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
 EXPANSION="${EXPANSION:-1.25}"
@@ -197,6 +198,7 @@ run_bench() {
     --num_warmup 0 \
     --num_runs 1 \
     --max_new_tokens "$MAX_NEW_TOKENS" \
+    --videomme_eval_style "$VIDEOMME_EVAL_STYLE" \
     --attn_implementation "$ATTN_IMPLEMENTATION" \
     --free_ratio "$FREE_RATIO" \
     --min_free_mb "$MIN_FREE_MB" \

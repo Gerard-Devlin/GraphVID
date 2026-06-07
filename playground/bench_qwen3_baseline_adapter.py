@@ -125,6 +125,7 @@ def _build_bench_args(cli: argparse.Namespace):
     args.num_warmup = cli.num_warmup
     args.num_runs = cli.num_runs
     args.max_new_tokens = cli.max_new_tokens
+    args.videomme_eval_style = cli.videomme_eval_style
     args.attn_implementation = cli.attn_implementation
     args.retention_ratio = cli.retention_ratio
     args.expansion = cli.expansion
@@ -169,6 +170,7 @@ def main() -> None:
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
+    parser.add_argument("--videomme_eval_style", default="jsonl")
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)

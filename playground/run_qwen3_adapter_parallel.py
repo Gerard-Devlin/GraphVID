@@ -161,6 +161,7 @@ def main() -> None:
     parser.add_argument("--num_warmup", type=int, default=1)
     parser.add_argument("--num_runs", type=int, default=1)
     parser.add_argument("--max_new_tokens", type=int, default=16)
+    parser.add_argument("--videomme_eval_style", default="jsonl")
     parser.add_argument("--attn_implementation", default="flash_attention_2")
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
@@ -255,6 +256,8 @@ def main() -> None:
             str(args.num_runs),
             "--max_new_tokens",
             str(args.max_new_tokens),
+            "--videomme_eval_style",
+            args.videomme_eval_style,
             "--attn_implementation",
             args.attn_implementation,
             "--retention_ratio",
