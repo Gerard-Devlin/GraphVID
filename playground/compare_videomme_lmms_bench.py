@@ -165,6 +165,30 @@ def _sample_prediction(sample: dict[str, Any]) -> str:
     return ""
 
 
+def _unwrap_response_value(value: Any) -> str:
+    if value is None:
+        return ""
+    while isinstance(value, list):
+        if not value:
+            return ""
+        value = value[0]
+    if isinstance(value, dict):
+        for key in ("response", "prediction", "pred", "text", "answer"):
+            if value.get(key) is not None:
+                return _unwrap_response_value(value.get(key))
+        return ""
+    return str(value)
+
+
+def _sample_raw_response(sample: dict[str, Any]) -> str:
+    for key in ("resps", "filtered_resps", "response", "prediction", "pred"):
+        value = sample.get(key)
+        raw = _unwrap_response_value(value)
+        if raw:
+            return raw
+    return _sample_prediction(sample)
+
+
 def _sample_answer(sample: dict[str, Any]) -> str:
     doc = _extract_doc_from_sample(sample)
     for container in (sample, doc):
@@ -217,6 +241,7 @@ def _lmms_sample_records(output_dir: Path) -> list[dict[str, Any]]:
                 {
                     "question_id": qid,
                     "pred": _sample_prediction(sample),
+                    "raw": _sample_raw_response(sample),
                     "answer": _sample_answer(sample),
                     "correct": _sample_correct(sample),
                 }
@@ -237,6 +262,7 @@ def _bench_sample_records(summary_path: Path, method: str) -> list[dict[str, Any
             {
                 "question_id": qid,
                 "pred": str(row.get("pred_answer") or ""),
+                "raw": str(row.get("raw_response") or row.get("pred_answer") or ""),
                 "answer": str(row.get("answer") or ""),
                 "correct": row.get("correct"),
             }
@@ -262,16 +288,18 @@ def _diff_samples(bench_summary: Path, lmms_output: Path, method: str, max_rows:
 
     lines = [
         "",
-        "| question_id | bench_pred | lmms_pred | answer | bench_correct | lmms_correct |",
-        "|---|---|---|---|---:|---:|",
+        "| question_id | bench_pred | lmms_pred | answer | bench_correct | lmms_correct | bench_raw | lmms_raw |",
+        "|---|---|---|---|---:|---:|---|---|",
     ]
     for qid, b, l in mismatches[:max_rows]:
         answer = b.get("answer") or l.get("answer") or ""
+        bench_raw = str(b.get("raw", "")).replace("\n", "\\n")[:120]
+        lmms_raw = str(l.get("raw", "")).replace("\n", "\\n")[:120]
         lines.append(
-            f"| {qid} | {b.get('pred', '')} | {l.get('pred', '')} | {answer} | {b.get('correct')} | {l.get('correct')} |"
+            f"| {qid} | {b.get('pred', '')} | {l.get('pred', '')} | {answer} | {b.get('correct')} | {l.get('correct')} | {bench_raw} | {lmms_raw} |"
         )
     if len(mismatches) > max_rows:
-        lines.append(f"| ... | ... | ... | ... | ... | ... |")
+        lines.append(f"| ... | ... | ... | ... | ... | ... | ... | ... |")
     lines.insert(0, f"\nMatched samples: {len(common_qids)}; mismatches: {len(mismatches)}")
     return lines, len(mismatches)
 

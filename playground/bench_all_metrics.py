@@ -1003,11 +1003,11 @@ def _decode_prediction(
     valid_choice_letters: str | list[str] | tuple[str, ...] | None = None,
     option_text_by_letter: dict[str, str] | None = None,
     videomme_eval_style: str = "jsonl",
-) -> tuple[str, int]:
+) -> tuple[str, int, str]:
     generated = output_ids[:, prompt_len:] if output_ids.shape[1] > prompt_len else output_ids[:, :0]
     gen_tokens = int(generated.shape[1])
     if gen_tokens == 0:
-        return "", 0
+        return "", 0, ""
 
     backend = model_bundle["backend"]
     use_lmms_parser = str(videomme_eval_style or "").strip().lower().startswith("lmms_eval")
@@ -1015,22 +1015,22 @@ def _decode_prediction(
         tokenizer = model_bundle["tokenizer"]
         text = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
         if use_lmms_parser:
-            return _extract_choice_letter_lmms_eval(text), gen_tokens
+            return _extract_choice_letter_lmms_eval(text), gen_tokens, text
         answer = _extract_choice_letter(text, valid_choice_letters, option_text_by_letter)
         if answer:
-            return answer, gen_tokens
+            return answer, gen_tokens, text
         first_token_id = int(generated[0, 0].item())
         first_token = tokenizer.decode([first_token_id], skip_special_tokens=True)
-        return _extract_choice_letter(first_token, valid_choice_letters, option_text_by_letter), gen_tokens
+        return _extract_choice_letter(first_token, valid_choice_letters, option_text_by_letter), gen_tokens, text
 
     processor = model_bundle["processor"]
     text = processor.batch_decode(generated, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
     if use_lmms_parser:
-        return _extract_choice_letter_lmms_eval(text), gen_tokens
+        return _extract_choice_letter_lmms_eval(text), gen_tokens, text
     answer = _extract_choice_letter(text, valid_choice_letters, option_text_by_letter)
     if answer:
-        return answer, gen_tokens
-    return _extract_choice_letter(text[:8], valid_choice_letters, option_text_by_letter), gen_tokens
+        return answer, gen_tokens, text
+    return _extract_choice_letter(text[:8], valid_choice_letters, option_text_by_letter), gen_tokens, text
 
 
 def _safe_int_metric(value, fallback: int) -> int:
@@ -1197,6 +1197,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
 
     latencies = []
     pred_answer = ""
+    raw_response = ""
     gen_tokens_per_run = []
     compressed_tokens_per_run = []
     vision_tokens_per_run = []
@@ -1264,7 +1265,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
             )
 
         output_ids, latency_ms = _timed_call(_generate)
-        answer, gen_tokens = _decode_prediction(
+        answer, gen_tokens, decoded_text = _decode_prediction(
             model_bundle,
             output_ids,
             prompt_len,
@@ -1274,6 +1275,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         )
         if run_idx == 0:
             pred_answer = answer
+            raw_response = decoded_text
         latencies.append(float(latency_ms))
         gen_tokens_per_run.append(float(gen_tokens))
         final_tokens, vision_tokens = _get_visual_token_metrics(model, raw_visual_tokens, use_acceleration)
@@ -1379,6 +1381,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
 
     return {
         "pred_answer": pred_answer,
+        "raw_response": raw_response,
         "latency_ms": latency_ms,
         "generated_tokens": generated_tokens,
         "tokens_per_second": tps,
@@ -1431,6 +1434,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         "answer": sample.get("answer"),
         "eval_style": _videomme_eval_style(args),
         "pred_answer": "",
+        "raw_response": "",
         "correct": None,
         "latency_ms": None,
         "generated_tokens": None,
@@ -1489,6 +1493,7 @@ def _benchmark_single_sample(model_bundle, args: BenchmarkArgs, sample: dict[str
         record.update(
             {
                 "pred_answer": result["pred_answer"],
+                "raw_response": result.get("raw_response", ""),
                 "correct": result["pred_answer"] == sample.get("answer"),
                 "latency_ms": result["latency_ms"],
                 "generated_tokens": result["generated_tokens"],
