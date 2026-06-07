@@ -1240,9 +1240,17 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
                     max_new_tokens=args.max_new_tokens,
                     modalities=["video"],
                 )
+            tokenizer = getattr(model_bundle.get("processor"), "tokenizer", None)
+            eos_token_id = getattr(tokenizer, "eos_token_id", None)
+            pad_token_id = getattr(tokenizer, "pad_token_id", None)
             return model.generate(
                 **inputs,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
                 do_sample=False,
+                temperature=None,
+                top_p=None,
+                num_beams=1,
                 max_new_tokens=args.max_new_tokens,
                 use_cache=True,
             )
