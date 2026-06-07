@@ -150,32 +150,28 @@ def videomme_doc_to_visual(doc):
     return [video_path]
 
 
-def videomme_doc_to_text(doc, lmms_eval_specific_kwargs=None):
-
-    if "format" in lmms_eval_specific_kwargs and lmms_eval_specific_kwargs["format"] == "qwen3_vl":
-        return videomme_doc_to_text_qwen3vl(doc, lmms_eval_specific_kwargs)
-
+def _videomme_doc_to_text_default(doc, post_prompt=None):
     option_prompt = "Select the best answer to the following multiple-choice question based on the video and the subtitles. Respond with only the letter (A, B, C, or D) of the correct option."
     question = doc["question"]
     option = "\n".join([f"{opt}" for i, opt in enumerate(doc["options"])])
     question = question + "\n" + option
+    post_prompt = post_prompt if post_prompt is not None else "The best answer is:"
+    return option_prompt + "\n" + question + "\n" + post_prompt
+
+
+def videomme_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+    lmms_eval_specific_kwargs = lmms_eval_specific_kwargs or {}
+
+    if "format" in lmms_eval_specific_kwargs and lmms_eval_specific_kwargs["format"] == "qwen3_vl":
+        return videomme_doc_to_text_qwen3vl(doc, lmms_eval_specific_kwargs)
+
     post_prompt = lmms_eval_specific_kwargs["post_prompt"] if "post_prompt" in lmms_eval_specific_kwargs else "The best answer is:"
-    full_prompt = option_prompt + "\n" + question + "\n" + post_prompt
-    return full_prompt
+    return _videomme_doc_to_text_default(doc, post_prompt)
 
 
 def videomme_doc_to_text_qwen3vl(doc, lmms_eval_specific_kwargs=None):
-    """
-    Adapted from: https://github.com/open-compass/VLMEvalKit/blob/main/vlmeval/vlm/qwen3_vl/prompt.py#L93
-    """
-    pre_prompt = lmms_eval_specific_kwargs.get("pre_prompt", "")
-    post_prompt = lmms_eval_specific_kwargs.get("post_prompt", "")
-
-    question = doc["question"]
-    option = "\n".join([f"{opt}" for i, opt in enumerate(doc["options"])])
-
-    full_prompt = f"{pre_prompt}{question}\nOptions:\n{option}\n{post_prompt}"
-    return full_prompt
+    # Keep Qwen3-VL on the same VideoMME prompt as assets/videomme.jsonl.
+    return _videomme_doc_to_text_default(doc, "\nAnswer with the option's letter from the given choices directly.")
 
 
 # Frames + Subs
