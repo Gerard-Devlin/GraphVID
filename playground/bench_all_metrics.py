@@ -932,7 +932,7 @@ def _prepare_qwen_inputs(model_bundle, args: BenchmarkArgs, prompt_text: str, vi
         "return_tensors": "pt",
         **video_kwargs,
     }
-    if backend == "qwen3_vl" and _videomme_eval_style(args).startswith("lmms_eval"):
+    if backend == "qwen3_vl":
         processor_kwargs["do_resize"] = False
     if video_metadata is not None:
         processor_kwargs["video_metadata"] = video_metadata
