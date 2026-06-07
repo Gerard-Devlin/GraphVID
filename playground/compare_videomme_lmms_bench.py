@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -240,11 +241,11 @@ def _bench_sample_records(summary_path: Path, method: str) -> list[dict[str, Any
     return records
 
 
-def _diff_samples(bench_summary: Path, lmms_output: Path, method: str, max_rows: int) -> list[str]:
+def _diff_samples(bench_summary: Path, lmms_output: Path, method: str, max_rows: int) -> tuple[list[str], int | None]:
     bench_rows = _bench_sample_records(bench_summary, method)
     lmms_rows = _lmms_sample_records(lmms_output)
     if not bench_rows or not lmms_rows:
-        return []
+        return [], None
 
     bench_by_qid = {str(row["question_id"]): row for row in bench_rows}
     lmms_by_qid = {str(row["question_id"]): row for row in lmms_rows}
@@ -269,7 +270,7 @@ def _diff_samples(bench_summary: Path, lmms_output: Path, method: str, max_rows:
     if len(mismatches) > max_rows:
         lines.append(f"| ... | ... | ... | ... | ... | ... |")
     lines.insert(0, f"\nMatched samples: {len(common_qids)}; mismatches: {len(mismatches)}")
-    return lines
+    return lines, len(mismatches)
 
 
 def _extract_lmms_from_samples(output_dir: Path) -> dict[str, float | None] | None:
@@ -345,10 +346,13 @@ def main() -> None:
     parser.add_argument("--rate", required=True)
     parser.add_argument("--out_md", default="")
     parser.add_argument("--max_sample_diffs", type=int, default=20)
+    parser.add_argument("--fail_on_mismatch", action="store_true")
+    parser.add_argument("--tolerance", type=float, default=0.0)
     args = parser.parse_args()
 
     bench = _bench_scores(Path(args.bench_summary), args.method)
     lmms = _lmms_scores(Path(args.lmms_output), Path(args.lmms_log) if args.lmms_log else None)
+    should_fail = False
 
     lines = [
         "| Method | R | Split | bench_all_metrics | lmms-eval | Delta |",
@@ -358,14 +362,25 @@ def main() -> None:
         b = bench.get(split)
         l = lmms.get(split)
         delta = None if b is None or l is None else l - b
+        if args.fail_on_mismatch and delta is not None and abs(delta) > args.tolerance:
+            should_fail = True
         lines.append(f"| {args.method} | {args.rate} | {split} | {_fmt(b)} | {_fmt(l)} | {_fmt(delta)} |")
     table = "\n".join(lines) + "\n"
-    sample_diff_lines = _diff_samples(Path(args.bench_summary), Path(args.lmms_output), args.method, args.max_sample_diffs)
+    sample_diff_lines, sample_mismatches = _diff_samples(
+        Path(args.bench_summary),
+        Path(args.lmms_output),
+        args.method,
+        args.max_sample_diffs,
+    )
+    if args.fail_on_mismatch and sample_mismatches is not None and sample_mismatches > 0:
+        should_fail = True
     if sample_diff_lines:
         table += "\n" + "\n".join(sample_diff_lines) + "\n"
     print(table)
     if args.out_md:
         Path(args.out_md).write_text(table, encoding="utf-8")
+    if args.fail_on_mismatch and should_fail:
+        sys.exit(2)
 
 
 if __name__ == "__main__":

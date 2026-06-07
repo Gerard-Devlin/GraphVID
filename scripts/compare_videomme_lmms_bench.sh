@@ -25,6 +25,8 @@ MAX_GPUS="${MAX_GPUS:-1}"
 MIN_FREE_MB="${MIN_FREE_MB:-0}"
 FREE_RATIO="${FREE_RATIO:-0.0}"
 LOG_SAMPLES="${LOG_SAMPLES:-0}"
+FAIL_ON_MISMATCH="${FAIL_ON_MISMATCH:-0}"
+PARITY_TOLERANCE="${PARITY_TOLERANCE:-0.0}"
 
 MAX_NUM_FRAMES="${MAX_NUM_FRAMES:-32}"
 MIN_PIXELS="${MIN_PIXELS:-50176}"
@@ -271,7 +273,9 @@ compare_one() {
     --bench_summary "$bench_summary" \
     --lmms_output "$lmms_out" \
     --lmms_log "$lmms_log" \
-    --out_md "$out_md"
+    --out_md "$out_md" \
+    --tolerance "$PARITY_TOLERANCE" \
+    $(if [[ "$FAIL_ON_MISMATCH" == "1" || "$FAIL_ON_MISMATCH" == "true" || "$FAIL_ON_MISMATCH" == "True" ]]; then printf '%s' '--fail_on_mismatch'; fi)
 }
 
 echo "========================================"
