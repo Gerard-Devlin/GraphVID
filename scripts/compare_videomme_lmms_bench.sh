@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf_home}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 PYTHON="${PYTHON:-python}"
@@ -37,6 +39,8 @@ FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}
 GRAPHVID_TOKEN_SELECTION_METHOD="${GRAPHVID_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 
 mkdir -p "$OUT_ROOT"
+
+BENCH_DATASET_JSONL="$DATASET_JSONL"
 
 split_csv() {
   local text="$1"
@@ -73,6 +77,60 @@ bench_summary_path() {
   printf 'logs/efficiency/parallel/%s/%s_summary.json' "$method_tag" "$method_tag"
 }
 
+make_lmms_order_jsonl() {
+  if [[ -z "$LIMIT" || "$LIMIT" == "0" ]]; then
+    return 0
+  fi
+  local out_jsonl="$OUT_ROOT/videomme_lmms_order_limit${LIMIT}.jsonl"
+  echo "[data] writing lmms-eval ordered bench subset: $out_jsonl"
+  "$PYTHON" - "$DATASET_JSONL" "$out_jsonl" "$LIMIT" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+asset_path = Path(sys.argv[1])
+out_path = Path(sys.argv[2])
+limit = int(float(sys.argv[3]))
+
+by_qid = {}
+with asset_path.open("r", encoding="utf-8") as f:
+    for line in f:
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        qid = str(row.get("question_id") or "")
+        if qid:
+            by_qid[qid] = row
+
+try:
+    import datasets
+
+    ds = datasets.load_dataset("lmms-lab/Video-MME", split="test", token=True)
+    qids = [str(ds[i].get("question_id") or "") for i in range(min(limit, len(ds)))]
+except Exception as exc:
+    raise SystemExit(f"failed to load cached lmms-eval VideoMME order: {type(exc).__name__}: {exc}")
+
+rows = []
+missing = []
+for qid in qids:
+    row = by_qid.get(qid)
+    if row is None:
+        missing.append(qid)
+    else:
+        rows.append(row)
+if missing:
+    raise SystemExit(f"assets JSONL is missing {len(missing)} lmms-eval qids, first={missing[:10]}")
+
+out_path.parent.mkdir(parents=True, exist_ok=True)
+with out_path.open("w", encoding="utf-8") as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+print(f"[data] wrote {len(rows)} rows")
+PY
+  BENCH_DATASET_JSONL="$out_jsonl"
+}
+
 run_bench() {
   local method="$1"
   local rate="$2"
@@ -85,7 +143,7 @@ run_bench() {
   CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES" "$PYTHON" -u playground/run_qwen3_matrix.py \
     --model_backend qwen3_vl \
     --model_path "$PRETRAINED" \
-    --datasets "videomme=$DATASET_JSONL" \
+    --datasets "videomme=$BENCH_DATASET_JSONL" \
     --methods "$method" \
     --rates "$rate" \
     --limit "$LIMIT" \
@@ -172,6 +230,8 @@ echo " Limit   : $LIMIT"
 echo " Model   : $PRETRAINED"
 echo " Output  : $OUT_ROOT"
 echo "========================================"
+
+make_lmms_order_jsonl
 
 for method in $(split_csv "$METHODS"); do
   for rate in $(split_csv "$RATES"); do

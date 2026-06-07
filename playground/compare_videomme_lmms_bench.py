@@ -134,15 +134,17 @@ def _lmms_scores(output_dir: Path, log_path: Path | None = None) -> dict[str, fl
     from_samples = _extract_lmms_from_samples(output_dir)
     if from_samples:
         return from_samples
+    scores: dict[str, float | None] = {"overall": None, "short": None, "medium": None, "long": None}
     for path in _find_lmms_results(output_dir):
         parsed = _extract_lmms_from_results_json(path)
         if parsed:
-            return parsed
+            scores.update({key: value for key, value in parsed.items() if value is not None})
+            break
     if log_path:
         parsed = _extract_lmms_from_log(log_path)
         if parsed:
-            return parsed
-    return {"overall": None, "short": None, "medium": None, "long": None}
+            scores.update({key: value for key, value in parsed.items() if value is not None})
+    return scores
 
 
 def main() -> None:
