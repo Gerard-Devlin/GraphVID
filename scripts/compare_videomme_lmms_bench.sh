@@ -34,6 +34,11 @@ ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
 EXPANSION="${EXPANSION:-1.25}"
 LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-1.0}"
+RAW_VISUAL_TOKENS="${RAW_VISUAL_TOKENS:-2880}"
+VISUAL_TIME_UNITS="${VISUAL_TIME_UNITS:-16}"
+GRAPH_FINAL_CAP_MODE="${GRAPH_FINAL_CAP_MODE:-expanded}"
+GRAPH_FINAL_TPF="${GRAPH_FINAL_TPF:-0}"
+GRAPH_FINAL_TPF_BY_RATE="${GRAPH_FINAL_TPF_BY_RATE:-}"
 TOKEN_SELECTION_METHOD="${TOKEN_SELECTION_METHOD:-attn_div_v2}"
 FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}"
 GRAPHVID_TOKEN_SELECTION_METHOD="${GRAPHVID_TOKEN_SELECTION_METHOD:-attn_div_stable}"
@@ -75,6 +80,43 @@ bench_summary_path() {
   run_method="$(bench_method_name "$method")"
   local method_tag="${TAG}_bench_${run_method}_r${label}_videomme"
   printf 'logs/efficiency/parallel/%s/%s_summary.json' "$method_tag" "$method_tag"
+}
+
+graph_final_tpf_for_rate() {
+  "$PYTHON" - "$1" "$GRAPH_FINAL_CAP_MODE" "$GRAPH_FINAL_TPF" "$GRAPH_FINAL_TPF_BY_RATE" "$RAW_VISUAL_TOKENS" "$VISUAL_TIME_UNITS" "$EXPANSION" <<'PY'
+import math
+import sys
+
+ratio = float(sys.argv[1])
+if ratio > 1:
+    ratio /= 100.0
+mode = sys.argv[2].lower()
+base = int(sys.argv[3])
+by_rate = sys.argv[4]
+raw = int(sys.argv[5])
+units = max(1, int(sys.argv[6]))
+expansion = float(sys.argv[7])
+
+if mode == "none":
+    print(base)
+elif mode == "custom":
+    mapping = {}
+    for item in by_rate.split(","):
+        if not item.strip():
+            continue
+        k, v = item.split(":", 1)
+        key = float(k)
+        if key > 1:
+            key /= 100.0
+        mapping[f"{key * 100:g}"] = int(v)
+    print(mapping.get(f"{ratio * 100:g}", base))
+elif mode == "strict":
+    print(math.ceil(raw * ratio / units))
+elif mode == "expanded":
+    print(math.ceil(raw * ratio * expansion / units))
+else:
+    raise SystemExit(f"unknown GRAPH_FINAL_CAP_MODE={mode}")
+PY
 }
 
 make_lmms_order_jsonl() {
@@ -161,6 +203,11 @@ run_bench() {
     --max_gpus "$MAX_GPUS" \
     --retention_expansion "$EXPANSION" \
     --llm_retention_ratio "$LLM_RETENTION_RATIO" \
+    --raw_visual_tokens "$RAW_VISUAL_TOKENS" \
+    --visual_time_units "$VISUAL_TIME_UNITS" \
+    --graph_final_cap_mode "$GRAPH_FINAL_CAP_MODE" \
+    --graph_final_tokens_per_frame "$GRAPH_FINAL_TPF" \
+    --graph_final_tokens_per_frame_by_rate "$GRAPH_FINAL_TPF_BY_RATE" \
     --token_selection_method "$TOKEN_SELECTION_METHOD" \
     --flashvid_token_selection_method "$FLASHVID_TOKEN_SELECTION_METHOD" \
     --graphvid_token_selection_method "$GRAPHVID_TOKEN_SELECTION_METHOD" \
@@ -174,6 +221,8 @@ run_lmms() {
   label="$(rate_label "$rate")"
   local out="$OUT_ROOT/lmms_${method}_r${label}"
   local log="$OUT_ROOT/lmms_${method}_r${label}.log"
+  local graph_final_tpf
+  graph_final_tpf="$(graph_final_tpf_for_rate "$rate")"
 
   echo "[lmms] method=$method rate=$rate limit=$LIMIT log=$log"
   CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES" \
@@ -192,6 +241,7 @@ run_lmms() {
   GEN_KWARGS="max_new_tokens=${MAX_NEW_TOKENS},temperature=0" \
   EXPANSION="$EXPANSION" \
   LLM_RETENTION_RATIO="$LLM_RETENTION_RATIO" \
+  GRAPH_FINAL_TPF="$graph_final_tpf" \
   FLASHVID_TOKEN_SELECTION_METHOD="$FLASHVID_TOKEN_SELECTION_METHOD" \
   GRAPHVID_TOKEN_SELECTION_METHOD="$GRAPHVID_TOKEN_SELECTION_METHOD" \
   ADAPTER_TOKEN_SELECTION_METHOD="$TOKEN_SELECTION_METHOD" \
