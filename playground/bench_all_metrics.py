@@ -21,6 +21,14 @@ warnings.filterwarnings("ignore")
 SEPARATOR = "=" * 72
 
 
+def _set_lmms_eval_seeds() -> None:
+    random.seed(0)
+    np.random.seed(1234)
+    torch.manual_seed(1234)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(1234)
+
+
 @dataclass
 class BenchmarkArgs:
     # Model
@@ -2635,6 +2643,7 @@ def _print_summary(summary: dict[str, Any]):
 
 
 def run(args: BenchmarkArgs):
+    _set_lmms_eval_seeds()
     samples = _load_dataset(args.dataset_jsonl, args.limit, args.shuffle, args.start_index, args.duration_filter)
     if not samples:
         raise ValueError(f"No samples loaded from {args.dataset_jsonl}")
