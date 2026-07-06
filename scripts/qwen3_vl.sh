@@ -53,6 +53,7 @@ LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-1.0}"
 FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}"
 GRAPHVID_TOKEN_SELECTION_METHOD="${GRAPHVID_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 ADAPTER_TOKEN_SELECTION_METHOD="${ADAPTER_TOKEN_SELECTION_METHOD:-attn_div_stable}"
+APEX_TOKEN_SELECTION_METHOD="${APEX_TOKEN_SELECTION_METHOD:-$FLASHVID_TOKEN_SELECTION_METHOD}"
 
 GRAPH_TEMPORAL_TOPK="${GRAPH_TEMPORAL_TOPK:-2}"
 GRAPH_TEMPORAL_RADIUS="${GRAPH_TEMPORAL_RADIUS:-1}"
@@ -183,7 +184,7 @@ method_flash_args() {
       ;;
     apexvid)
       printf 'compression_variant=apexvid,token_selection_method=%s,apex_evidence_ratio=%s,apex_event_ratio=%s,apex_memory_ratio=%s,apex_router_strength=%s,apex_summary_temperature=%s,apex_frame_floor_ratio=%s,apex_question_weight=%s' \
-        "$ADAPTER_TOKEN_SELECTION_METHOD" "$APEX_EVIDENCE_RATIO" "$APEX_EVENT_RATIO" "$APEX_MEMORY_RATIO" "$APEX_ROUTER_STRENGTH" "$APEX_SUMMARY_TEMPERATURE" "$APEX_FRAME_FLOOR_RATIO" "$APEX_QUESTION_WEIGHT"
+        "$APEX_TOKEN_SELECTION_METHOD" "$APEX_EVIDENCE_RATIO" "$APEX_EVENT_RATIO" "$APEX_MEMORY_RATIO" "$APEX_ROUTER_STRENGTH" "$APEX_SUMMARY_TEMPERATURE" "$APEX_FRAME_FLOOR_RATIO" "$APEX_QUESTION_WEIGHT"
       ;;
     visionzip)
       printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \

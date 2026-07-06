@@ -157,7 +157,7 @@ def curvevid_compression(
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """CurveVID: FastGraph-style pruning with V-CAST-style frame budgets.
+    """CurveVID: FastGraph-style pruning with curvature-aware frame budgets.
 
     The algorithm remains pruning-only: every emitted token is gathered from the
     original Qwen3 visual token grid. Curvature only reallocates the per-frame
