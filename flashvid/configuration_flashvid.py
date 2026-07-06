@@ -46,6 +46,15 @@ class FlashVidConfig:
     fastgraph_novelty_weight: float = field(default=0.30)
     fastgraph_density_weight: float = field(default=0.15)
 
+    # ApexVID: adaptive evidence/event/memory compression.
+    apex_evidence_ratio: float = field(default=0.45)
+    apex_event_ratio: float = field(default=0.30)
+    apex_memory_ratio: float = field(default=0.25)
+    apex_router_strength: float = field(default=0.50)
+    apex_summary_temperature: float = field(default=0.07)
+    apex_frame_floor_ratio: float = field(default=0.35)
+    apex_question_weight: float = field(default=0.20)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)

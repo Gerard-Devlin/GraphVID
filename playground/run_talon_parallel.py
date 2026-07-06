@@ -75,11 +75,25 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--expansion",
             str(args.expansion),
             "--compression_variant",
-            "talon",
+            str(args.compression_variant),
             "--question_aware_reweighting",
             "True",
             "--question_reweight_beta",
             "0.25",
+            "--apex_evidence_ratio",
+            str(args.apex_evidence_ratio),
+            "--apex_event_ratio",
+            str(args.apex_event_ratio),
+            "--apex_memory_ratio",
+            str(args.apex_memory_ratio),
+            "--apex_router_strength",
+            str(args.apex_router_strength),
+            "--apex_summary_temperature",
+            str(args.apex_summary_temperature),
+            "--apex_frame_floor_ratio",
+            str(args.apex_frame_floor_ratio),
+            "--apex_question_weight",
+            str(args.apex_question_weight),
             "--adaptive_token_budget",
             "False",
             "--talon_adaptive_target_enabled",
@@ -600,6 +614,14 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid"])
+    parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
+    parser.add_argument("--apex_event_ratio", type=float, default=0.30)
+    parser.add_argument("--apex_memory_ratio", type=float, default=0.25)
+    parser.add_argument("--apex_router_strength", type=float, default=0.50)
+    parser.add_argument("--apex_summary_temperature", type=float, default=0.07)
+    parser.add_argument("--apex_frame_floor_ratio", type=float, default=0.35)
+    parser.add_argument("--apex_question_weight", type=float, default=0.20)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
     parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")

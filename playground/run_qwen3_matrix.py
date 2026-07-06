@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "flashvid", "talon", "fastvid", "visionzip", "fastgraphvid", "curvevid"}
+    allowed = {"graphvid", "flashvid", "talon", "apexvid", "fastvid", "visionzip", "fastgraphvid", "curvevid"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -97,7 +97,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method == "talon":
+    if method in ("talon", "apexvid"):
         return "ours"
     return method
 
@@ -340,6 +340,8 @@ def _build_command(
         cmd.extend(
             [
                 "--no-run_flashvid",
+                "--compression_variant",
+                method,
                 "--talon_target_tokens_per_frame",
                 str(args.talon_target_tokens_per_frame),
                 "--talon_question_recall_ratio",
@@ -350,6 +352,20 @@ def _build_command(
                 args.talon_question_pooling,
                 "--talon_question_pooling_topk",
                 str(args.talon_question_pooling_topk),
+                "--apex_evidence_ratio",
+                str(args.apex_evidence_ratio),
+                "--apex_event_ratio",
+                str(args.apex_event_ratio),
+                "--apex_memory_ratio",
+                str(args.apex_memory_ratio),
+                "--apex_router_strength",
+                str(args.apex_router_strength),
+                "--apex_summary_temperature",
+                str(args.apex_summary_temperature),
+                "--apex_frame_floor_ratio",
+                str(args.apex_frame_floor_ratio),
+                "--apex_question_weight",
+                str(args.apex_question_weight),
             ]
         )
     cmd.extend(args.extra_args)
@@ -457,7 +473,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon,fastvid,visionzip,fastgraphvid,curvevid.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon,apexvid,fastvid,visionzip,fastgraphvid,curvevid.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -505,6 +521,13 @@ def main() -> None:
     parser.add_argument("--talon_question_recall_qweight", type=float, default=0.65)
     parser.add_argument("--talon_question_pooling", default="topk")
     parser.add_argument("--talon_question_pooling_topk", type=int, default=4)
+    parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
+    parser.add_argument("--apex_event_ratio", type=float, default=0.30)
+    parser.add_argument("--apex_memory_ratio", type=float, default=0.25)
+    parser.add_argument("--apex_router_strength", type=float, default=0.50)
+    parser.add_argument("--apex_summary_temperature", type=float, default=0.07)
+    parser.add_argument("--apex_frame_floor_ratio", type=float, default=0.35)
+    parser.add_argument("--apex_question_weight", type=float, default=0.20)
     parser.add_argument(
         "--adapter_budget_uses_expansion",
         "--external_budget_uses_expansion",

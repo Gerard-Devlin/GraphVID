@@ -83,6 +83,14 @@ FASTGRAPH_NOVELTY_WEIGHT="${FASTGRAPH_NOVELTY_WEIGHT:-0.30}"
 FASTGRAPH_DENSITY_WEIGHT="${FASTGRAPH_DENSITY_WEIGHT:-0.15}"
 VISIONZIP_DOMINANT_RATIO="${VISIONZIP_DOMINANT_RATIO:-0.85}"
 
+APEX_EVIDENCE_RATIO="${APEX_EVIDENCE_RATIO:-0.45}"
+APEX_EVENT_RATIO="${APEX_EVENT_RATIO:-0.30}"
+APEX_MEMORY_RATIO="${APEX_MEMORY_RATIO:-0.25}"
+APEX_ROUTER_STRENGTH="${APEX_ROUTER_STRENGTH:-0.50}"
+APEX_SUMMARY_TEMPERATURE="${APEX_SUMMARY_TEMPERATURE:-0.07}"
+APEX_FRAME_FLOOR_RATIO="${APEX_FRAME_FLOOR_RATIO:-0.35}"
+APEX_QUESTION_WEIGHT="${APEX_QUESTION_WEIGHT:-0.20}"
+
 split_csv() {
   local text="$1"
   text="${text//,/ }"
@@ -172,6 +180,10 @@ method_flash_args() {
     fastgraphvid)
       printf 'compression_variant=fastgraphvid,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,fastvid_DySeg_c=%s,fastvid_DySeg_tau=%s,fastvid_DySeg_ignore=%s,fastvid_STPrune_d=%s,fastvid_DTM_p=%s,fastvid_DTM_beta=%s,fastgraph_ats_ratio=%s,fastgraph_temporal_radius=%s,fastgraph_temporal_skip=%s,fastgraph_temporal_topk=%s,fastgraph_edge_threshold=%s,fastgraph_protect_ratio=%s,fastgraph_attn_weight=%s,fastgraph_novelty_weight=%s,fastgraph_density_weight=%s' \
         "$ADAPTER_TOKEN_SELECTION_METHOD" "$ADAPTER_BUDGET_USES_EXPANSION" "$ADAPTER_BUDGET_USES_EXPANSION" "$FASTVID_DYSEG_C" "$FASTVID_DYSEG_TAU" "$FASTVID_DYSEG_IGNORE" "$FASTVID_STPRUNE_D" "$FASTVID_DTM_P" "$FASTVID_DTM_BETA" "$FASTGRAPH_ATS_RATIO" "$FASTGRAPH_TEMPORAL_RADIUS" "$FASTGRAPH_TEMPORAL_SKIP" "$FASTGRAPH_TEMPORAL_TOPK" "$FASTGRAPH_EDGE_THRESHOLD" "$FASTGRAPH_PROTECT_RATIO" "$FASTGRAPH_ATTN_WEIGHT" "$FASTGRAPH_NOVELTY_WEIGHT" "$FASTGRAPH_DENSITY_WEIGHT"
+      ;;
+    apexvid)
+      printf 'compression_variant=apexvid,token_selection_method=%s,apex_evidence_ratio=%s,apex_event_ratio=%s,apex_memory_ratio=%s,apex_router_strength=%s,apex_summary_temperature=%s,apex_frame_floor_ratio=%s,apex_question_weight=%s' \
+        "$ADAPTER_TOKEN_SELECTION_METHOD" "$APEX_EVIDENCE_RATIO" "$APEX_EVENT_RATIO" "$APEX_MEMORY_RATIO" "$APEX_ROUTER_STRENGTH" "$APEX_SUMMARY_TEMPERATURE" "$APEX_FRAME_FLOOR_RATIO" "$APEX_QUESTION_WEIGHT"
       ;;
     visionzip)
       printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \

@@ -98,6 +98,13 @@ class BenchmarkArgs:
     compression_variant: str = field(default="talon")
     question_aware_reweighting: bool = field(default=False)
     question_reweight_beta: float = field(default=0.35)
+    apex_evidence_ratio: float = field(default=0.45)
+    apex_event_ratio: float = field(default=0.30)
+    apex_memory_ratio: float = field(default=0.25)
+    apex_router_strength: float = field(default=0.50)
+    apex_summary_temperature: float = field(default=0.07)
+    apex_frame_floor_ratio: float = field(default=0.35)
+    apex_question_weight: float = field(default=0.20)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
@@ -2212,6 +2219,13 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         compression_variant=args.compression_variant,
         question_aware_reweighting=args.question_aware_reweighting,
         question_reweight_beta=args.question_reweight_beta,
+        apex_evidence_ratio=args.apex_evidence_ratio,
+        apex_event_ratio=args.apex_event_ratio,
+        apex_memory_ratio=args.apex_memory_ratio,
+        apex_router_strength=args.apex_router_strength,
+        apex_summary_temperature=args.apex_summary_temperature,
+        apex_frame_floor_ratio=args.apex_frame_floor_ratio,
+        apex_question_weight=args.apex_question_weight,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
@@ -2755,7 +2769,13 @@ def run(args: BenchmarkArgs):
 
     if args.run_ours:
         print(f"\nPhase {phase_idx}/{total_phases}: Ours ...")
-        ours_prefix = "[talon-active][ours]" if str(args.compression_variant).strip().lower() == "talon" else "[adapter-active][ours]"
+        variant_name = str(args.compression_variant).strip().lower()
+        if variant_name == "talon":
+            ours_prefix = "[talon-active][ours]"
+        elif variant_name == "apexvid":
+            ours_prefix = "[apexvid-active][ours]"
+        else:
+            ours_prefix = "[adapter-active][ours]"
         print(
             f"{ours_prefix} "
             f"path=clean, qaware={args.question_aware_reweighting}, "
