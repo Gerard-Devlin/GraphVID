@@ -54,6 +54,7 @@ FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}
 GRAPHVID_TOKEN_SELECTION_METHOD="${GRAPHVID_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 ADAPTER_TOKEN_SELECTION_METHOD="${ADAPTER_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 APEX_TOKEN_SELECTION_METHOD="${APEX_TOKEN_SELECTION_METHOD:-$FLASHVID_TOKEN_SELECTION_METHOD}"
+RIDGE_TOKEN_SELECTION_METHOD="${RIDGE_TOKEN_SELECTION_METHOD:-$FLASHVID_TOKEN_SELECTION_METHOD}"
 
 GRAPH_TEMPORAL_TOPK="${GRAPH_TEMPORAL_TOPK:-2}"
 GRAPH_TEMPORAL_RADIUS="${GRAPH_TEMPORAL_RADIUS:-1}"
@@ -91,6 +92,20 @@ APEX_ROUTER_STRENGTH="${APEX_ROUTER_STRENGTH:-0.50}"
 APEX_SUMMARY_TEMPERATURE="${APEX_SUMMARY_TEMPERATURE:-0.07}"
 APEX_FRAME_FLOOR_RATIO="${APEX_FRAME_FLOOR_RATIO:-0.35}"
 APEX_QUESTION_WEIGHT="${APEX_QUESTION_WEIGHT:-0.20}"
+
+RIDGE_BUDGET_USES_EXPANSION="${RIDGE_BUDGET_USES_EXPANSION:-True}"
+RIDGE_TEMPORAL_BINS="${RIDGE_TEMPORAL_BINS:-4}"
+RIDGE_SPATIAL_BINS="${RIDGE_SPATIAL_BINS:-3}"
+RIDGE_FRAME_FLOOR_RATIO="${RIDGE_FRAME_FLOOR_RATIO:-0.42}"
+RIDGE_STRATA_STRENGTH="${RIDGE_STRATA_STRENGTH:-0.35}"
+RIDGE_BUDGET_TEMPERATURE="${RIDGE_BUDGET_TEMPERATURE:-0.75}"
+RIDGE_ATTENTION_WEIGHT="${RIDGE_ATTENTION_WEIGHT:-0.34}"
+RIDGE_MOTION_WEIGHT="${RIDGE_MOTION_WEIGHT:-0.24}"
+RIDGE_CONTRAST_WEIGHT="${RIDGE_CONTRAST_WEIGHT:-0.24}"
+RIDGE_QUESTION_WEIGHT="${RIDGE_QUESTION_WEIGHT:-0.12}"
+RIDGE_COVERAGE_RATIO="${RIDGE_COVERAGE_RATIO:-0.30}"
+RIDGE_MMR_LAMBDA="${RIDGE_MMR_LAMBDA:-0.78}"
+RIDGE_MIN_PER_FRAME="${RIDGE_MIN_PER_FRAME:-1}"
 
 split_csv() {
   local text="$1"
@@ -185,6 +200,10 @@ method_flash_args() {
     apexvid)
       printf 'compression_variant=apexvid,token_selection_method=%s,apex_evidence_ratio=%s,apex_event_ratio=%s,apex_memory_ratio=%s,apex_router_strength=%s,apex_summary_temperature=%s,apex_frame_floor_ratio=%s,apex_question_weight=%s' \
         "$APEX_TOKEN_SELECTION_METHOD" "$APEX_EVIDENCE_RATIO" "$APEX_EVENT_RATIO" "$APEX_MEMORY_RATIO" "$APEX_ROUTER_STRENGTH" "$APEX_SUMMARY_TEMPERATURE" "$APEX_FRAME_FLOOR_RATIO" "$APEX_QUESTION_WEIGHT"
+      ;;
+    ridgevid)
+      printf 'compression_variant=ridgevid,token_selection_method=%s,ridge_budget_uses_expansion=%s,ridge_temporal_bins=%s,ridge_spatial_bins=%s,ridge_frame_floor_ratio=%s,ridge_strata_strength=%s,ridge_budget_temperature=%s,ridge_attention_weight=%s,ridge_motion_weight=%s,ridge_contrast_weight=%s,ridge_question_weight=%s,ridge_coverage_ratio=%s,ridge_mmr_lambda=%s,ridge_min_per_frame=%s' \
+        "$RIDGE_TOKEN_SELECTION_METHOD" "$RIDGE_BUDGET_USES_EXPANSION" "$RIDGE_TEMPORAL_BINS" "$RIDGE_SPATIAL_BINS" "$RIDGE_FRAME_FLOOR_RATIO" "$RIDGE_STRATA_STRENGTH" "$RIDGE_BUDGET_TEMPERATURE" "$RIDGE_ATTENTION_WEIGHT" "$RIDGE_MOTION_WEIGHT" "$RIDGE_CONTRAST_WEIGHT" "$RIDGE_QUESTION_WEIGHT" "$RIDGE_COVERAGE_RATIO" "$RIDGE_MMR_LAMBDA" "$RIDGE_MIN_PER_FRAME"
       ;;
     visionzip)
       printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \

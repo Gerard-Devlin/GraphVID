@@ -55,6 +55,21 @@ class FlashVidConfig:
     apex_frame_floor_ratio: float = field(default=0.35)
     apex_question_weight: float = field(default=0.20)
 
+    # RidgeVID: temporal-ridge ledger + coverage-aware raw token selection.
+    ridge_budget_uses_expansion: bool = field(default=True)
+    ridge_temporal_bins: int = field(default=4)
+    ridge_spatial_bins: int = field(default=3)
+    ridge_frame_floor_ratio: float = field(default=0.42)
+    ridge_strata_strength: float = field(default=0.35)
+    ridge_budget_temperature: float = field(default=0.75)
+    ridge_attention_weight: float = field(default=0.34)
+    ridge_motion_weight: float = field(default=0.24)
+    ridge_contrast_weight: float = field(default=0.24)
+    ridge_question_weight: float = field(default=0.12)
+    ridge_coverage_ratio: float = field(default=0.30)
+    ridge_mmr_lambda: float = field(default=0.78)
+    ridge_min_per_frame: int = field(default=1)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)

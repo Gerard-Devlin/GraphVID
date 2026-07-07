@@ -115,6 +115,19 @@ def flashvid(
     apex_summary_temperature: float = 0.07,
     apex_frame_floor_ratio: float = 0.35,
     apex_question_weight: float = 0.20,
+    ridge_budget_uses_expansion: bool = True,
+    ridge_temporal_bins: int = 4,
+    ridge_spatial_bins: int = 3,
+    ridge_frame_floor_ratio: float = 0.42,
+    ridge_strata_strength: float = 0.35,
+    ridge_budget_temperature: float = 0.75,
+    ridge_attention_weight: float = 0.34,
+    ridge_motion_weight: float = 0.24,
+    ridge_contrast_weight: float = 0.24,
+    ridge_question_weight: float = 0.12,
+    ridge_coverage_ratio: float = 0.30,
+    ridge_mmr_lambda: float = 0.78,
+    ridge_min_per_frame: int = 1,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -341,6 +354,7 @@ def flashvid(
             "graphvid" keeps ADTS/DPC but replaces tree-style temporal merging with graph merging;
             "fastgraphvid" keeps an ATS branch plus GraphSTM residual medoids;
             "apexvid" enables adaptive evidence/event/memory compression;
+            "ridgevid" enables temporal-ridge ledger compression;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -464,8 +478,8 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid"):
-        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|fastgraphvid|apexvid")
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "ridgevid"):
+        raise ValueError(f"unsupported compression_variant={compression_variant!r}, expected flashvid|talon|graphvid|fastgraphvid|apexvid|ridgevid")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
 
@@ -514,6 +528,19 @@ def flashvid(
         apex_summary_temperature=apex_summary_temperature,
         apex_frame_floor_ratio=apex_frame_floor_ratio,
         apex_question_weight=apex_question_weight,
+        ridge_budget_uses_expansion=ridge_budget_uses_expansion,
+        ridge_temporal_bins=ridge_temporal_bins,
+        ridge_spatial_bins=ridge_spatial_bins,
+        ridge_frame_floor_ratio=ridge_frame_floor_ratio,
+        ridge_strata_strength=ridge_strata_strength,
+        ridge_budget_temperature=ridge_budget_temperature,
+        ridge_attention_weight=ridge_attention_weight,
+        ridge_motion_weight=ridge_motion_weight,
+        ridge_contrast_weight=ridge_contrast_weight,
+        ridge_question_weight=ridge_question_weight,
+        ridge_coverage_ratio=ridge_coverage_ratio,
+        ridge_mmr_lambda=ridge_mmr_lambda,
+        ridge_min_per_frame=ridge_min_per_frame,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

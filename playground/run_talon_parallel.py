@@ -94,6 +94,32 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.apex_frame_floor_ratio),
             "--apex_question_weight",
             str(args.apex_question_weight),
+            "--ridge_budget_uses_expansion",
+            _str_bool(args.ridge_budget_uses_expansion),
+            "--ridge_temporal_bins",
+            str(args.ridge_temporal_bins),
+            "--ridge_spatial_bins",
+            str(args.ridge_spatial_bins),
+            "--ridge_frame_floor_ratio",
+            str(args.ridge_frame_floor_ratio),
+            "--ridge_strata_strength",
+            str(args.ridge_strata_strength),
+            "--ridge_budget_temperature",
+            str(args.ridge_budget_temperature),
+            "--ridge_attention_weight",
+            str(args.ridge_attention_weight),
+            "--ridge_motion_weight",
+            str(args.ridge_motion_weight),
+            "--ridge_contrast_weight",
+            str(args.ridge_contrast_weight),
+            "--ridge_question_weight",
+            str(args.ridge_question_weight),
+            "--ridge_coverage_ratio",
+            str(args.ridge_coverage_ratio),
+            "--ridge_mmr_lambda",
+            str(args.ridge_mmr_lambda),
+            "--ridge_min_per_frame",
+            str(args.ridge_min_per_frame),
             "--adaptive_token_budget",
             "False",
             "--talon_adaptive_target_enabled",
@@ -614,7 +640,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "ridgevid"])
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
     parser.add_argument("--apex_memory_ratio", type=float, default=0.25)
@@ -622,6 +648,19 @@ def main() -> None:
     parser.add_argument("--apex_summary_temperature", type=float, default=0.07)
     parser.add_argument("--apex_frame_floor_ratio", type=float, default=0.35)
     parser.add_argument("--apex_question_weight", type=float, default=0.20)
+    parser.add_argument("--ridge_budget_uses_expansion", type=_parse_bool, default=True)
+    parser.add_argument("--ridge_temporal_bins", type=int, default=4)
+    parser.add_argument("--ridge_spatial_bins", type=int, default=3)
+    parser.add_argument("--ridge_frame_floor_ratio", type=float, default=0.42)
+    parser.add_argument("--ridge_strata_strength", type=float, default=0.35)
+    parser.add_argument("--ridge_budget_temperature", type=float, default=0.75)
+    parser.add_argument("--ridge_attention_weight", type=float, default=0.34)
+    parser.add_argument("--ridge_motion_weight", type=float, default=0.24)
+    parser.add_argument("--ridge_contrast_weight", type=float, default=0.24)
+    parser.add_argument("--ridge_question_weight", type=float, default=0.12)
+    parser.add_argument("--ridge_coverage_ratio", type=float, default=0.30)
+    parser.add_argument("--ridge_mmr_lambda", type=float, default=0.78)
+    parser.add_argument("--ridge_min_per_frame", type=int, default=1)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
     parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")

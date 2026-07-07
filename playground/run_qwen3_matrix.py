@@ -64,7 +64,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
-    allowed = {"graphvid", "flashvid", "talon", "apexvid", "fastvid", "visionzip", "fastgraphvid", "curvevid"}
+    allowed = {"graphvid", "flashvid", "talon", "apexvid", "ridgevid", "fastvid", "visionzip", "fastgraphvid", "curvevid"}
     unknown = sorted(set(methods) - allowed)
     if unknown:
         raise ValueError(f"unknown methods: {unknown}; allowed={sorted(allowed)}")
@@ -97,7 +97,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid"):
+    if method in ("talon", "apexvid", "ridgevid"):
         return "ours"
     return method
 
@@ -366,6 +366,32 @@ def _build_command(
                 str(args.apex_frame_floor_ratio),
                 "--apex_question_weight",
                 str(args.apex_question_weight),
+                "--ridge_budget_uses_expansion",
+                str(args.ridge_budget_uses_expansion),
+                "--ridge_temporal_bins",
+                str(args.ridge_temporal_bins),
+                "--ridge_spatial_bins",
+                str(args.ridge_spatial_bins),
+                "--ridge_frame_floor_ratio",
+                str(args.ridge_frame_floor_ratio),
+                "--ridge_strata_strength",
+                str(args.ridge_strata_strength),
+                "--ridge_budget_temperature",
+                str(args.ridge_budget_temperature),
+                "--ridge_attention_weight",
+                str(args.ridge_attention_weight),
+                "--ridge_motion_weight",
+                str(args.ridge_motion_weight),
+                "--ridge_contrast_weight",
+                str(args.ridge_contrast_weight),
+                "--ridge_question_weight",
+                str(args.ridge_question_weight),
+                "--ridge_coverage_ratio",
+                str(args.ridge_coverage_ratio),
+                "--ridge_mmr_lambda",
+                str(args.ridge_mmr_lambda),
+                "--ridge_min_per_frame",
+                str(args.ridge_min_per_frame),
             ]
         )
     cmd.extend(args.extra_args)
@@ -473,7 +499,7 @@ def main() -> None:
     parser.add_argument("--model_backend", default="qwen3_vl")
     parser.add_argument("--hf_home", default=os.environ.get("HF_HOME", "/gluster/envs/users/wuzhijian/hf_home"))
     parser.add_argument("--datasets", default="", help="Comma list: name=path. Defaults to standard asset names.")
-    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon,apexvid,fastvid,visionzip,fastgraphvid,curvevid.")
+    parser.add_argument("--methods", default="graphvid", help="Comma list: graphvid,flashvid,talon,apexvid,ridgevid,fastvid,visionzip,fastgraphvid,curvevid.")
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
     parser.add_argument("--output_dir", default="logs/efficiency/matrix")
@@ -528,6 +554,19 @@ def main() -> None:
     parser.add_argument("--apex_summary_temperature", type=float, default=0.07)
     parser.add_argument("--apex_frame_floor_ratio", type=float, default=0.35)
     parser.add_argument("--apex_question_weight", type=float, default=0.20)
+    parser.add_argument("--ridge_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--ridge_temporal_bins", type=int, default=4)
+    parser.add_argument("--ridge_spatial_bins", type=int, default=3)
+    parser.add_argument("--ridge_frame_floor_ratio", type=float, default=0.42)
+    parser.add_argument("--ridge_strata_strength", type=float, default=0.35)
+    parser.add_argument("--ridge_budget_temperature", type=float, default=0.75)
+    parser.add_argument("--ridge_attention_weight", type=float, default=0.34)
+    parser.add_argument("--ridge_motion_weight", type=float, default=0.24)
+    parser.add_argument("--ridge_contrast_weight", type=float, default=0.24)
+    parser.add_argument("--ridge_question_weight", type=float, default=0.12)
+    parser.add_argument("--ridge_coverage_ratio", type=float, default=0.30)
+    parser.add_argument("--ridge_mmr_lambda", type=float, default=0.78)
+    parser.add_argument("--ridge_min_per_frame", type=int, default=1)
     parser.add_argument(
         "--adapter_budget_uses_expansion",
         "--external_budget_uses_expansion",
