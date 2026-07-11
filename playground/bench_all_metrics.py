@@ -105,19 +105,20 @@ class BenchmarkArgs:
     apex_summary_temperature: float = field(default=0.07)
     apex_frame_floor_ratio: float = field(default=0.35)
     apex_question_weight: float = field(default=0.20)
-    ridge_budget_uses_expansion: bool = field(default=True)
-    ridge_temporal_bins: int = field(default=4)
-    ridge_spatial_bins: int = field(default=3)
-    ridge_frame_floor_ratio: float = field(default=0.42)
-    ridge_strata_strength: float = field(default=0.35)
-    ridge_budget_temperature: float = field(default=0.75)
-    ridge_attention_weight: float = field(default=0.34)
-    ridge_motion_weight: float = field(default=0.24)
-    ridge_contrast_weight: float = field(default=0.24)
-    ridge_question_weight: float = field(default=0.12)
-    ridge_coverage_ratio: float = field(default=0.30)
-    ridge_mmr_lambda: float = field(default=0.78)
-    ridge_min_per_frame: int = field(default=1)
+    cert_budget_uses_expansion: bool = field(default=True)
+    cert_query_atoms: int = field(default=6)
+    cert_temporal_bins: int = field(default=8)
+    cert_spatial_bins: int = field(default=3)
+    cert_candidate_multiplier: float = field(default=3.0)
+    cert_query_weight: float = field(default=0.20)
+    cert_temporal_weight: float = field(default=0.20)
+    cert_detail_weight: float = field(default=0.10)
+    cert_repair_ratio: float = field(default=0.20)
+    cert_fusion_alpha: float = field(default=0.25)
+    cert_assignment_temperature: float = field(default=0.07)
+    cert_track_threshold: float = field(default=0.82)
+    cert_spatial_penalty: float = field(default=0.08)
+    cert_metric_dim: int = field(default=256)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
@@ -2239,19 +2240,20 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         apex_summary_temperature=args.apex_summary_temperature,
         apex_frame_floor_ratio=args.apex_frame_floor_ratio,
         apex_question_weight=args.apex_question_weight,
-        ridge_budget_uses_expansion=args.ridge_budget_uses_expansion,
-        ridge_temporal_bins=args.ridge_temporal_bins,
-        ridge_spatial_bins=args.ridge_spatial_bins,
-        ridge_frame_floor_ratio=args.ridge_frame_floor_ratio,
-        ridge_strata_strength=args.ridge_strata_strength,
-        ridge_budget_temperature=args.ridge_budget_temperature,
-        ridge_attention_weight=args.ridge_attention_weight,
-        ridge_motion_weight=args.ridge_motion_weight,
-        ridge_contrast_weight=args.ridge_contrast_weight,
-        ridge_question_weight=args.ridge_question_weight,
-        ridge_coverage_ratio=args.ridge_coverage_ratio,
-        ridge_mmr_lambda=args.ridge_mmr_lambda,
-        ridge_min_per_frame=args.ridge_min_per_frame,
+        cert_budget_uses_expansion=args.cert_budget_uses_expansion,
+        cert_query_atoms=args.cert_query_atoms,
+        cert_temporal_bins=args.cert_temporal_bins,
+        cert_spatial_bins=args.cert_spatial_bins,
+        cert_candidate_multiplier=args.cert_candidate_multiplier,
+        cert_query_weight=args.cert_query_weight,
+        cert_temporal_weight=args.cert_temporal_weight,
+        cert_detail_weight=args.cert_detail_weight,
+        cert_repair_ratio=args.cert_repair_ratio,
+        cert_fusion_alpha=args.cert_fusion_alpha,
+        cert_assignment_temperature=args.cert_assignment_temperature,
+        cert_track_threshold=args.cert_track_threshold,
+        cert_spatial_penalty=args.cert_spatial_penalty,
+        cert_metric_dim=args.cert_metric_dim,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
@@ -2800,8 +2802,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[talon-active][ours]"
         elif variant_name == "apexvid":
             ours_prefix = "[apexvid-active][ours]"
-        elif variant_name == "ridgevid":
-            ours_prefix = "[ridgevid-active][ours]"
+        elif variant_name == "certvid":
+            ours_prefix = "[certvid-active][ours]"
         else:
             ours_prefix = "[adapter-active][ours]"
         print(

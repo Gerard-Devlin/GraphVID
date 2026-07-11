@@ -532,8 +532,35 @@ def Qwen3VLModel_forward(
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
         flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
-        if (
-            str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "talon"
+        compression_variant = str(
+            getattr(flashvid_config, "compression_variant", "flashvid")
+        ).strip().lower()
+        if compression_variant == "certvid":
+            from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
+
+            certvid_plan = getattr(flashvid_config, "_certvid_plan", None)
+            if certvid_plan is None:
+                raise RuntimeError("CertVID compression did not publish its DeepStack aggregation plan")
+            try:
+                compressed_deepstack_video = compress_certvid_deepstack(
+                    deepstack_video_embeds,
+                    certvid_plan,
+                )
+                if image_mask is not None:
+                    deepstack_visual_embeds = merge_certvid_visual_deepstack(
+                        deepstack_image_embeds=deepstack_image_embeds,
+                        compressed_video_embeds=compressed_deepstack_video,
+                        image_mask=image_mask,
+                        video_mask=video_mask,
+                        kept_video_indices=keep_visual_global_indices,
+                    )
+                else:
+                    deepstack_visual_embeds = compressed_deepstack_video
+            finally:
+                # The plan owns GPU tensors and is only valid for this prefill.
+                flashvid_config._certvid_plan = None
+        elif (
+            compression_variant == "talon"
             and not _talon_should_keep_deepstack(flashvid_config)
         ):
             deepstack_visual_embeds = None
@@ -679,11 +706,18 @@ def Qwen3VLTextModel_forward(
         raise ValueError("FlashVid configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
+    is_certvid = str(
+        getattr(flashvid_config, "compression_variant", "flashvid")
+    ).strip().lower() == "certvid"
+    enable_inner_pruning = is_prefill and (
+        not is_certvid
+        or float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
+    )
 
     # decoder layers
     for layer_idx, decoder_layer in enumerate(self.layers):
         # Only prunes visual tokens at prefilling stage.
-        if is_prefill:
+        if enable_inner_pruning:
             if layer_idx == flashvid_config.pruning_layer - 1:
                 kwargs["output_attentions"] = True
             elif layer_idx == flashvid_config.pruning_layer:
