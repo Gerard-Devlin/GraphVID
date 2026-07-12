@@ -122,6 +122,32 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.cert_spatial_penalty),
             "--cert_metric_dim",
             str(args.cert_metric_dim),
+            "--certv2_budget_uses_expansion",
+            _str_bool(args.certv2_budget_uses_expansion),
+            "--certv2_query_atoms",
+            str(args.certv2_query_atoms),
+            "--certv2_temporal_bins",
+            str(args.certv2_temporal_bins),
+            "--certv2_spatial_bins",
+            str(args.certv2_spatial_bins),
+            "--certv2_candidate_multiplier",
+            str(args.certv2_candidate_multiplier),
+            "--certv2_query_weight",
+            str(args.certv2_query_weight),
+            "--certv2_frame_floor_ratio",
+            str(args.certv2_frame_floor_ratio),
+            "--certv2_diversity_weight",
+            str(args.certv2_diversity_weight),
+            "--certv2_coverage_weight",
+            str(args.certv2_coverage_weight),
+            "--certv2_density_neighbors",
+            str(args.certv2_density_neighbors),
+            "--certv2_track_threshold",
+            str(args.certv2_track_threshold),
+            "--certv2_spatial_penalty",
+            str(args.certv2_spatial_penalty),
+            "--certv2_metric_dim",
+            str(args.certv2_metric_dim),
             "--adaptive_token_budget",
             "False",
             "--talon_adaptive_target_enabled",
@@ -642,7 +668,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2"])
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
     parser.add_argument("--apex_memory_ratio", type=float, default=0.25)
@@ -664,6 +690,19 @@ def main() -> None:
     parser.add_argument("--cert_track_threshold", type=float, default=0.82)
     parser.add_argument("--cert_spatial_penalty", type=float, default=0.08)
     parser.add_argument("--cert_metric_dim", type=int, default=256)
+    parser.add_argument("--certv2_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv2_query_atoms", type=int, default=6)
+    parser.add_argument("--certv2_temporal_bins", type=int, default=12)
+    parser.add_argument("--certv2_spatial_bins", type=int, default=4)
+    parser.add_argument("--certv2_candidate_multiplier", type=float, default=3.0)
+    parser.add_argument("--certv2_query_weight", type=float, default=0.16)
+    parser.add_argument("--certv2_frame_floor_ratio", type=float, default=0.28)
+    parser.add_argument("--certv2_diversity_weight", type=float, default=0.24)
+    parser.add_argument("--certv2_coverage_weight", type=float, default=0.12)
+    parser.add_argument("--certv2_density_neighbors", type=int, default=4)
+    parser.add_argument("--certv2_track_threshold", type=float, default=0.80)
+    parser.add_argument("--certv2_spatial_penalty", type=float, default=0.06)
+    parser.add_argument("--certv2_metric_dim", type=int, default=256)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
     parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")

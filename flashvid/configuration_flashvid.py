@@ -71,6 +71,21 @@ class FlashVidConfig:
     cert_spatial_penalty: float = field(default=0.08)
     cert_metric_dim: int = field(default=256)
 
+    # CertVID V2: pure-pruning trajectory coreset with virtual support.
+    certv2_budget_uses_expansion: bool = field(default=True)
+    certv2_query_atoms: int = field(default=6)
+    certv2_temporal_bins: int = field(default=12)
+    certv2_spatial_bins: int = field(default=4)
+    certv2_candidate_multiplier: float = field(default=3.0)
+    certv2_query_weight: float = field(default=0.16)
+    certv2_frame_floor_ratio: float = field(default=0.28)
+    certv2_diversity_weight: float = field(default=0.24)
+    certv2_coverage_weight: float = field(default=0.12)
+    certv2_density_neighbors: int = field(default=4)
+    certv2_track_threshold: float = field(default=0.80)
+    certv2_spatial_penalty: float = field(default=0.06)
+    certv2_metric_dim: int = field(default=256)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)

@@ -108,6 +108,21 @@ CERT_TRACK_THRESHOLD="${CERT_TRACK_THRESHOLD:-0.82}"
 CERT_SPATIAL_PENALTY="${CERT_SPATIAL_PENALTY:-0.08}"
 CERT_METRIC_DIM="${CERT_METRIC_DIM:-256}"
 
+CERTV2_TOKEN_SELECTION_METHOD="${CERTV2_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
+CERTV2_BUDGET_USES_EXPANSION="${CERTV2_BUDGET_USES_EXPANSION:-True}"
+CERTV2_QUERY_ATOMS="${CERTV2_QUERY_ATOMS:-6}"
+CERTV2_TEMPORAL_BINS="${CERTV2_TEMPORAL_BINS:-12}"
+CERTV2_SPATIAL_BINS="${CERTV2_SPATIAL_BINS:-4}"
+CERTV2_CANDIDATE_MULTIPLIER="${CERTV2_CANDIDATE_MULTIPLIER:-3.0}"
+CERTV2_QUERY_WEIGHT="${CERTV2_QUERY_WEIGHT:-0.16}"
+CERTV2_FRAME_FLOOR_RATIO="${CERTV2_FRAME_FLOOR_RATIO:-0.28}"
+CERTV2_DIVERSITY_WEIGHT="${CERTV2_DIVERSITY_WEIGHT:-0.24}"
+CERTV2_COVERAGE_WEIGHT="${CERTV2_COVERAGE_WEIGHT:-0.12}"
+CERTV2_DENSITY_NEIGHBORS="${CERTV2_DENSITY_NEIGHBORS:-4}"
+CERTV2_TRACK_THRESHOLD="${CERTV2_TRACK_THRESHOLD:-0.80}"
+CERTV2_SPATIAL_PENALTY="${CERTV2_SPATIAL_PENALTY:-0.06}"
+CERTV2_METRIC_DIM="${CERTV2_METRIC_DIM:-256}"
+
 split_csv() {
   local text="$1"
   text="${text//,/ }"
@@ -205,6 +220,10 @@ method_flash_args() {
     certvid)
       printf 'compression_variant=certvid,token_selection_method=%s,cert_budget_uses_expansion=%s,cert_query_atoms=%s,cert_temporal_bins=%s,cert_spatial_bins=%s,cert_candidate_multiplier=%s,cert_query_weight=%s,cert_temporal_weight=%s,cert_detail_weight=%s,cert_repair_ratio=%s,cert_fusion_alpha=%s,cert_assignment_temperature=%s,cert_track_threshold=%s,cert_spatial_penalty=%s,cert_metric_dim=%s' \
         "$CERT_TOKEN_SELECTION_METHOD" "$CERT_BUDGET_USES_EXPANSION" "$CERT_QUERY_ATOMS" "$CERT_TEMPORAL_BINS" "$CERT_SPATIAL_BINS" "$CERT_CANDIDATE_MULTIPLIER" "$CERT_QUERY_WEIGHT" "$CERT_TEMPORAL_WEIGHT" "$CERT_DETAIL_WEIGHT" "$CERT_REPAIR_RATIO" "$CERT_FUSION_ALPHA" "$CERT_ASSIGNMENT_TEMPERATURE" "$CERT_TRACK_THRESHOLD" "$CERT_SPATIAL_PENALTY" "$CERT_METRIC_DIM"
+      ;;
+    certvid_v2)
+      printf 'compression_variant=certvid_v2,token_selection_method=%s,certv2_budget_uses_expansion=%s,certv2_query_atoms=%s,certv2_temporal_bins=%s,certv2_spatial_bins=%s,certv2_candidate_multiplier=%s,certv2_query_weight=%s,certv2_frame_floor_ratio=%s,certv2_diversity_weight=%s,certv2_coverage_weight=%s,certv2_density_neighbors=%s,certv2_track_threshold=%s,certv2_spatial_penalty=%s,certv2_metric_dim=%s' \
+        "$CERTV2_TOKEN_SELECTION_METHOD" "$CERTV2_BUDGET_USES_EXPANSION" "$CERTV2_QUERY_ATOMS" "$CERTV2_TEMPORAL_BINS" "$CERTV2_SPATIAL_BINS" "$CERTV2_CANDIDATE_MULTIPLIER" "$CERTV2_QUERY_WEIGHT" "$CERTV2_FRAME_FLOOR_RATIO" "$CERTV2_DIVERSITY_WEIGHT" "$CERTV2_COVERAGE_WEIGHT" "$CERTV2_DENSITY_NEIGHBORS" "$CERTV2_TRACK_THRESHOLD" "$CERTV2_SPATIAL_PENALTY" "$CERTV2_METRIC_DIM"
       ;;
     visionzip)
       printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \

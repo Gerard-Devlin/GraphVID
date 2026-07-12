@@ -23,11 +23,11 @@ def _fmt(value: float | None) -> str:
 
 
 def _phase_name(method: str) -> str:
-    return "ours" if method in {"talon", "apexvid", "certvid"} else method
+    return "ours" if method in {"talon", "apexvid", "certvid", "certvid_v2"} else method
 
 
 def _bench_record_phase_name(method: str) -> str:
-    return "ours" if method in {"fastvid", "visionzip", "fastgraphvid", "curvevid", "talon", "apexvid", "certvid"} else method
+    return "ours" if method in {"fastvid", "visionzip", "fastgraphvid", "curvevid", "talon", "apexvid", "certvid", "certvid_v2"} else method
 
 
 def _bench_scores(summary_path: Path, method: str) -> dict[str, float | None]:
@@ -99,7 +99,7 @@ def _find_bench_jsonl(summary_path: Path, method: str) -> Path | None:
         summary_path.with_name(summary_path.name.replace("_summary.json", f"_{phase}.jsonl")),
         summary_path.with_name(summary_path.name.replace("_summary.json", f"_{method}.jsonl")),
     ]
-    if method in {"fastvid", "visionzip", "fastgraphvid", "curvevid", "apexvid", "certvid"}:
+    if method in {"fastvid", "visionzip", "fastgraphvid", "curvevid", "apexvid", "certvid", "certvid_v2"}:
         candidates.append(summary_path.with_name(summary_path.name.replace("_summary.json", "_ours.jsonl")))
     for path in candidates:
         if path.exists():

@@ -708,7 +708,7 @@ def Qwen3VLTextModel_forward(
     is_prefill = hidden_states.shape[1] > 1
     is_certvid = str(
         getattr(flashvid_config, "compression_variant", "flashvid")
-    ).strip().lower() == "certvid"
+    ).strip().lower() in {"certvid", "certvid_v2"}
     enable_inner_pruning = is_prefill and (
         not is_certvid
         or float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999

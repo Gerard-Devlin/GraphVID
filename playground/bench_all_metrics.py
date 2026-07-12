@@ -119,6 +119,19 @@ class BenchmarkArgs:
     cert_track_threshold: float = field(default=0.82)
     cert_spatial_penalty: float = field(default=0.08)
     cert_metric_dim: int = field(default=256)
+    certv2_budget_uses_expansion: bool = field(default=True)
+    certv2_query_atoms: int = field(default=6)
+    certv2_temporal_bins: int = field(default=12)
+    certv2_spatial_bins: int = field(default=4)
+    certv2_candidate_multiplier: float = field(default=3.0)
+    certv2_query_weight: float = field(default=0.16)
+    certv2_frame_floor_ratio: float = field(default=0.28)
+    certv2_diversity_weight: float = field(default=0.24)
+    certv2_coverage_weight: float = field(default=0.12)
+    certv2_density_neighbors: int = field(default=4)
+    certv2_track_threshold: float = field(default=0.80)
+    certv2_spatial_penalty: float = field(default=0.06)
+    certv2_metric_dim: int = field(default=256)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
@@ -2254,6 +2267,19 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         cert_track_threshold=args.cert_track_threshold,
         cert_spatial_penalty=args.cert_spatial_penalty,
         cert_metric_dim=args.cert_metric_dim,
+        certv2_budget_uses_expansion=args.certv2_budget_uses_expansion,
+        certv2_query_atoms=args.certv2_query_atoms,
+        certv2_temporal_bins=args.certv2_temporal_bins,
+        certv2_spatial_bins=args.certv2_spatial_bins,
+        certv2_candidate_multiplier=args.certv2_candidate_multiplier,
+        certv2_query_weight=args.certv2_query_weight,
+        certv2_frame_floor_ratio=args.certv2_frame_floor_ratio,
+        certv2_diversity_weight=args.certv2_diversity_weight,
+        certv2_coverage_weight=args.certv2_coverage_weight,
+        certv2_density_neighbors=args.certv2_density_neighbors,
+        certv2_track_threshold=args.certv2_track_threshold,
+        certv2_spatial_penalty=args.certv2_spatial_penalty,
+        certv2_metric_dim=args.certv2_metric_dim,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
@@ -2804,6 +2830,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[apexvid-active][ours]"
         elif variant_name == "certvid":
             ours_prefix = "[certvid-active][ours]"
+        elif variant_name == "certvid_v2":
+            ours_prefix = "[certvid-v2-active][ours]"
         else:
             ours_prefix = "[adapter-active][ours]"
         print(

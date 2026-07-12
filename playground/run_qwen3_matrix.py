@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2"):
         return "ours"
     return method
 
@@ -396,6 +396,31 @@ def _build_command(
                 str(args.cert_spatial_penalty),
                 "--cert_metric_dim",
                 str(args.cert_metric_dim),
+                "--certv2_budget_uses_expansion" if args.certv2_budget_uses_expansion else "--no-certv2_budget_uses_expansion",
+                "--certv2_query_atoms",
+                str(args.certv2_query_atoms),
+                "--certv2_temporal_bins",
+                str(args.certv2_temporal_bins),
+                "--certv2_spatial_bins",
+                str(args.certv2_spatial_bins),
+                "--certv2_candidate_multiplier",
+                str(args.certv2_candidate_multiplier),
+                "--certv2_query_weight",
+                str(args.certv2_query_weight),
+                "--certv2_frame_floor_ratio",
+                str(args.certv2_frame_floor_ratio),
+                "--certv2_diversity_weight",
+                str(args.certv2_diversity_weight),
+                "--certv2_coverage_weight",
+                str(args.certv2_coverage_weight),
+                "--certv2_density_neighbors",
+                str(args.certv2_density_neighbors),
+                "--certv2_track_threshold",
+                str(args.certv2_track_threshold),
+                "--certv2_spatial_penalty",
+                str(args.certv2_spatial_penalty),
+                "--certv2_metric_dim",
+                str(args.certv2_metric_dim),
             ]
         )
     cmd.extend(args.extra_args)
@@ -506,7 +531,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -576,6 +601,19 @@ def main() -> None:
     parser.add_argument("--cert_track_threshold", type=float, default=0.82)
     parser.add_argument("--cert_spatial_penalty", type=float, default=0.08)
     parser.add_argument("--cert_metric_dim", type=int, default=256)
+    parser.add_argument("--certv2_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv2_query_atoms", type=int, default=6)
+    parser.add_argument("--certv2_temporal_bins", type=int, default=12)
+    parser.add_argument("--certv2_spatial_bins", type=int, default=4)
+    parser.add_argument("--certv2_candidate_multiplier", type=float, default=3.0)
+    parser.add_argument("--certv2_query_weight", type=float, default=0.16)
+    parser.add_argument("--certv2_frame_floor_ratio", type=float, default=0.28)
+    parser.add_argument("--certv2_diversity_weight", type=float, default=0.24)
+    parser.add_argument("--certv2_coverage_weight", type=float, default=0.12)
+    parser.add_argument("--certv2_density_neighbors", type=int, default=4)
+    parser.add_argument("--certv2_track_threshold", type=float, default=0.80)
+    parser.add_argument("--certv2_spatial_penalty", type=float, default=0.06)
+    parser.add_argument("--certv2_metric_dim", type=int, default=256)
     parser.add_argument(
         "--adapter_budget_uses_expansion",
         "--external_budget_uses_expansion",
