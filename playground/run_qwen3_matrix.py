@@ -421,6 +421,22 @@ def _build_command(
                 str(args.certv2_spatial_penalty),
                 "--certv2_metric_dim",
                 str(args.certv2_metric_dim),
+                "--certv2_repair_ratio",
+                str(args.certv2_repair_ratio),
+                "--certv2_repair_ratio_high",
+                str(args.certv2_repair_ratio_high),
+                "--certv2_router_strength",
+                str(args.certv2_router_strength),
+                "--certv2_protect_ratio",
+                str(args.certv2_protect_ratio),
+                "--certv2_swap_margin",
+                str(args.certv2_swap_margin),
+                "--certv2_fusion_alpha",
+                str(args.certv2_fusion_alpha),
+                "--certv2_repair_fusion_alpha",
+                str(args.certv2_repair_fusion_alpha),
+                "--certv2_assignment_temperature",
+                str(args.certv2_assignment_temperature),
             ]
         )
     cmd.extend(args.extra_args)
@@ -603,17 +619,25 @@ def main() -> None:
     parser.add_argument("--cert_metric_dim", type=int, default=256)
     parser.add_argument("--certv2_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--certv2_query_atoms", type=int, default=6)
-    parser.add_argument("--certv2_temporal_bins", type=int, default=12)
-    parser.add_argument("--certv2_spatial_bins", type=int, default=4)
+    parser.add_argument("--certv2_temporal_bins", type=int, default=8)
+    parser.add_argument("--certv2_spatial_bins", type=int, default=3)
     parser.add_argument("--certv2_candidate_multiplier", type=float, default=3.0)
-    parser.add_argument("--certv2_query_weight", type=float, default=0.16)
-    parser.add_argument("--certv2_frame_floor_ratio", type=float, default=0.28)
-    parser.add_argument("--certv2_diversity_weight", type=float, default=0.24)
-    parser.add_argument("--certv2_coverage_weight", type=float, default=0.12)
+    parser.add_argument("--certv2_query_weight", type=float, default=0.18)
+    parser.add_argument("--certv2_frame_floor_ratio", type=float, default=0.08)
+    parser.add_argument("--certv2_diversity_weight", type=float, default=0.12)
+    parser.add_argument("--certv2_coverage_weight", type=float, default=0.10)
     parser.add_argument("--certv2_density_neighbors", type=int, default=4)
-    parser.add_argument("--certv2_track_threshold", type=float, default=0.80)
-    parser.add_argument("--certv2_spatial_penalty", type=float, default=0.06)
+    parser.add_argument("--certv2_track_threshold", type=float, default=0.82)
+    parser.add_argument("--certv2_spatial_penalty", type=float, default=0.08)
     parser.add_argument("--certv2_metric_dim", type=int, default=256)
+    parser.add_argument("--certv2_repair_ratio", type=float, default=0.05)
+    parser.add_argument("--certv2_repair_ratio_high", type=float, default=0.13)
+    parser.add_argument("--certv2_router_strength", type=float, default=0.65)
+    parser.add_argument("--certv2_protect_ratio", type=float, default=0.30)
+    parser.add_argument("--certv2_swap_margin", type=float, default=0.02)
+    parser.add_argument("--certv2_fusion_alpha", type=float, default=0.25)
+    parser.add_argument("--certv2_repair_fusion_alpha", type=float, default=0.08)
+    parser.add_argument("--certv2_assignment_temperature", type=float, default=0.07)
     parser.add_argument(
         "--adapter_budget_uses_expansion",
         "--external_budget_uses_expansion",

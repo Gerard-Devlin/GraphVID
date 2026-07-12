@@ -131,17 +131,25 @@ def flashvid(
     cert_metric_dim: int = 256,
     certv2_budget_uses_expansion: bool = True,
     certv2_query_atoms: int = 6,
-    certv2_temporal_bins: int = 12,
-    certv2_spatial_bins: int = 4,
+    certv2_temporal_bins: int = 8,
+    certv2_spatial_bins: int = 3,
     certv2_candidate_multiplier: float = 3.0,
-    certv2_query_weight: float = 0.16,
-    certv2_frame_floor_ratio: float = 0.28,
-    certv2_diversity_weight: float = 0.24,
-    certv2_coverage_weight: float = 0.12,
+    certv2_query_weight: float = 0.18,
+    certv2_frame_floor_ratio: float = 0.08,
+    certv2_diversity_weight: float = 0.12,
+    certv2_coverage_weight: float = 0.10,
     certv2_density_neighbors: int = 4,
-    certv2_track_threshold: float = 0.80,
-    certv2_spatial_penalty: float = 0.06,
+    certv2_track_threshold: float = 0.82,
+    certv2_spatial_penalty: float = 0.08,
     certv2_metric_dim: int = 256,
+    certv2_repair_ratio: float = 0.05,
+    certv2_repair_ratio_high: float = 0.13,
+    certv2_router_strength: float = 0.65,
+    certv2_protect_ratio: float = 0.30,
+    certv2_swap_margin: float = 0.02,
+    certv2_fusion_alpha: float = 0.25,
+    certv2_repair_fusion_alpha: float = 0.08,
+    certv2_assignment_temperature: float = 0.07,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -369,7 +377,7 @@ def flashvid(
             "fastgraphvid" keeps an ATS branch plus GraphSTM residual medoids;
             "apexvid" enables adaptive evidence/event/memory compression;
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
-            "certvid_v2" enables pure-pruning trajectory coverage with virtual support;
+            "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -573,6 +581,14 @@ def flashvid(
         certv2_track_threshold=certv2_track_threshold,
         certv2_spatial_penalty=certv2_spatial_penalty,
         certv2_metric_dim=certv2_metric_dim,
+        certv2_repair_ratio=certv2_repair_ratio,
+        certv2_repair_ratio_high=certv2_repair_ratio_high,
+        certv2_router_strength=certv2_router_strength,
+        certv2_protect_ratio=certv2_protect_ratio,
+        certv2_swap_margin=certv2_swap_margin,
+        certv2_fusion_alpha=certv2_fusion_alpha,
+        certv2_repair_fusion_alpha=certv2_repair_fusion_alpha,
+        certv2_assignment_temperature=certv2_assignment_temperature,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

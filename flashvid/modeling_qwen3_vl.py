@@ -535,12 +535,14 @@ def Qwen3VLModel_forward(
         compression_variant = str(
             getattr(flashvid_config, "compression_variant", "flashvid")
         ).strip().lower()
-        if compression_variant == "certvid":
+        if compression_variant in {"certvid", "certvid_v2"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
             certvid_plan = getattr(flashvid_config, "_certvid_plan", None)
             if certvid_plan is None:
-                raise RuntimeError("CertVID compression did not publish its DeepStack aggregation plan")
+                raise RuntimeError(
+                    f"{compression_variant} compression did not publish its DeepStack aggregation plan"
+                )
             try:
                 compressed_deepstack_video = compress_certvid_deepstack(
                     deepstack_video_embeds,

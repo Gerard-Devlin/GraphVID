@@ -121,17 +121,25 @@ class BenchmarkArgs:
     cert_metric_dim: int = field(default=256)
     certv2_budget_uses_expansion: bool = field(default=True)
     certv2_query_atoms: int = field(default=6)
-    certv2_temporal_bins: int = field(default=12)
-    certv2_spatial_bins: int = field(default=4)
+    certv2_temporal_bins: int = field(default=8)
+    certv2_spatial_bins: int = field(default=3)
     certv2_candidate_multiplier: float = field(default=3.0)
-    certv2_query_weight: float = field(default=0.16)
-    certv2_frame_floor_ratio: float = field(default=0.28)
-    certv2_diversity_weight: float = field(default=0.24)
-    certv2_coverage_weight: float = field(default=0.12)
+    certv2_query_weight: float = field(default=0.18)
+    certv2_frame_floor_ratio: float = field(default=0.08)
+    certv2_diversity_weight: float = field(default=0.12)
+    certv2_coverage_weight: float = field(default=0.10)
     certv2_density_neighbors: int = field(default=4)
-    certv2_track_threshold: float = field(default=0.80)
-    certv2_spatial_penalty: float = field(default=0.06)
+    certv2_track_threshold: float = field(default=0.82)
+    certv2_spatial_penalty: float = field(default=0.08)
     certv2_metric_dim: int = field(default=256)
+    certv2_repair_ratio: float = field(default=0.05)
+    certv2_repair_ratio_high: float = field(default=0.13)
+    certv2_router_strength: float = field(default=0.65)
+    certv2_protect_ratio: float = field(default=0.30)
+    certv2_swap_margin: float = field(default=0.02)
+    certv2_fusion_alpha: float = field(default=0.25)
+    certv2_repair_fusion_alpha: float = field(default=0.08)
+    certv2_assignment_temperature: float = field(default=0.07)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
@@ -2280,6 +2288,14 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv2_track_threshold=args.certv2_track_threshold,
         certv2_spatial_penalty=args.certv2_spatial_penalty,
         certv2_metric_dim=args.certv2_metric_dim,
+        certv2_repair_ratio=args.certv2_repair_ratio,
+        certv2_repair_ratio_high=args.certv2_repair_ratio_high,
+        certv2_router_strength=args.certv2_router_strength,
+        certv2_protect_ratio=args.certv2_protect_ratio,
+        certv2_swap_margin=args.certv2_swap_margin,
+        certv2_fusion_alpha=args.certv2_fusion_alpha,
+        certv2_repair_fusion_alpha=args.certv2_repair_fusion_alpha,
+        certv2_assignment_temperature=args.certv2_assignment_temperature,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
