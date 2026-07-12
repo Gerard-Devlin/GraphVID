@@ -7,12 +7,21 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-export HF_HOME="${HF_HOME:-/gluster/envs/users/wuzhijian/hf_home}"
+if [[ -z "${HF_HOME:-}" ]]; then
+  if [[ -d /root/autodl-tmp/hf_home ]]; then
+    export HF_HOME=/root/autodl-tmp/hf_home
+  else
+    export HF_HOME=/gluster/envs/users/wuzhijian/hf_home
+  fi
+fi
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-20480}"
 export LMMS_EVAL_FADVISE_DONTNEED="${LMMS_EVAL_FADVISE_DONTNEED:-1}"
+if ! [[ "${OMP_NUM_THREADS:-}" =~ ^[1-9][0-9]*$ ]]; then
+  export OMP_NUM_THREADS=1
+fi
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export PYTHONPATH="$PWD:$PWD/lmms-eval:${PYTHONPATH:-}"
 
