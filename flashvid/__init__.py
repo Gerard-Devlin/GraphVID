@@ -351,6 +351,21 @@ def flashvid(
     decode_kv_budget_ratio: float = 1.0,
     decode_update_interval: int = 4,
     decode_start_layer: int = 0,
+    # PrismVID parameters are appended to preserve positional compatibility.
+    prism_budget_uses_expansion: bool = True,
+    prism_metric_dim: int = 256,
+    prism_query_atoms: int = 6,
+    prism_candidate_multiplier: float = 2.25,
+    prism_probe_tokens: int = 512,
+    prism_frame_floor_ratio: float = 0.20,
+    prism_attention_weight: float = 0.30,
+    prism_event_weight: float = 0.24,
+    prism_query_weight: float = 0.16,
+    prism_disagreement_weight: float = 0.16,
+    prism_router_strength: float = 0.50,
+    prism_coverage_weight: float = 0.68,
+    prism_pareto_weight: float = 0.20,
+    prism_batch_size: int = 8,
 ) -> nn.Module:
     """Apply FlashVID to the model.
 
@@ -378,6 +393,7 @@ def flashvid(
             "apexvid" enables adaptive evidence/event/memory compression;
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
+            "prismvid" selects an exact multi-level Qwen3 DeepStack visual coreset;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
         question_reweight_beta (float, optional): Strength of question-aware reweighting.
@@ -501,10 +517,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -589,6 +605,20 @@ def flashvid(
         certv2_fusion_alpha=certv2_fusion_alpha,
         certv2_repair_fusion_alpha=certv2_repair_fusion_alpha,
         certv2_assignment_temperature=certv2_assignment_temperature,
+        prism_budget_uses_expansion=prism_budget_uses_expansion,
+        prism_metric_dim=prism_metric_dim,
+        prism_query_atoms=prism_query_atoms,
+        prism_candidate_multiplier=prism_candidate_multiplier,
+        prism_probe_tokens=prism_probe_tokens,
+        prism_frame_floor_ratio=prism_frame_floor_ratio,
+        prism_attention_weight=prism_attention_weight,
+        prism_event_weight=prism_event_weight,
+        prism_query_weight=prism_query_weight,
+        prism_disagreement_weight=prism_disagreement_weight,
+        prism_router_strength=prism_router_strength,
+        prism_coverage_weight=prism_coverage_weight,
+        prism_pareto_weight=prism_pareto_weight,
+        prism_batch_size=prism_batch_size,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

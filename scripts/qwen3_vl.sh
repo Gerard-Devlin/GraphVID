@@ -101,6 +101,22 @@ APEX_SUMMARY_TEMPERATURE="${APEX_SUMMARY_TEMPERATURE:-0.07}"
 APEX_FRAME_FLOOR_RATIO="${APEX_FRAME_FLOOR_RATIO:-0.35}"
 APEX_QUESTION_WEIGHT="${APEX_QUESTION_WEIGHT:-0.20}"
 
+PRISM_TOKEN_SELECTION_METHOD="${PRISM_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
+PRISM_BUDGET_USES_EXPANSION="${PRISM_BUDGET_USES_EXPANSION:-True}"
+PRISM_METRIC_DIM="${PRISM_METRIC_DIM:-256}"
+PRISM_QUERY_ATOMS="${PRISM_QUERY_ATOMS:-6}"
+PRISM_CANDIDATE_MULTIPLIER="${PRISM_CANDIDATE_MULTIPLIER:-2.25}"
+PRISM_PROBE_TOKENS="${PRISM_PROBE_TOKENS:-512}"
+PRISM_FRAME_FLOOR_RATIO="${PRISM_FRAME_FLOOR_RATIO:-0.20}"
+PRISM_ATTENTION_WEIGHT="${PRISM_ATTENTION_WEIGHT:-0.30}"
+PRISM_EVENT_WEIGHT="${PRISM_EVENT_WEIGHT:-0.24}"
+PRISM_QUERY_WEIGHT="${PRISM_QUERY_WEIGHT:-0.16}"
+PRISM_DISAGREEMENT_WEIGHT="${PRISM_DISAGREEMENT_WEIGHT:-0.16}"
+PRISM_ROUTER_STRENGTH="${PRISM_ROUTER_STRENGTH:-0.50}"
+PRISM_COVERAGE_WEIGHT="${PRISM_COVERAGE_WEIGHT:-0.68}"
+PRISM_PARETO_WEIGHT="${PRISM_PARETO_WEIGHT:-0.20}"
+PRISM_BATCH_SIZE="${PRISM_BATCH_SIZE:-8}"
+
 CERT_TOKEN_SELECTION_METHOD="${CERT_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
 CERT_BUDGET_USES_EXPANSION="${CERT_BUDGET_USES_EXPANSION:-True}"
 CERT_QUERY_ATOMS="${CERT_QUERY_ATOMS:-6}"
@@ -233,6 +249,10 @@ method_flash_args() {
     apexvid)
       printf 'compression_variant=apexvid,token_selection_method=%s,apex_evidence_ratio=%s,apex_event_ratio=%s,apex_memory_ratio=%s,apex_router_strength=%s,apex_summary_temperature=%s,apex_frame_floor_ratio=%s,apex_question_weight=%s' \
         "$APEX_TOKEN_SELECTION_METHOD" "$APEX_EVIDENCE_RATIO" "$APEX_EVENT_RATIO" "$APEX_MEMORY_RATIO" "$APEX_ROUTER_STRENGTH" "$APEX_SUMMARY_TEMPERATURE" "$APEX_FRAME_FLOOR_RATIO" "$APEX_QUESTION_WEIGHT"
+      ;;
+    prismvid)
+      printf 'compression_variant=prismvid,token_selection_method=%s,prism_budget_uses_expansion=%s,prism_metric_dim=%s,prism_query_atoms=%s,prism_candidate_multiplier=%s,prism_probe_tokens=%s,prism_frame_floor_ratio=%s,prism_attention_weight=%s,prism_event_weight=%s,prism_query_weight=%s,prism_disagreement_weight=%s,prism_router_strength=%s,prism_coverage_weight=%s,prism_pareto_weight=%s,prism_batch_size=%s' \
+        "$PRISM_TOKEN_SELECTION_METHOD" "$PRISM_BUDGET_USES_EXPANSION" "$PRISM_METRIC_DIM" "$PRISM_QUERY_ATOMS" "$PRISM_CANDIDATE_MULTIPLIER" "$PRISM_PROBE_TOKENS" "$PRISM_FRAME_FLOOR_RATIO" "$PRISM_ATTENTION_WEIGHT" "$PRISM_EVENT_WEIGHT" "$PRISM_QUERY_WEIGHT" "$PRISM_DISAGREEMENT_WEIGHT" "$PRISM_ROUTER_STRENGTH" "$PRISM_COVERAGE_WEIGHT" "$PRISM_PARETO_WEIGHT" "$PRISM_BATCH_SIZE"
       ;;
     certvid)
       printf 'compression_variant=certvid,token_selection_method=%s,cert_budget_uses_expansion=%s,cert_query_atoms=%s,cert_temporal_bins=%s,cert_spatial_bins=%s,cert_candidate_multiplier=%s,cert_query_weight=%s,cert_temporal_weight=%s,cert_detail_weight=%s,cert_repair_ratio=%s,cert_fusion_alpha=%s,cert_assignment_temperature=%s,cert_track_threshold=%s,cert_spatial_penalty=%s,cert_metric_dim=%s' \

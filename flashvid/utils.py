@@ -123,6 +123,7 @@ def flashvid_compression(
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
+    deepstack_features: Optional[list[torch.Tensor]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
@@ -173,10 +174,20 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
+    if compression_variant == "prismvid":
+        from .prismvid import prismvid_compression
+
+        return prismvid_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+            deepstack_features=deepstack_features,
+        )
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2"
+            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(

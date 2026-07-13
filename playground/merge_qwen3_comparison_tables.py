@@ -198,6 +198,7 @@ def _sort_key(row: dict[str, Any]) -> tuple[float, int, str]:
         "fastgraphvid": 3,
         "certvid": 4,
         "certvid_v2": 5,
+        "prismvid": 6,
         "visionzip": 4,
         "prunevid": 5,
         "talon": 6,

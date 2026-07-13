@@ -518,6 +518,11 @@ def Qwen3VLModel_forward(
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
             question_features=question_features,
+            deepstack_features=(
+                deepstack_video_embeds
+                if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "prismvid"
+                else None
+            ),
         )
 
         non_visual_token_indexes = torch.where(
@@ -561,6 +566,23 @@ def Qwen3VLModel_forward(
             finally:
                 # The plan owns GPU tensors and is only valid for this prefill.
                 flashvid_config._certvid_plan = None
+        elif compression_variant == "prismvid":
+            from .prismvid import compress_prism_deepstack, merge_prism_visual_deepstack
+
+            compressed_deepstack_video = compress_prism_deepstack(
+                deepstack_video_embeds,
+                keep_visual_global_indices,
+            )
+            if image_mask is not None:
+                deepstack_visual_embeds = merge_prism_visual_deepstack(
+                    deepstack_image_embeds=deepstack_image_embeds,
+                    compressed_video_embeds=compressed_deepstack_video,
+                    image_mask=image_mask,
+                    video_mask=video_mask,
+                    kept_video_indices=keep_visual_global_indices,
+                )
+            else:
+                deepstack_visual_embeds = compressed_deepstack_video
         elif (
             compression_variant == "talon"
             and not _talon_should_keep_deepstack(flashvid_config)
@@ -568,7 +590,12 @@ def Qwen3VLModel_forward(
             deepstack_visual_embeds = None
         elif deepstack_visual_embeds is not None:
             # Keep DeepStack aligned only when TALON outputs stay on the raw-token manifold.
-            deepstack_visual_embeds = [deepstack_visual_embed[keep_visual_global_indices] for deepstack_visual_embed in deepstack_visual_embeds]
+            deepstack_visual_embeds = [
+                deepstack_visual_embed[
+                    keep_visual_global_indices.to(deepstack_visual_embed.device)
+                ]
+                for deepstack_visual_embed in deepstack_visual_embeds
+            ]
         keep_global_indexes = (
             torch.cat(
                 [

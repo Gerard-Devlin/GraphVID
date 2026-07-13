@@ -140,6 +140,20 @@ class BenchmarkArgs:
     certv2_fusion_alpha: float = field(default=0.25)
     certv2_repair_fusion_alpha: float = field(default=0.08)
     certv2_assignment_temperature: float = field(default=0.07)
+    prism_budget_uses_expansion: bool = field(default=True)
+    prism_metric_dim: int = field(default=256)
+    prism_query_atoms: int = field(default=6)
+    prism_candidate_multiplier: float = field(default=2.25)
+    prism_probe_tokens: int = field(default=512)
+    prism_frame_floor_ratio: float = field(default=0.20)
+    prism_attention_weight: float = field(default=0.30)
+    prism_event_weight: float = field(default=0.24)
+    prism_query_weight: float = field(default=0.16)
+    prism_disagreement_weight: float = field(default=0.16)
+    prism_router_strength: float = field(default=0.50)
+    prism_coverage_weight: float = field(default=0.68)
+    prism_pareto_weight: float = field(default=0.20)
+    prism_batch_size: int = field(default=8)
     adaptive_token_budget: bool = field(default=False)
     adaptive_budget_low: float = field(default=0.10)
     adaptive_budget_mid: float = field(default=0.15)
@@ -2296,6 +2310,20 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv2_fusion_alpha=args.certv2_fusion_alpha,
         certv2_repair_fusion_alpha=args.certv2_repair_fusion_alpha,
         certv2_assignment_temperature=args.certv2_assignment_temperature,
+        prism_budget_uses_expansion=args.prism_budget_uses_expansion,
+        prism_metric_dim=args.prism_metric_dim,
+        prism_query_atoms=args.prism_query_atoms,
+        prism_candidate_multiplier=args.prism_candidate_multiplier,
+        prism_probe_tokens=args.prism_probe_tokens,
+        prism_frame_floor_ratio=args.prism_frame_floor_ratio,
+        prism_attention_weight=args.prism_attention_weight,
+        prism_event_weight=args.prism_event_weight,
+        prism_query_weight=args.prism_query_weight,
+        prism_disagreement_weight=args.prism_disagreement_weight,
+        prism_router_strength=args.prism_router_strength,
+        prism_coverage_weight=args.prism_coverage_weight,
+        prism_pareto_weight=args.prism_pareto_weight,
+        prism_batch_size=args.prism_batch_size,
         adaptive_token_budget=args.adaptive_token_budget,
         adaptive_budget_low=args.adaptive_budget_low,
         adaptive_budget_mid=args.adaptive_budget_mid,
@@ -2848,6 +2876,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-active][ours]"
         elif variant_name == "certvid_v2":
             ours_prefix = "[certvid-v2-active][ours]"
+        elif variant_name == "prismvid":
+            ours_prefix = "[prismvid-active][ours]"
         else:
             ours_prefix = "[adapter-active][ours]"
         print(

@@ -115,6 +115,7 @@ def _install_qwen3_baseline_adapter_patch() -> None:
         cls_attention,
         flashvid_config,
         question_features=None,
+        deepstack_features=None,
     ):
         variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
         if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
@@ -124,6 +125,7 @@ def _install_qwen3_baseline_adapter_patch() -> None:
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
             question_features=question_features,
+            deepstack_features=deepstack_features,
         )
 
     modeling_qwen3_vl.flashvid_compression = patched_flashvid_compression
@@ -287,6 +289,21 @@ class Qwen3_VL(lmms):
         decode_kv_budget_ratio: float = 1.0,
         decode_update_interval: int = 4,
         decode_start_layer: int = 0,
+        # Appended to keep existing positional model_args compatible.
+        prism_budget_uses_expansion: bool = True,
+        prism_metric_dim: int = 256,
+        prism_query_atoms: int = 6,
+        prism_candidate_multiplier: float = 2.25,
+        prism_probe_tokens: int = 512,
+        prism_frame_floor_ratio: float = 0.20,
+        prism_attention_weight: float = 0.30,
+        prism_event_weight: float = 0.24,
+        prism_query_weight: float = 0.16,
+        prism_disagreement_weight: float = 0.16,
+        prism_router_strength: float = 0.50,
+        prism_coverage_weight: float = 0.68,
+        prism_pareto_weight: float = 0.20,
+        prism_batch_size: int = 8,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -426,6 +443,20 @@ class Qwen3_VL(lmms):
                 certv2_fusion_alpha=certv2_fusion_alpha,
                 certv2_repair_fusion_alpha=certv2_repair_fusion_alpha,
                 certv2_assignment_temperature=certv2_assignment_temperature,
+                prism_budget_uses_expansion=prism_budget_uses_expansion,
+                prism_metric_dim=prism_metric_dim,
+                prism_query_atoms=prism_query_atoms,
+                prism_candidate_multiplier=prism_candidate_multiplier,
+                prism_probe_tokens=prism_probe_tokens,
+                prism_frame_floor_ratio=prism_frame_floor_ratio,
+                prism_attention_weight=prism_attention_weight,
+                prism_event_weight=prism_event_weight,
+                prism_query_weight=prism_query_weight,
+                prism_disagreement_weight=prism_disagreement_weight,
+                prism_router_strength=prism_router_strength,
+                prism_coverage_weight=prism_coverage_weight,
+                prism_pareto_weight=prism_pareto_weight,
+                prism_batch_size=prism_batch_size,
                 slot_base_roles=slot_base_roles,
                 slot_max_per_segment=slot_max_per_segment,
                 slot_role_allocation=slot_role_allocation,

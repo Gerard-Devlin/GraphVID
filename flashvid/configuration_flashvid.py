@@ -116,6 +116,7 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
+    # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")
 
     # Question-aware token reweighting.
@@ -349,3 +350,19 @@ class FlashVidConfig:
     decode_kv_budget_ratio: float = field(default=1.0)
     decode_update_interval: int = field(default=4)
     decode_start_layer: int = field(default=0)
+
+    # PrismVID fields are appended to preserve positional construction.
+    prism_budget_uses_expansion: bool = field(default=True)
+    prism_metric_dim: int = field(default=256)
+    prism_query_atoms: int = field(default=6)
+    prism_candidate_multiplier: float = field(default=2.25)
+    prism_probe_tokens: int = field(default=512)
+    prism_frame_floor_ratio: float = field(default=0.20)
+    prism_attention_weight: float = field(default=0.30)
+    prism_event_weight: float = field(default=0.24)
+    prism_query_weight: float = field(default=0.16)
+    prism_disagreement_weight: float = field(default=0.16)
+    prism_router_strength: float = field(default=0.50)
+    prism_coverage_weight: float = field(default=0.68)
+    prism_pareto_weight: float = field(default=0.20)
+    prism_batch_size: int = field(default=8)

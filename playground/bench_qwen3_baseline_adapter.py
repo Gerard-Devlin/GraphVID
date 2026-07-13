@@ -25,6 +25,7 @@ def _install_adapter_compression_patch(method: str) -> None:
         cls_attention,
         flashvid_config,
         question_features=None,
+        deepstack_features=None,
     ):
         variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
         if variant in SUPPORTED_METHODS:
@@ -34,6 +35,7 @@ def _install_adapter_compression_patch(method: str) -> None:
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
             question_features=question_features,
+            deepstack_features=deepstack_features,
         )
 
     modeling_qwen3_vl.flashvid_compression = patched_flashvid_compression

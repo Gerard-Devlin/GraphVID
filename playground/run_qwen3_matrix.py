@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "prismvid"):
         return "ours"
     return method
 
@@ -437,6 +437,33 @@ def _build_command(
                 str(args.certv2_repair_fusion_alpha),
                 "--certv2_assignment_temperature",
                 str(args.certv2_assignment_temperature),
+                "--prism_budget_uses_expansion" if args.prism_budget_uses_expansion else "--no-prism_budget_uses_expansion",
+                "--prism_metric_dim",
+                str(args.prism_metric_dim),
+                "--prism_query_atoms",
+                str(args.prism_query_atoms),
+                "--prism_candidate_multiplier",
+                str(args.prism_candidate_multiplier),
+                "--prism_probe_tokens",
+                str(args.prism_probe_tokens),
+                "--prism_frame_floor_ratio",
+                str(args.prism_frame_floor_ratio),
+                "--prism_attention_weight",
+                str(args.prism_attention_weight),
+                "--prism_event_weight",
+                str(args.prism_event_weight),
+                "--prism_query_weight",
+                str(args.prism_query_weight),
+                "--prism_disagreement_weight",
+                str(args.prism_disagreement_weight),
+                "--prism_router_strength",
+                str(args.prism_router_strength),
+                "--prism_coverage_weight",
+                str(args.prism_coverage_weight),
+                "--prism_pareto_weight",
+                str(args.prism_pareto_weight),
+                "--prism_batch_size",
+                str(args.prism_batch_size),
             ]
         )
     cmd.extend(args.extra_args)
@@ -547,7 +574,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -638,6 +665,20 @@ def main() -> None:
     parser.add_argument("--certv2_fusion_alpha", type=float, default=0.25)
     parser.add_argument("--certv2_repair_fusion_alpha", type=float, default=0.08)
     parser.add_argument("--certv2_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--prism_metric_dim", type=int, default=256)
+    parser.add_argument("--prism_query_atoms", type=int, default=6)
+    parser.add_argument("--prism_candidate_multiplier", type=float, default=2.25)
+    parser.add_argument("--prism_probe_tokens", type=int, default=512)
+    parser.add_argument("--prism_frame_floor_ratio", type=float, default=0.20)
+    parser.add_argument("--prism_attention_weight", type=float, default=0.30)
+    parser.add_argument("--prism_event_weight", type=float, default=0.24)
+    parser.add_argument("--prism_query_weight", type=float, default=0.16)
+    parser.add_argument("--prism_disagreement_weight", type=float, default=0.16)
+    parser.add_argument("--prism_router_strength", type=float, default=0.50)
+    parser.add_argument("--prism_coverage_weight", type=float, default=0.68)
+    parser.add_argument("--prism_pareto_weight", type=float, default=0.20)
+    parser.add_argument("--prism_batch_size", type=int, default=8)
     parser.add_argument(
         "--adapter_budget_uses_expansion",
         "--external_budget_uses_expansion",

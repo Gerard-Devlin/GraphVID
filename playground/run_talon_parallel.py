@@ -164,6 +164,34 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.certv2_repair_fusion_alpha),
             "--certv2_assignment_temperature",
             str(args.certv2_assignment_temperature),
+            "--prism_budget_uses_expansion",
+            _str_bool(args.prism_budget_uses_expansion),
+            "--prism_metric_dim",
+            str(args.prism_metric_dim),
+            "--prism_query_atoms",
+            str(args.prism_query_atoms),
+            "--prism_candidate_multiplier",
+            str(args.prism_candidate_multiplier),
+            "--prism_probe_tokens",
+            str(args.prism_probe_tokens),
+            "--prism_frame_floor_ratio",
+            str(args.prism_frame_floor_ratio),
+            "--prism_attention_weight",
+            str(args.prism_attention_weight),
+            "--prism_event_weight",
+            str(args.prism_event_weight),
+            "--prism_query_weight",
+            str(args.prism_query_weight),
+            "--prism_disagreement_weight",
+            str(args.prism_disagreement_weight),
+            "--prism_router_strength",
+            str(args.prism_router_strength),
+            "--prism_coverage_weight",
+            str(args.prism_coverage_weight),
+            "--prism_pareto_weight",
+            str(args.prism_pareto_weight),
+            "--prism_batch_size",
+            str(args.prism_batch_size),
             "--adaptive_token_budget",
             "False",
             "--talon_adaptive_target_enabled",
@@ -684,7 +712,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "prismvid"])
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
     parser.add_argument("--apex_memory_ratio", type=float, default=0.25)
@@ -727,6 +755,20 @@ def main() -> None:
     parser.add_argument("--certv2_fusion_alpha", type=float, default=0.25)
     parser.add_argument("--certv2_repair_fusion_alpha", type=float, default=0.08)
     parser.add_argument("--certv2_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--prism_metric_dim", type=int, default=256)
+    parser.add_argument("--prism_query_atoms", type=int, default=6)
+    parser.add_argument("--prism_candidate_multiplier", type=float, default=2.25)
+    parser.add_argument("--prism_probe_tokens", type=int, default=512)
+    parser.add_argument("--prism_frame_floor_ratio", type=float, default=0.20)
+    parser.add_argument("--prism_attention_weight", type=float, default=0.30)
+    parser.add_argument("--prism_event_weight", type=float, default=0.24)
+    parser.add_argument("--prism_query_weight", type=float, default=0.16)
+    parser.add_argument("--prism_disagreement_weight", type=float, default=0.16)
+    parser.add_argument("--prism_router_strength", type=float, default=0.50)
+    parser.add_argument("--prism_coverage_weight", type=float, default=0.68)
+    parser.add_argument("--prism_pareto_weight", type=float, default=0.20)
+    parser.add_argument("--prism_batch_size", type=int, default=8)
     parser.add_argument("--free_ratio", type=float, default=0.75)
     parser.add_argument("--min_free_mb", type=int, default=18000)
     parser.add_argument("--max_gpus", type=int, default=0, help="0 means use all eligible GPUs.")
