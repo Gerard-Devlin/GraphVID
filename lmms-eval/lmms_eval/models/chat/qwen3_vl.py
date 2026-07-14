@@ -12,7 +12,11 @@ from lmms_eval.models.model_utils.gen_metrics import log_metrics
 from lmms_eval.models.model_utils.reasoning_model_utils import (
     parse_reasoning_model_answer,
 )
-from lmms_eval.models.simple.qwen3_vl import Qwen3_VL as Qwen3_VLSimple
+from lmms_eval.models.simple.qwen3_vl import (
+    Qwen3_VL as Qwen3_VLSimple,
+    _parse_qwen_nframes_limit,
+    _set_video_frame_limit,
+)
 from lmms_eval.protocol import ChatMessages
 
 process_vision_info, _has_qwen_vl = optional_import("qwen_vl_utils", "process_vision_info")
@@ -72,12 +76,20 @@ class Qwen3_VL(Qwen3_VLSimple):
                 video_kwargs["nframes"] = self.max_num_frames
             batched_messages = [chat_message.to_hf_messages(video_kwargs=video_kwargs) for chat_message in chat_messages]
             texts = self.processor.apply_chat_template(batched_messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs, video_kwargs_qwen = process_vision_info(
-                batched_messages,
-                return_video_kwargs=True,
-                image_patch_size=16,
-                return_video_metadata=True,
-            )
+            while True:
+                try:
+                    image_inputs, video_inputs, video_kwargs_qwen = process_vision_info(
+                        batched_messages,
+                        return_video_kwargs=True,
+                        image_patch_size=16,
+                        return_video_metadata=True,
+                    )
+                    break
+                except ValueError as exc:
+                    fallback_nframes = _parse_qwen_nframes_limit(exc)
+                    if fallback_nframes is None:
+                        raise
+                    _set_video_frame_limit(batched_messages, fallback_nframes)
             video_kwargs = {**video_kwargs, **video_kwargs_qwen}
 
             video_metadatas = None
