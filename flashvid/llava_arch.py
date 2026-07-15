@@ -115,9 +115,17 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                 flashvid_config.visual_token_start_index = visual_token_start_index
                 pooled_image_feature = self.get_2dPool(image_feat)
                 pooled_cls_attentions = self.get_2dPool(cls_attentions.unsqueeze(-1)).squeeze(-1)
+                # LLaVA represents the image placeholder with the negative ID -200,
+                # which cannot be passed directly to the language embedding table.
+                question_input_ids = input_ids.clone()
+                embed_tokens = self.get_model().embed_tokens
+                invalid_embedding_ids = (question_input_ids < 0) | (
+                    question_input_ids >= embed_tokens.num_embeddings
+                )
+                question_input_ids.masked_fill_(invalid_embedding_ids, 0)
                 question_features = extract_question_features(
                     input_ids=input_ids,
-                    inputs_embeds=self.get_model().embed_tokens(input_ids),
+                    inputs_embeds=embed_tokens(question_input_ids),
                     attention_mask=attention_mask,
                     invalid_token_ids=[IMAGE_TOKEN_INDEX],
                 )
