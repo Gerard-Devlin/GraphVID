@@ -11,6 +11,7 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-20480}"
 
 ACCELERATE="${ACCELERATE:-accelerate}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-18888}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
 
@@ -86,6 +87,20 @@ split_csv() {
   printf '%s\n' $text
 }
 
+resolve_accelerate_launcher() {
+  if command -v "$ACCELERATE" >/dev/null 2>&1; then
+    ACCELERATE_LAUNCHER=("$ACCELERATE" launch)
+    return
+  fi
+  if "$PYTHON_BIN" -c 'import accelerate' >/dev/null 2>&1; then
+    ACCELERATE_LAUNCHER=("$PYTHON_BIN" -m accelerate.commands.launch)
+    return
+  fi
+  echo "Accelerate is not installed in the active Python environment." >&2
+  echo "Install it with: $PYTHON_BIN -m pip install 'accelerate>=0.29.1'" >&2
+  exit 127
+}
+
 base_model_args() {
   printf 'pretrained=%s,conv_template=%s,mm_spatial_pool_mode=%s,max_frames_num=%s,attn_implementation=%s' \
     "$PRETRAINED" "$CONV_TEMPLATE" "$MM_SPATIAL_POOL_MODE" "$MAX_FRAMES_NUM" "$ATTN_IMPLEMENTATION"
@@ -119,6 +134,7 @@ method_args() {
 }
 
 mkdir -p "$OUTPUT_PATH"
+resolve_accelerate_launcher
 
 for method in $(split_csv "$METHODS"); do
   for rate in $(split_csv "$RATES"); do
@@ -126,7 +142,7 @@ for method in $(split_csv "$METHODS"); do
     for task in $(split_csv "$TASKS"); do
       run_output="$OUTPUT_PATH/${method}_r${rate}_${task}"
       cmd=(
-        "$ACCELERATE" launch
+        "${ACCELERATE_LAUNCHER[@]}"
         --main_process_port "$MAIN_PROCESS_PORT"
         --num_processes "$NUM_PROCESSES"
         -m lmms_eval
