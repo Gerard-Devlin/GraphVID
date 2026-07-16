@@ -938,6 +938,7 @@ class ConfigurableTask(Task):
                 cache_dir = os.path.join(hf_home, cache_dir)
                 accelerator = Accelerator()
                 if accelerator.is_main_process:
+                    cache_path = None
                     force_download = dataset_kwargs.get("force_download", False)
                     force_unzip = dataset_kwargs.get("force_unzip", False)
                     revision = dataset_kwargs.get("revision", "main")
@@ -1013,10 +1014,20 @@ class ConfigurableTask(Task):
 
                     # Link cache_path to cache_dir if needed.
                     if create_link:
-                        if not os.path.exists(cache_dir) or os.path.islink(cache_dir):
+                        if os.path.islink(cache_dir) and os.path.exists(cache_dir):
+                            eval_logger.info(f"Using existing symbolic link: {cache_dir} -> {os.path.realpath(cache_dir)}")
+                        elif not os.path.exists(cache_dir) or os.path.islink(cache_dir):
                             if os.path.islink(cache_dir):
                                 os.remove(cache_dir)
                                 eval_logger.info(f"Removed existing symbolic link: {cache_dir}")
+                            if cache_path is None:
+                                cache_path = snapshot_download(
+                                    repo_id=self.DATASET_PATH,
+                                    revision=revision,
+                                    repo_type="dataset",
+                                    force_download=force_download,
+                                    etag_timeout=60,
+                                )
                             # Create a new symbolic link
                             os.symlink(cache_path, cache_dir)
                             eval_logger.info(f"Symbolic link created successfully: {cache_path} -> {cache_dir}")
