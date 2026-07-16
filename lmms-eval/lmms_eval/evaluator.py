@@ -685,7 +685,17 @@ def evaluate(
 
             pbar.close()
 
+    object_gather_group = None
     if WORLD_SIZE > 1:
+        # Python-object collectives serialize metrics into byte tensors. Running
+        # those variable-sized transfers through NCCL can fail on some consumer
+        # multi-GPU setups even after model inference completed successfully.
+        # Keep inference on NCCL, but move result aggregation to CPU/Gloo.
+        if dist.get_backend() != "gloo":
+            object_gather_group = dist.new_group(backend="gloo")
+            if RANK == 0:
+                eval_logger.info("Using CPU/Gloo for distributed metric aggregation")
+
         # if multigpu, then gather data across all ranks to rank 0
         # first gather logged samples across all ranks
         for task_output in eval_tasks:
@@ -700,6 +710,7 @@ def evaluate(
                     obj=per_rank_samples,
                     object_gather_list=full_samples,
                     dst=0,
+                    group=object_gather_group,
                 )
 
                 if RANK == 0:
@@ -712,6 +723,7 @@ def evaluate(
                     obj=task_output.sample_metrics[metrics],
                     object_gather_list=metric_list,
                     dst=0,
+                    group=object_gather_group,
                 )
                 if RANK == 0:
                     task_output.sample_metrics[metrics] = list(itertools.chain.from_iterable(metric_list))
@@ -723,11 +735,12 @@ def evaluate(
                     obj=task_output.per_sample_metrics[metrics],
                     object_gather_list=metric_list,
                     dst=0,
+                    group=object_gather_group,
                 )
                 if RANK == 0:
                     task_output.per_sample_metrics[metrics] = list(itertools.chain.from_iterable(metric_list))
 
-        dist.barrier()  # Ensure all processes are synced before proceeding
+        dist.barrier(group=object_gather_group)  # Ensure all processes are synced before proceeding
 
     if RANK == 0:
         if eval_server_launcher is not None:
@@ -796,7 +809,10 @@ def evaluate(
 
     if WORLD_SIZE > 1:
         # if muti-gpu, wait for all processes to finish
-        if distributed_executor_backend == "accelerate":
+        if object_gather_group is not None:
+            dist.barrier(group=object_gather_group)
+            dist.destroy_process_group(object_gather_group)
+        elif distributed_executor_backend == "accelerate":
             # this should work for torchrun as well since it internally calls torch.distributed.barrier()
             Accelerator().wait_for_everyone()
         elif distributed_executor_backend == "torchrun":
