@@ -164,6 +164,50 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.certv2_repair_fusion_alpha),
             "--certv2_assignment_temperature",
             str(args.certv2_assignment_temperature),
+            "--certv3_budget_uses_expansion",
+            _str_bool(args.certv3_budget_uses_expansion),
+            "--certv3_query_atoms",
+            str(args.certv3_query_atoms),
+            "--certv3_temporal_bins",
+            str(args.certv3_temporal_bins),
+            "--certv3_spatial_bins",
+            str(args.certv3_spatial_bins),
+            "--certv3_candidate_multiplier",
+            str(args.certv3_candidate_multiplier),
+            "--certv3_query_weight",
+            str(args.certv3_query_weight),
+            "--certv3_track_threshold",
+            str(args.certv3_track_threshold),
+            "--certv3_spatial_penalty",
+            str(args.certv3_spatial_penalty),
+            "--certv3_metric_dim",
+            str(args.certv3_metric_dim),
+            "--certv3_frame_coverage_ratio",
+            str(args.certv3_frame_coverage_ratio),
+            "--certv3_cell_coverage_ratio",
+            str(args.certv3_cell_coverage_ratio),
+            "--certv3_query_threshold",
+            str(args.certv3_query_threshold),
+            "--certv3_query_per_atom",
+            str(args.certv3_query_per_atom),
+            "--certv3_structural_weight",
+            str(args.certv3_structural_weight),
+            "--certv3_whitening_strength",
+            str(args.certv3_whitening_strength),
+            "--certv3_quality_floor",
+            str(args.certv3_quality_floor),
+            "--certv3_ridge",
+            str(args.certv3_ridge),
+            "--certv3_swap_steps",
+            str(args.certv3_swap_steps),
+            "--certv3_swap_pool",
+            str(args.certv3_swap_pool),
+            "--certv3_swap_margin",
+            str(args.certv3_swap_margin),
+            "--certv3_fusion_alpha",
+            str(args.certv3_fusion_alpha),
+            "--certv3_assignment_temperature",
+            str(args.certv3_assignment_temperature),
             "--prism_budget_uses_expansion",
             _str_bool(args.prism_budget_uses_expansion),
             "--prism_metric_dim",
@@ -712,7 +756,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "prismvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "prismvid"])
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
     parser.add_argument("--apex_memory_ratio", type=float, default=0.25)
@@ -755,6 +799,28 @@ def main() -> None:
     parser.add_argument("--certv2_fusion_alpha", type=float, default=0.25)
     parser.add_argument("--certv2_repair_fusion_alpha", type=float, default=0.08)
     parser.add_argument("--certv2_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--certv3_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv3_query_atoms", type=int, default=8)
+    parser.add_argument("--certv3_temporal_bins", type=int, default=12)
+    parser.add_argument("--certv3_spatial_bins", type=int, default=3)
+    parser.add_argument("--certv3_candidate_multiplier", type=float, default=2.5)
+    parser.add_argument("--certv3_query_weight", type=float, default=0.18)
+    parser.add_argument("--certv3_track_threshold", type=float, default=0.82)
+    parser.add_argument("--certv3_spatial_penalty", type=float, default=0.08)
+    parser.add_argument("--certv3_metric_dim", type=int, default=96)
+    parser.add_argument("--certv3_frame_coverage_ratio", type=float, default=1.0)
+    parser.add_argument("--certv3_cell_coverage_ratio", type=float, default=0.50)
+    parser.add_argument("--certv3_query_threshold", type=float, default=0.10)
+    parser.add_argument("--certv3_query_per_atom", type=int, default=1)
+    parser.add_argument("--certv3_structural_weight", type=float, default=0.32)
+    parser.add_argument("--certv3_whitening_strength", type=float, default=0.50)
+    parser.add_argument("--certv3_quality_floor", type=float, default=0.15)
+    parser.add_argument("--certv3_ridge", type=float, default=0.50)
+    parser.add_argument("--certv3_swap_steps", type=int, default=6)
+    parser.add_argument("--certv3_swap_pool", type=int, default=24)
+    parser.add_argument("--certv3_swap_margin", type=float, default=1e-4)
+    parser.add_argument("--certv3_fusion_alpha", type=float, default=0.12)
+    parser.add_argument("--certv3_assignment_temperature", type=float, default=0.07)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)
     parser.add_argument("--prism_query_atoms", type=int, default=6)

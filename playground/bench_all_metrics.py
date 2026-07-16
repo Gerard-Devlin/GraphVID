@@ -140,6 +140,28 @@ class BenchmarkArgs:
     certv2_fusion_alpha: float = field(default=0.25)
     certv2_repair_fusion_alpha: float = field(default=0.08)
     certv2_assignment_temperature: float = field(default=0.07)
+    certv3_budget_uses_expansion: bool = field(default=True)
+    certv3_query_atoms: int = field(default=8)
+    certv3_temporal_bins: int = field(default=12)
+    certv3_spatial_bins: int = field(default=3)
+    certv3_candidate_multiplier: float = field(default=2.5)
+    certv3_query_weight: float = field(default=0.18)
+    certv3_track_threshold: float = field(default=0.82)
+    certv3_spatial_penalty: float = field(default=0.08)
+    certv3_metric_dim: int = field(default=96)
+    certv3_frame_coverage_ratio: float = field(default=1.0)
+    certv3_cell_coverage_ratio: float = field(default=0.50)
+    certv3_query_threshold: float = field(default=0.10)
+    certv3_query_per_atom: int = field(default=1)
+    certv3_structural_weight: float = field(default=0.32)
+    certv3_whitening_strength: float = field(default=0.50)
+    certv3_quality_floor: float = field(default=0.15)
+    certv3_ridge: float = field(default=0.50)
+    certv3_swap_steps: int = field(default=6)
+    certv3_swap_pool: int = field(default=24)
+    certv3_swap_margin: float = field(default=1e-4)
+    certv3_fusion_alpha: float = field(default=0.12)
+    certv3_assignment_temperature: float = field(default=0.07)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
     prism_query_atoms: int = field(default=6)
@@ -2310,6 +2332,28 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv2_fusion_alpha=args.certv2_fusion_alpha,
         certv2_repair_fusion_alpha=args.certv2_repair_fusion_alpha,
         certv2_assignment_temperature=args.certv2_assignment_temperature,
+        certv3_budget_uses_expansion=args.certv3_budget_uses_expansion,
+        certv3_query_atoms=args.certv3_query_atoms,
+        certv3_temporal_bins=args.certv3_temporal_bins,
+        certv3_spatial_bins=args.certv3_spatial_bins,
+        certv3_candidate_multiplier=args.certv3_candidate_multiplier,
+        certv3_query_weight=args.certv3_query_weight,
+        certv3_track_threshold=args.certv3_track_threshold,
+        certv3_spatial_penalty=args.certv3_spatial_penalty,
+        certv3_metric_dim=args.certv3_metric_dim,
+        certv3_frame_coverage_ratio=args.certv3_frame_coverage_ratio,
+        certv3_cell_coverage_ratio=args.certv3_cell_coverage_ratio,
+        certv3_query_threshold=args.certv3_query_threshold,
+        certv3_query_per_atom=args.certv3_query_per_atom,
+        certv3_structural_weight=args.certv3_structural_weight,
+        certv3_whitening_strength=args.certv3_whitening_strength,
+        certv3_quality_floor=args.certv3_quality_floor,
+        certv3_ridge=args.certv3_ridge,
+        certv3_swap_steps=args.certv3_swap_steps,
+        certv3_swap_pool=args.certv3_swap_pool,
+        certv3_swap_margin=args.certv3_swap_margin,
+        certv3_fusion_alpha=args.certv3_fusion_alpha,
+        certv3_assignment_temperature=args.certv3_assignment_temperature,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
         prism_query_atoms=args.prism_query_atoms,
@@ -2876,6 +2920,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-active][ours]"
         elif variant_name == "certvid_v2":
             ours_prefix = "[certvid-v2-active][ours]"
+        elif variant_name == "certvid_v3":
+            ours_prefix = "[certvid-v3-active][ours]"
         elif variant_name == "prismvid":
             ours_prefix = "[prismvid-active][ours]"
         else:

@@ -150,6 +150,28 @@ def flashvid(
     certv2_fusion_alpha: float = 0.25,
     certv2_repair_fusion_alpha: float = 0.08,
     certv2_assignment_temperature: float = 0.07,
+    certv3_budget_uses_expansion: bool = True,
+    certv3_query_atoms: int = 8,
+    certv3_temporal_bins: int = 12,
+    certv3_spatial_bins: int = 3,
+    certv3_candidate_multiplier: float = 2.5,
+    certv3_query_weight: float = 0.18,
+    certv3_track_threshold: float = 0.82,
+    certv3_spatial_penalty: float = 0.08,
+    certv3_metric_dim: int = 96,
+    certv3_frame_coverage_ratio: float = 1.0,
+    certv3_cell_coverage_ratio: float = 0.50,
+    certv3_query_threshold: float = 0.10,
+    certv3_query_per_atom: int = 1,
+    certv3_structural_weight: float = 0.32,
+    certv3_whitening_strength: float = 0.50,
+    certv3_quality_floor: float = 0.15,
+    certv3_ridge: float = 0.50,
+    certv3_swap_steps: int = 6,
+    certv3_swap_pool: int = 24,
+    certv3_swap_margin: float = 1e-4,
+    certv3_fusion_alpha: float = 0.12,
+    certv3_assignment_temperature: float = 0.07,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -393,6 +415,7 @@ def flashvid(
             "apexvid" enables adaptive evidence/event/memory compression;
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
+            "certvid_v3" selects a certified regularized D-optimal evidence design;
             "prismvid" selects an exact multi-level Qwen3 DeepStack visual coreset;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
@@ -517,10 +540,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -605,6 +628,28 @@ def flashvid(
         certv2_fusion_alpha=certv2_fusion_alpha,
         certv2_repair_fusion_alpha=certv2_repair_fusion_alpha,
         certv2_assignment_temperature=certv2_assignment_temperature,
+        certv3_budget_uses_expansion=certv3_budget_uses_expansion,
+        certv3_query_atoms=certv3_query_atoms,
+        certv3_temporal_bins=certv3_temporal_bins,
+        certv3_spatial_bins=certv3_spatial_bins,
+        certv3_candidate_multiplier=certv3_candidate_multiplier,
+        certv3_query_weight=certv3_query_weight,
+        certv3_track_threshold=certv3_track_threshold,
+        certv3_spatial_penalty=certv3_spatial_penalty,
+        certv3_metric_dim=certv3_metric_dim,
+        certv3_frame_coverage_ratio=certv3_frame_coverage_ratio,
+        certv3_cell_coverage_ratio=certv3_cell_coverage_ratio,
+        certv3_query_threshold=certv3_query_threshold,
+        certv3_query_per_atom=certv3_query_per_atom,
+        certv3_structural_weight=certv3_structural_weight,
+        certv3_whitening_strength=certv3_whitening_strength,
+        certv3_quality_floor=certv3_quality_floor,
+        certv3_ridge=certv3_ridge,
+        certv3_swap_steps=certv3_swap_steps,
+        certv3_swap_pool=certv3_swap_pool,
+        certv3_swap_margin=certv3_swap_margin,
+        certv3_fusion_alpha=certv3_fusion_alpha,
+        certv3_assignment_temperature=certv3_assignment_temperature,
         prism_budget_uses_expansion=prism_budget_uses_expansion,
         prism_metric_dim=prism_metric_dim,
         prism_query_atoms=prism_query_atoms,
