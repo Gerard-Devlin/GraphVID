@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "prismvid"):
         return "ours"
     return method
 
@@ -256,6 +256,11 @@ def _build_command(
             cmd.extend(["--gpu_ids", args.gpu_ids])
         return cmd, summary_path
 
+    effective_expansion = args.certv4_expansion if method == "certvid_v4" else args.expansion
+    effective_pruning_layer = args.certv4_pruning_layer if method == "certvid_v4" else args.pruning_layer
+    effective_llm_retention = (
+        args.certv4_llm_retention_ratio if method == "certvid_v4" else args.llm_retention_ratio
+    )
     cmd = [
         sys.executable,
         "-u",
@@ -297,9 +302,11 @@ def _build_command(
         "--retention_ratio",
         str(ratio),
         "--expansion",
-        str(args.expansion),
+        str(effective_expansion),
+        "--pruning_layer",
+        str(effective_pruning_layer),
         "--llm_retention_ratio",
-        str(args.llm_retention_ratio),
+        str(effective_llm_retention),
         "--tag",
         method_tag,
     ]
@@ -480,6 +487,59 @@ def _build_command(
                 str(args.certv3_fusion_alpha),
                 "--certv3_assignment_temperature",
                 str(args.certv3_assignment_temperature),
+                "--certv4_budget_mode",
+                str(args.certv4_budget_mode),
+                "--certv4_attention_policy",
+                str(args.certv4_attention_policy),
+                "--certv4_attention_eps",
+                str(args.certv4_attention_eps),
+                "--certv4_certificate_budget_ratio",
+                str(args.certv4_certificate_budget_ratio),
+                "--certv4_query_mode",
+                str(args.certv4_query_mode),
+                "--certv4_design_protect_ratio",
+                str(args.certv4_design_protect_ratio),
+                "--certv4_query_atoms",
+                str(args.certv4_query_atoms),
+                "--certv4_temporal_bins",
+                str(args.certv4_temporal_bins),
+                "--certv4_spatial_bins",
+                str(args.certv4_spatial_bins),
+                "--certv4_candidate_multiplier",
+                str(args.certv4_candidate_multiplier),
+                "--certv4_track_threshold",
+                str(args.certv4_track_threshold),
+                "--certv4_spatial_penalty",
+                str(args.certv4_spatial_penalty),
+                "--certv4_metric_dim",
+                str(args.certv4_metric_dim),
+                "--certv4_frame_coverage_ratio",
+                str(args.certv4_frame_coverage_ratio),
+                "--certv4_cell_coverage_ratio",
+                str(args.certv4_cell_coverage_ratio),
+                "--certv4_query_threshold",
+                str(args.certv4_query_threshold),
+                "--certv4_query_per_atom",
+                str(args.certv4_query_per_atom),
+                "--certv4_structural_weight",
+                str(args.certv4_structural_weight),
+                "--certv4_whitening_strength",
+                str(args.certv4_whitening_strength),
+                "--certv4_quality_floor",
+                str(args.certv4_quality_floor),
+                "--certv4_ridge",
+                str(args.certv4_ridge),
+                "--certv4_swap_steps",
+                str(args.certv4_swap_steps),
+                "--certv4_swap_pool",
+                str(args.certv4_swap_pool),
+                "--certv4_swap_margin",
+                str(args.certv4_swap_margin),
+                "--certv4_fusion_alpha",
+                str(args.certv4_fusion_alpha),
+                "--certv4_assignment_temperature",
+                str(args.certv4_assignment_temperature),
+                "--certv4_debug" if args.certv4_debug else "--no-certv4_debug",
                 "--prism_budget_uses_expansion" if args.prism_budget_uses_expansion else "--no-prism_budget_uses_expansion",
                 "--prism_metric_dim",
                 str(args.prism_metric_dim),
@@ -617,7 +677,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v4,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -640,6 +700,7 @@ def main() -> None:
     parser.add_argument("--max_gpus", type=int, default=0)
     parser.add_argument("--gpu_ids", default="")
     parser.add_argument("--retention_expansion", dest="expansion", type=float, default=1.25)
+    parser.add_argument("--pruning_layer", type=int, default=20)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
     parser.add_argument("--raw_visual_tokens", type=int, default=2880)
     parser.add_argument("--visual_time_units", type=int, default=16)
@@ -730,6 +791,36 @@ def main() -> None:
     parser.add_argument("--certv3_swap_margin", type=float, default=1e-4)
     parser.add_argument("--certv3_fusion_alpha", type=float, default=0.12)
     parser.add_argument("--certv3_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--certv4_expansion", type=float, default=1.25)
+    parser.add_argument("--certv4_pruning_layer", type=int, default=28)
+    parser.add_argument("--certv4_llm_retention_ratio", type=float, default=0.10)
+    parser.add_argument("--certv4_budget_mode", default="layer_average", choices=["layer_average", "outer_only"])
+    parser.add_argument("--certv4_attention_policy", default="validated", choices=["validated", "strict", "off"])
+    parser.add_argument("--certv4_attention_eps", type=float, default=1e-6)
+    parser.add_argument("--certv4_certificate_budget_ratio", type=float, default=0.40)
+    parser.add_argument("--certv4_query_mode", default="certificates_and_design", choices=["certificates_only", "design_only", "certificates_and_design", "off"])
+    parser.add_argument("--certv4_design_protect_ratio", type=float, default=0.15)
+    parser.add_argument("--certv4_query_atoms", type=int, default=8)
+    parser.add_argument("--certv4_temporal_bins", type=int, default=12)
+    parser.add_argument("--certv4_spatial_bins", type=int, default=3)
+    parser.add_argument("--certv4_candidate_multiplier", type=float, default=2.5)
+    parser.add_argument("--certv4_track_threshold", type=float, default=0.82)
+    parser.add_argument("--certv4_spatial_penalty", type=float, default=0.08)
+    parser.add_argument("--certv4_metric_dim", type=int, default=96)
+    parser.add_argument("--certv4_frame_coverage_ratio", type=float, default=1.0)
+    parser.add_argument("--certv4_cell_coverage_ratio", type=float, default=0.50)
+    parser.add_argument("--certv4_query_threshold", type=float, default=0.10)
+    parser.add_argument("--certv4_query_per_atom", type=int, default=1)
+    parser.add_argument("--certv4_structural_weight", type=float, default=0.32)
+    parser.add_argument("--certv4_whitening_strength", type=float, default=0.50)
+    parser.add_argument("--certv4_quality_floor", type=float, default=0.15)
+    parser.add_argument("--certv4_ridge", type=float, default=0.50)
+    parser.add_argument("--certv4_swap_steps", type=int, default=6)
+    parser.add_argument("--certv4_swap_pool", type=int, default=24)
+    parser.add_argument("--certv4_swap_margin", type=float, default=1e-4)
+    parser.add_argument("--certv4_fusion_alpha", type=float, default=0.12)
+    parser.add_argument("--certv4_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--certv4_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)
     parser.add_argument("--prism_query_atoms", type=int, default=6)

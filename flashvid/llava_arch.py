@@ -17,6 +17,7 @@ from .utils import extract_question_features, flashvid_compression
 
 def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch.Tensor):
     vision_outputs = self.get_model().get_vision_tower()(images)
+    attention_source = "missing"
 
     # Compatible with multiple vision tower output formats:
     # 1) tensor: image_features
@@ -28,6 +29,8 @@ def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch
     elif isinstance(vision_outputs, (tuple, list)):
         image_features = vision_outputs[0]
         cls_attentions = vision_outputs[1] if len(vision_outputs) > 1 and torch.is_tensor(vision_outputs[1]) else None
+        if cls_attentions is not None:
+            attention_source = "manual_qk"
     elif hasattr(vision_outputs, "last_hidden_state"):
         image_features = vision_outputs.last_hidden_state
         cls_attentions = getattr(vision_outputs, "attentions", None)
@@ -42,6 +45,7 @@ def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch
     # Fallback token importance proxy when cls attentions are unavailable.
     if cls_attentions is None:
         cls_attentions = image_features.float().norm(dim=-1)
+        attention_source = "feature_norm"
     else:
         if cls_attentions.ndim == 4:
             cls_attentions = cls_attentions.mean(dim=1).mean(dim=1)
@@ -49,6 +53,7 @@ def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch
             cls_attentions = cls_attentions.mean(dim=1)
         elif cls_attentions.ndim != 2:
             cls_attentions = image_features.float().norm(dim=-1)
+            attention_source = "feature_norm"
 
         if (
             cls_attentions.ndim != 2
@@ -56,7 +61,9 @@ def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch
             or cls_attentions.shape[-1] != image_features.shape[-2]
         ):
             cls_attentions = image_features.float().norm(dim=-1)
+            attention_source = "feature_norm"
 
+    setattr(self, "_flashvid_attention_source", attention_source)
     return image_features, cls_attentions.to(image_features.dtype)
 
 
@@ -113,6 +120,11 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                 visual_token_start_index = torch.where(input_ids[0] == IMAGE_TOKEN_INDEX)[0].item() # 14
                 # print(f"Visual token start index: {visual_token_start_index}")
                 flashvid_config.visual_token_start_index = visual_token_start_index
+                setattr(
+                    flashvid_config,
+                    "_certvid_attention_source",
+                    getattr(self, "_flashvid_attention_source", "missing"),
+                )
                 pooled_image_feature = self.get_2dPool(image_feat)
                 pooled_cls_attentions = self.get_2dPool(cls_attentions.unsqueeze(-1)).squeeze(-1)
                 # LLaVA represents the image placeholder with the negative ID -200,

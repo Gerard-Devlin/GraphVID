@@ -180,6 +180,38 @@ CERTV3_SWAP_MARGIN="${CERTV3_SWAP_MARGIN:-0.0001}"
 CERTV3_FUSION_ALPHA="${CERTV3_FUSION_ALPHA:-0.12}"
 CERTV3_ASSIGNMENT_TEMPERATURE="${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}"
 
+CERTV4_TOKEN_SELECTION_METHOD="${CERTV4_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
+CERTV4_EXPANSION="${CERTV4_EXPANSION:-$EXPANSION}"
+CERTV4_PRUNING_LAYER="${CERTV4_PRUNING_LAYER:-28}"
+CERTV4_LLM_RETENTION_RATIO="${CERTV4_LLM_RETENTION_RATIO:-0.10}"
+CERTV4_BUDGET_MODE="${CERTV4_BUDGET_MODE:-layer_average}"
+CERTV4_ATTENTION_POLICY="${CERTV4_ATTENTION_POLICY:-validated}"
+CERTV4_ATTENTION_EPS="${CERTV4_ATTENTION_EPS:-0.000001}"
+CERTV4_CERTIFICATE_BUDGET_RATIO="${CERTV4_CERTIFICATE_BUDGET_RATIO:-0.40}"
+CERTV4_QUERY_MODE="${CERTV4_QUERY_MODE:-certificates_and_design}"
+CERTV4_DESIGN_PROTECT_RATIO="${CERTV4_DESIGN_PROTECT_RATIO:-0.15}"
+CERTV4_QUERY_ATOMS="${CERTV4_QUERY_ATOMS:-8}"
+CERTV4_TEMPORAL_BINS="${CERTV4_TEMPORAL_BINS:-12}"
+CERTV4_SPATIAL_BINS="${CERTV4_SPATIAL_BINS:-3}"
+CERTV4_CANDIDATE_MULTIPLIER="${CERTV4_CANDIDATE_MULTIPLIER:-2.5}"
+CERTV4_TRACK_THRESHOLD="${CERTV4_TRACK_THRESHOLD:-0.82}"
+CERTV4_SPATIAL_PENALTY="${CERTV4_SPATIAL_PENALTY:-0.08}"
+CERTV4_METRIC_DIM="${CERTV4_METRIC_DIM:-96}"
+CERTV4_FRAME_COVERAGE_RATIO="${CERTV4_FRAME_COVERAGE_RATIO:-1.0}"
+CERTV4_CELL_COVERAGE_RATIO="${CERTV4_CELL_COVERAGE_RATIO:-0.50}"
+CERTV4_QUERY_THRESHOLD="${CERTV4_QUERY_THRESHOLD:-0.10}"
+CERTV4_QUERY_PER_ATOM="${CERTV4_QUERY_PER_ATOM:-1}"
+CERTV4_STRUCTURAL_WEIGHT="${CERTV4_STRUCTURAL_WEIGHT:-0.32}"
+CERTV4_WHITENING_STRENGTH="${CERTV4_WHITENING_STRENGTH:-0.50}"
+CERTV4_QUALITY_FLOOR="${CERTV4_QUALITY_FLOOR:-0.15}"
+CERTV4_RIDGE="${CERTV4_RIDGE:-0.50}"
+CERTV4_SWAP_STEPS="${CERTV4_SWAP_STEPS:-6}"
+CERTV4_SWAP_POOL="${CERTV4_SWAP_POOL:-24}"
+CERTV4_SWAP_MARGIN="${CERTV4_SWAP_MARGIN:-0.0001}"
+CERTV4_FUSION_ALPHA="${CERTV4_FUSION_ALPHA:-0.12}"
+CERTV4_ASSIGNMENT_TEMPERATURE="${CERTV4_ASSIGNMENT_TEMPERATURE:-0.07}"
+CERTV4_DEBUG="${CERTV4_DEBUG:-False}"
+
 split_csv() {
   local text="$1"
   text="${text//,/ }"
@@ -248,8 +280,17 @@ base_model_args() {
 
 common_flash_args() {
   local retention_ratio="$1"
+  local method="$2"
+  local expansion="$EXPANSION"
+  local pruning_layer="$PRUNING_LAYER"
+  local llm_retention_ratio="$LLM_RETENTION_RATIO"
+  if [[ "$method" == "certvid_v4" ]]; then
+    expansion="$CERTV4_EXPANSION"
+    pruning_layer="$CERTV4_PRUNING_LAYER"
+    llm_retention_ratio="$CERTV4_LLM_RETENTION_RATIO"
+  fi
   printf 'enable_flashvid=True,retention_ratio=%s,expansion=%s,do_segment=%s,segment_threshold=%s,min_segment_num=%s,complementary_segment=%s,alpha=%s,temporal_threshold=%s,pruning_layer=%s,llm_retention_ratio=%s' \
-    "$retention_ratio" "$EXPANSION" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" "$TEMPORAL_THRESHOLD" "$PRUNING_LAYER" "$LLM_RETENTION_RATIO"
+    "$retention_ratio" "$expansion" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" "$TEMPORAL_THRESHOLD" "$pruning_layer" "$llm_retention_ratio"
 }
 
 method_flash_args() {
@@ -290,6 +331,10 @@ method_flash_args() {
       printf 'compression_variant=certvid_v3,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
         "$CERTV3_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
       ;;
+    certvid_v4)
+      printf 'compression_variant=certvid_v4,token_selection_method=%s,certv4_budget_mode=%s,certv4_attention_policy=%s,certv4_attention_eps=%s,certv4_certificate_budget_ratio=%s,certv4_query_mode=%s,certv4_design_protect_ratio=%s,certv4_query_atoms=%s,certv4_temporal_bins=%s,certv4_spatial_bins=%s,certv4_candidate_multiplier=%s,certv4_track_threshold=%s,certv4_spatial_penalty=%s,certv4_metric_dim=%s,certv4_frame_coverage_ratio=%s,certv4_cell_coverage_ratio=%s,certv4_query_threshold=%s,certv4_query_per_atom=%s,certv4_structural_weight=%s,certv4_whitening_strength=%s,certv4_quality_floor=%s,certv4_ridge=%s,certv4_swap_steps=%s,certv4_swap_pool=%s,certv4_swap_margin=%s,certv4_fusion_alpha=%s,certv4_assignment_temperature=%s,certv4_debug=%s' \
+        "$CERTV4_TOKEN_SELECTION_METHOD" "$CERTV4_BUDGET_MODE" "$CERTV4_ATTENTION_POLICY" "$CERTV4_ATTENTION_EPS" "$CERTV4_CERTIFICATE_BUDGET_RATIO" "$CERTV4_QUERY_MODE" "$CERTV4_DESIGN_PROTECT_RATIO" "$CERTV4_QUERY_ATOMS" "$CERTV4_TEMPORAL_BINS" "$CERTV4_SPATIAL_BINS" "$CERTV4_CANDIDATE_MULTIPLIER" "$CERTV4_TRACK_THRESHOLD" "$CERTV4_SPATIAL_PENALTY" "$CERTV4_METRIC_DIM" "$CERTV4_FRAME_COVERAGE_RATIO" "$CERTV4_CELL_COVERAGE_RATIO" "$CERTV4_QUERY_THRESHOLD" "$CERTV4_QUERY_PER_ATOM" "$CERTV4_STRUCTURAL_WEIGHT" "$CERTV4_WHITENING_STRENGTH" "$CERTV4_QUALITY_FLOOR" "$CERTV4_RIDGE" "$CERTV4_SWAP_STEPS" "$CERTV4_SWAP_POOL" "$CERTV4_SWAP_MARGIN" "$CERTV4_FUSION_ALPHA" "$CERTV4_ASSIGNMENT_TEMPERATURE" "$CERTV4_DEBUG"
+      ;;
     visionzip)
       printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \
         "$ADAPTER_TOKEN_SELECTION_METHOD" "$ADAPTER_BUDGET_USES_EXPANSION" "$ADAPTER_BUDGET_USES_EXPANSION" "$VISIONZIP_DOMINANT_RATIO"
@@ -303,7 +348,7 @@ method_flash_args() {
 
 for method in $(split_csv "$METHODS"); do
   for retention_ratio in $(split_csv "$RATES"); do
-    model_args="$(base_model_args),$(common_flash_args "$retention_ratio"),$(method_flash_args "$method")"
+    model_args="$(base_model_args),$(common_flash_args "$retention_ratio" "$method"),$(method_flash_args "$method")"
     for task in $(split_csv "$TASKS"); do
       cmd=(
         "$ACCELERATE" launch

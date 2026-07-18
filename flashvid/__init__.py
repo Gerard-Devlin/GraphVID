@@ -68,6 +68,38 @@ from .modeling_qwen3_vl import (
 from .siglip_encoder import SigLipAttention_forward, SigLipVisionTower_forward
 
 
+def _text_layer_count(model: nn.Module) -> int:
+    """Read the decoder depth without depending on one Transformers config layout."""
+    configs = [getattr(model, "config", None)]
+    root_config = configs[0]
+    if root_config is not None:
+        configs.extend(
+            [
+                getattr(root_config, "text_config", None),
+                getattr(root_config, "llm_config", None),
+            ]
+        )
+    inner = getattr(model, "model", None)
+    configs.append(getattr(inner, "config", None))
+    configs.append(getattr(getattr(inner, "language_model", None), "config", None))
+    configs.append(getattr(getattr(model, "language_model", None), "config", None))
+    try:
+        model_root = model.get_model()
+        configs.append(getattr(model_root, "config", None))
+        configs.append(getattr(getattr(model_root, "language_model", None), "config", None))
+    except (AttributeError, TypeError):
+        pass
+    for config in configs:
+        value = (
+            config.get("num_hidden_layers")
+            if isinstance(config, dict)
+            else getattr(config, "num_hidden_layers", None)
+        )
+        if value is not None and int(value) > 0:
+            return int(value)
+    return 0
+
+
 def flashvid(
     model: nn.Module,
     retention_ratio: float = 0.25,
@@ -172,6 +204,33 @@ def flashvid(
     certv3_swap_margin: float = 1e-4,
     certv3_fusion_alpha: float = 0.12,
     certv3_assignment_temperature: float = 0.07,
+    certv4_budget_mode: str = "layer_average",
+    certv4_attention_policy: str = "validated",
+    certv4_attention_eps: float = 1e-6,
+    certv4_certificate_budget_ratio: float = 0.40,
+    certv4_query_mode: str = "certificates_and_design",
+    certv4_design_protect_ratio: float = 0.15,
+    certv4_query_atoms: int = 8,
+    certv4_temporal_bins: int = 12,
+    certv4_spatial_bins: int = 3,
+    certv4_candidate_multiplier: float = 2.5,
+    certv4_track_threshold: float = 0.82,
+    certv4_spatial_penalty: float = 0.08,
+    certv4_metric_dim: int = 96,
+    certv4_frame_coverage_ratio: float = 1.0,
+    certv4_cell_coverage_ratio: float = 0.50,
+    certv4_query_threshold: float = 0.10,
+    certv4_query_per_atom: int = 1,
+    certv4_structural_weight: float = 0.32,
+    certv4_whitening_strength: float = 0.50,
+    certv4_quality_floor: float = 0.15,
+    certv4_ridge: float = 0.50,
+    certv4_swap_steps: int = 6,
+    certv4_swap_pool: int = 24,
+    certv4_swap_margin: float = 1e-4,
+    certv4_fusion_alpha: float = 0.12,
+    certv4_assignment_temperature: float = 0.07,
+    certv4_debug: bool = False,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -540,10 +599,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -650,6 +709,35 @@ def flashvid(
         certv3_swap_margin=certv3_swap_margin,
         certv3_fusion_alpha=certv3_fusion_alpha,
         certv3_assignment_temperature=certv3_assignment_temperature,
+        certv4_budget_mode=certv4_budget_mode,
+        certv4_attention_policy=certv4_attention_policy,
+        certv4_attention_eps=certv4_attention_eps,
+        certv4_certificate_budget_ratio=certv4_certificate_budget_ratio,
+        certv4_query_mode=certv4_query_mode,
+        certv4_design_protect_ratio=certv4_design_protect_ratio,
+        certv4_query_atoms=certv4_query_atoms,
+        certv4_temporal_bins=certv4_temporal_bins,
+        certv4_spatial_bins=certv4_spatial_bins,
+        certv4_candidate_multiplier=certv4_candidate_multiplier,
+        certv4_track_threshold=certv4_track_threshold,
+        certv4_spatial_penalty=certv4_spatial_penalty,
+        certv4_metric_dim=certv4_metric_dim,
+        certv4_frame_coverage_ratio=certv4_frame_coverage_ratio,
+        certv4_cell_coverage_ratio=certv4_cell_coverage_ratio,
+        certv4_query_threshold=certv4_query_threshold,
+        certv4_query_per_atom=certv4_query_per_atom,
+        certv4_structural_weight=certv4_structural_weight,
+        certv4_whitening_strength=certv4_whitening_strength,
+        certv4_quality_floor=certv4_quality_floor,
+        certv4_ridge=certv4_ridge,
+        certv4_swap_steps=certv4_swap_steps,
+        certv4_swap_pool=certv4_swap_pool,
+        certv4_swap_margin=certv4_swap_margin,
+        certv4_fusion_alpha=certv4_fusion_alpha,
+        certv4_assignment_temperature=certv4_assignment_temperature,
+        certv4_debug=certv4_debug,
+        certv4_num_hidden_layers=_text_layer_count(model),
+        certv4_inner_hook_enabled=True,
         prism_budget_uses_expansion=prism_budget_uses_expansion,
         prism_metric_dim=prism_metric_dim,
         prism_query_atoms=prism_query_atoms,
@@ -861,6 +949,12 @@ def flashvid(
         decode_update_interval=decode_update_interval,
         decode_start_layer=decode_start_layer,
     )
+
+    if variant == "certvid_v4":
+        from .certvid_v4 import _resolve_budget
+
+        # Validate the layer-average contract before loading any benchmark sample.
+        _resolve_budget(flashvid_config, total_tokens=1)
 
     # Store FlashVid Config in the model.
     setattr(model, "flashvid_config", flashvid_config)

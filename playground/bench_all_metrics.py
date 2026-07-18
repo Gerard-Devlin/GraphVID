@@ -162,6 +162,33 @@ class BenchmarkArgs:
     certv3_swap_margin: float = field(default=1e-4)
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
+    certv4_budget_mode: str = field(default="layer_average")
+    certv4_attention_policy: str = field(default="validated")
+    certv4_attention_eps: float = field(default=1e-6)
+    certv4_certificate_budget_ratio: float = field(default=0.40)
+    certv4_query_mode: str = field(default="certificates_and_design")
+    certv4_design_protect_ratio: float = field(default=0.15)
+    certv4_query_atoms: int = field(default=8)
+    certv4_temporal_bins: int = field(default=12)
+    certv4_spatial_bins: int = field(default=3)
+    certv4_candidate_multiplier: float = field(default=2.5)
+    certv4_track_threshold: float = field(default=0.82)
+    certv4_spatial_penalty: float = field(default=0.08)
+    certv4_metric_dim: int = field(default=96)
+    certv4_frame_coverage_ratio: float = field(default=1.0)
+    certv4_cell_coverage_ratio: float = field(default=0.50)
+    certv4_query_threshold: float = field(default=0.10)
+    certv4_query_per_atom: int = field(default=1)
+    certv4_structural_weight: float = field(default=0.32)
+    certv4_whitening_strength: float = field(default=0.50)
+    certv4_quality_floor: float = field(default=0.15)
+    certv4_ridge: float = field(default=0.50)
+    certv4_swap_steps: int = field(default=6)
+    certv4_swap_pool: int = field(default=24)
+    certv4_swap_margin: float = field(default=1e-4)
+    certv4_fusion_alpha: float = field(default=0.12)
+    certv4_assignment_temperature: float = field(default=0.07)
+    certv4_debug: bool = field(default=False)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
     prism_query_atoms: int = field(default=6)
@@ -1135,6 +1162,34 @@ def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: b
     return final_length, vision_length
 
 
+def _get_certv4_metrics(model) -> dict[str, float | None]:
+    names = (
+        "target_tokens",
+        "post_inner_tokens",
+        "average_layer_tokens",
+        "nominal_retention",
+        "outer_retention",
+        "post_inner_retention",
+        "average_layer_multiplier",
+        "certificate_count",
+        "candidate_tokens",
+        "swap_count",
+        "logdet",
+        "attention_used",
+    )
+    output = {f"certv4_{name}": None for name in names}
+    if not hasattr(model, "flashvid_config"):
+        return output
+    config = getattr(model, "flashvid_config")
+    if str(getattr(config, "compression_variant", "")).strip().lower() != "certvid_v4":
+        return output
+    for name in names:
+        value = getattr(config, f"last_certv4_{name}", None)
+        if value is not None:
+            output[f"certv4_{name}"] = float(value)
+    return output
+
+
 def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     if not hasattr(model, "flashvid_config"):
         return {
@@ -1453,6 +1508,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_budget_max = float(np.mean(talon_core_budget_max_per_run)) if talon_core_budget_max_per_run else None
     talon_core_grid_h = float(np.mean(talon_core_grid_h_per_run)) if talon_core_grid_h_per_run else None
     talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
+    certv4_metrics = _get_certv4_metrics(model)
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1466,6 +1522,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "raw_visual_tokens": float(raw_visual_tokens),
         "compressed_visual_tokens": compressed_visual_tokens,
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
+        **certv4_metrics,
         "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
         "talon_complexity_score": talon_complexity_score,
         "talon_target_budget": talon_target_budget,
@@ -1997,7 +2054,7 @@ def _add_duration_breakdown(
 def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
     # LLaVA backend currently has instability in inner-LLM token pruning path.
     # Keep visual-side compression enabled, but disable LLM pruning for stable benchmarking.
-    if backend == "llava":
+    if backend == "llava" and str(args.compression_variant).strip().lower() != "certvid_v4":
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
 
@@ -2354,6 +2411,33 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv3_swap_margin=args.certv3_swap_margin,
         certv3_fusion_alpha=args.certv3_fusion_alpha,
         certv3_assignment_temperature=args.certv3_assignment_temperature,
+        certv4_budget_mode=args.certv4_budget_mode,
+        certv4_attention_policy=args.certv4_attention_policy,
+        certv4_attention_eps=args.certv4_attention_eps,
+        certv4_certificate_budget_ratio=args.certv4_certificate_budget_ratio,
+        certv4_query_mode=args.certv4_query_mode,
+        certv4_design_protect_ratio=args.certv4_design_protect_ratio,
+        certv4_query_atoms=args.certv4_query_atoms,
+        certv4_temporal_bins=args.certv4_temporal_bins,
+        certv4_spatial_bins=args.certv4_spatial_bins,
+        certv4_candidate_multiplier=args.certv4_candidate_multiplier,
+        certv4_track_threshold=args.certv4_track_threshold,
+        certv4_spatial_penalty=args.certv4_spatial_penalty,
+        certv4_metric_dim=args.certv4_metric_dim,
+        certv4_frame_coverage_ratio=args.certv4_frame_coverage_ratio,
+        certv4_cell_coverage_ratio=args.certv4_cell_coverage_ratio,
+        certv4_query_threshold=args.certv4_query_threshold,
+        certv4_query_per_atom=args.certv4_query_per_atom,
+        certv4_structural_weight=args.certv4_structural_weight,
+        certv4_whitening_strength=args.certv4_whitening_strength,
+        certv4_quality_floor=args.certv4_quality_floor,
+        certv4_ridge=args.certv4_ridge,
+        certv4_swap_steps=args.certv4_swap_steps,
+        certv4_swap_pool=args.certv4_swap_pool,
+        certv4_swap_margin=args.certv4_swap_margin,
+        certv4_fusion_alpha=args.certv4_fusion_alpha,
+        certv4_assignment_temperature=args.certv4_assignment_temperature,
+        certv4_debug=args.certv4_debug,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
         prism_query_atoms=args.prism_query_atoms,
@@ -2922,6 +3006,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v2-active][ours]"
         elif variant_name == "certvid_v3":
             ours_prefix = "[certvid-v3-active][ours]"
+        elif variant_name == "certvid_v4":
+            ours_prefix = "[certvid-v4-active][ours]"
         elif variant_name == "prismvid":
             ours_prefix = "[prismvid-active][ours]"
         else:

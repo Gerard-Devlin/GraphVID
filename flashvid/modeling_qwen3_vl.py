@@ -497,6 +497,7 @@ def Qwen3VLModel_forward(
     if position_ids.shape[-1] > 1 and pixel_values_videos is not None:
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
+        setattr(flashvid_config, "_certvid_attention_source", "manual_qk")
         # Store feature map resolution.
         spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
         flashvid_config.H = int(video_grid_thw[0][1].item() // spatial_merge)
@@ -540,7 +541,7 @@ def Qwen3VLModel_forward(
         compression_variant = str(
             getattr(flashvid_config, "compression_variant", "flashvid")
         ).strip().lower()
-        if compression_variant in {"certvid", "certvid_v2", "certvid_v3"}:
+        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v4"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
             certvid_plan = getattr(flashvid_config, "_certvid_plan", None)
@@ -737,7 +738,7 @@ def Qwen3VLTextModel_forward(
     is_prefill = hidden_states.shape[1] > 1
     is_certvid = str(
         getattr(flashvid_config, "compression_variant", "flashvid")
-    ).strip().lower() in {"certvid", "certvid_v2", "certvid_v3"}
+    ).strip().lower() in {"certvid", "certvid_v2", "certvid_v3", "certvid_v4"}
     enable_inner_pruning = is_prefill and (
         not is_certvid
         or float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
