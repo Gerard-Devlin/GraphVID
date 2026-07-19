@@ -189,6 +189,41 @@ class BenchmarkArgs:
     certv4_fusion_alpha: float = field(default=0.12)
     certv4_assignment_temperature: float = field(default=0.07)
     certv4_debug: bool = field(default=False)
+    certv5_budget_mode: str = field(default="layer_average")
+    certv5_attention_policy: str = field(default="validated")
+    certv5_attention_eps: float = field(default=1e-6)
+    certv5_certificate_budget_ratio: float = field(default=0.36)
+    certv5_query_mode: str = field(default="certificates_and_design")
+    certv5_design_protect_ratio: float = field(default=0.12)
+    certv5_query_atoms: int = field(default=8)
+    certv5_temporal_bins: int = field(default=12)
+    certv5_coarse_bins: int = field(default=4)
+    certv5_spatial_bins: int = field(default=3)
+    certv5_candidate_multiplier: float = field(default=3.0)
+    certv5_query_weight: float = field(default=0.10)
+    certv5_track_threshold: float = field(default=0.82)
+    certv5_spatial_penalty: float = field(default=0.08)
+    certv5_metric_dim: int = field(default=96)
+    certv5_frame_coverage_ratio: float = field(default=0.75)
+    certv5_query_threshold: float = field(default=0.10)
+    certv5_query_per_atom: int = field(default=1)
+    certv5_structural_weight: float = field(default=0.40)
+    certv5_whitening_strength: float = field(default=0.50)
+    certv5_quality_floor: float = field(default=0.15)
+    certv5_ridge: float = field(default=0.50)
+    certv5_swap_steps: int = field(default=6)
+    certv5_swap_pool: int = field(default=24)
+    certv5_swap_margin: float = field(default=1e-4)
+    certv5_fusion_alpha: float = field(default=0.06)
+    certv5_assignment_temperature: float = field(default=0.07)
+    certv5_max_scenes: int = field(default=8)
+    certv5_scene_threshold: float = field(default=0.58)
+    certv5_min_scene_frames: int = field(default=2)
+    certv5_motion_threshold: float = field(default=0.42)
+    certv5_motion_confidence_threshold: float = field(default=0.35)
+    certv5_motion_fusion_threshold: float = field(default=0.45)
+    certv5_router_strength: float = field(default=0.65)
+    certv5_debug: bool = field(default=False)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
     prism_query_atoms: int = field(default=6)
@@ -1190,6 +1225,38 @@ def _get_certv4_metrics(model) -> dict[str, float | None]:
     return output
 
 
+def _get_certv5_metrics(model) -> dict[str, float | None]:
+    names = (
+        "target_tokens",
+        "post_inner_tokens",
+        "average_layer_tokens",
+        "nominal_retention",
+        "outer_retention",
+        "post_inner_retention",
+        "average_layer_multiplier",
+        "certificate_count",
+        "candidate_tokens",
+        "swap_count",
+        "logdet",
+        "attention_used",
+        "scene_count",
+        "motion_activity",
+        "event_activity",
+        "motion_pair_count",
+    )
+    output = {f"certv5_{name}": None for name in names}
+    if not hasattr(model, "flashvid_config"):
+        return output
+    config = getattr(model, "flashvid_config")
+    if str(getattr(config, "compression_variant", "")).strip().lower() != "certvid_v5":
+        return output
+    for name in names:
+        value = getattr(config, f"last_certv5_{name}", None)
+        if value is not None:
+            output[f"certv5_{name}"] = float(value)
+    return output
+
+
 def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     if not hasattr(model, "flashvid_config"):
         return {
@@ -1509,6 +1576,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_grid_h = float(np.mean(talon_core_grid_h_per_run)) if talon_core_grid_h_per_run else None
     talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
     certv4_metrics = _get_certv4_metrics(model)
+    certv5_metrics = _get_certv5_metrics(model)
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1523,6 +1591,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "compressed_visual_tokens": compressed_visual_tokens,
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
         **certv4_metrics,
+        **certv5_metrics,
         "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
         "talon_complexity_score": talon_complexity_score,
         "talon_target_budget": talon_target_budget,
@@ -2052,9 +2121,9 @@ def _add_duration_breakdown(
 
 
 def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
-    # LLaVA backend currently has instability in inner-LLM token pruning path.
-    # Keep visual-side compression enabled, but disable LLM pruning for stable benchmarking.
-    if backend == "llava" and str(args.compression_variant).strip().lower() != "certvid_v4":
+    # Keep the legacy LLaVA baselines outer-only. CertVID V4/V5 explicitly
+    # validate and exercise the aligned hybrid budget through the installed hook.
+    if backend == "llava" and str(args.compression_variant).strip().lower() not in {"certvid_v4", "certvid_v5"}:
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
 
@@ -2438,6 +2507,41 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv4_fusion_alpha=args.certv4_fusion_alpha,
         certv4_assignment_temperature=args.certv4_assignment_temperature,
         certv4_debug=args.certv4_debug,
+        certv5_budget_mode=args.certv5_budget_mode,
+        certv5_attention_policy=args.certv5_attention_policy,
+        certv5_attention_eps=args.certv5_attention_eps,
+        certv5_certificate_budget_ratio=args.certv5_certificate_budget_ratio,
+        certv5_query_mode=args.certv5_query_mode,
+        certv5_design_protect_ratio=args.certv5_design_protect_ratio,
+        certv5_query_atoms=args.certv5_query_atoms,
+        certv5_temporal_bins=args.certv5_temporal_bins,
+        certv5_coarse_bins=args.certv5_coarse_bins,
+        certv5_spatial_bins=args.certv5_spatial_bins,
+        certv5_candidate_multiplier=args.certv5_candidate_multiplier,
+        certv5_query_weight=args.certv5_query_weight,
+        certv5_track_threshold=args.certv5_track_threshold,
+        certv5_spatial_penalty=args.certv5_spatial_penalty,
+        certv5_metric_dim=args.certv5_metric_dim,
+        certv5_frame_coverage_ratio=args.certv5_frame_coverage_ratio,
+        certv5_query_threshold=args.certv5_query_threshold,
+        certv5_query_per_atom=args.certv5_query_per_atom,
+        certv5_structural_weight=args.certv5_structural_weight,
+        certv5_whitening_strength=args.certv5_whitening_strength,
+        certv5_quality_floor=args.certv5_quality_floor,
+        certv5_ridge=args.certv5_ridge,
+        certv5_swap_steps=args.certv5_swap_steps,
+        certv5_swap_pool=args.certv5_swap_pool,
+        certv5_swap_margin=args.certv5_swap_margin,
+        certv5_fusion_alpha=args.certv5_fusion_alpha,
+        certv5_assignment_temperature=args.certv5_assignment_temperature,
+        certv5_max_scenes=args.certv5_max_scenes,
+        certv5_scene_threshold=args.certv5_scene_threshold,
+        certv5_min_scene_frames=args.certv5_min_scene_frames,
+        certv5_motion_threshold=args.certv5_motion_threshold,
+        certv5_motion_confidence_threshold=args.certv5_motion_confidence_threshold,
+        certv5_motion_fusion_threshold=args.certv5_motion_fusion_threshold,
+        certv5_router_strength=args.certv5_router_strength,
+        certv5_debug=args.certv5_debug,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
         prism_query_atoms=args.prism_query_atoms,
@@ -2899,7 +3003,17 @@ def run(args: BenchmarkArgs):
     backend = model_bundle["backend"]
     _print_header(args, backend)
     if backend == "llava":
-        print("[info] LLaVA backend: inner-LLM pruning is disabled for stability (vision compression remains enabled).")
+        variant = str(args.compression_variant).strip().lower()
+        if args.run_ours and variant in {"certvid_v4", "certvid_v5"}:
+            print(
+                "[info] LLaVA backend: validated hybrid outer/inner pruning is enabled "
+                f"for {variant}."
+            )
+        else:
+            print(
+                "[info] LLaVA backend: inner-LLM pruning is disabled for legacy methods "
+                "(vision compression remains enabled)."
+            )
     print(f"Loaded {len(samples)} samples.\n")
     if args.reload_model_each_phase:
         model_bundle["model"] = None
@@ -3008,6 +3122,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v3-active][ours]"
         elif variant_name == "certvid_v4":
             ours_prefix = "[certvid-v4-active][ours]"
+        elif variant_name == "certvid_v5":
+            ours_prefix = "[certvid-v5-active][ours]"
         elif variant_name == "prismvid":
             ours_prefix = "[prismvid-active][ours]"
         else:

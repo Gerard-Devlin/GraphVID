@@ -212,6 +212,46 @@ CERTV4_FUSION_ALPHA="${CERTV4_FUSION_ALPHA:-0.12}"
 CERTV4_ASSIGNMENT_TEMPERATURE="${CERTV4_ASSIGNMENT_TEMPERATURE:-0.07}"
 CERTV4_DEBUG="${CERTV4_DEBUG:-False}"
 
+CERTV5_TOKEN_SELECTION_METHOD="${CERTV5_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
+CERTV5_EXPANSION="${CERTV5_EXPANSION:-$EXPANSION}"
+CERTV5_PRUNING_LAYER="${CERTV5_PRUNING_LAYER:-28}"
+CERTV5_LLM_RETENTION_RATIO="${CERTV5_LLM_RETENTION_RATIO:-0.10}"
+CERTV5_BUDGET_MODE="${CERTV5_BUDGET_MODE:-layer_average}"
+CERTV5_ATTENTION_POLICY="${CERTV5_ATTENTION_POLICY:-validated}"
+CERTV5_ATTENTION_EPS="${CERTV5_ATTENTION_EPS:-0.000001}"
+CERTV5_CERTIFICATE_BUDGET_RATIO="${CERTV5_CERTIFICATE_BUDGET_RATIO:-0.36}"
+CERTV5_QUERY_MODE="${CERTV5_QUERY_MODE:-certificates_and_design}"
+CERTV5_DESIGN_PROTECT_RATIO="${CERTV5_DESIGN_PROTECT_RATIO:-0.12}"
+CERTV5_QUERY_ATOMS="${CERTV5_QUERY_ATOMS:-8}"
+CERTV5_TEMPORAL_BINS="${CERTV5_TEMPORAL_BINS:-12}"
+CERTV5_COARSE_BINS="${CERTV5_COARSE_BINS:-4}"
+CERTV5_SPATIAL_BINS="${CERTV5_SPATIAL_BINS:-3}"
+CERTV5_CANDIDATE_MULTIPLIER="${CERTV5_CANDIDATE_MULTIPLIER:-3.0}"
+CERTV5_QUERY_WEIGHT="${CERTV5_QUERY_WEIGHT:-0.10}"
+CERTV5_TRACK_THRESHOLD="${CERTV5_TRACK_THRESHOLD:-0.82}"
+CERTV5_SPATIAL_PENALTY="${CERTV5_SPATIAL_PENALTY:-0.08}"
+CERTV5_METRIC_DIM="${CERTV5_METRIC_DIM:-96}"
+CERTV5_FRAME_COVERAGE_RATIO="${CERTV5_FRAME_COVERAGE_RATIO:-0.75}"
+CERTV5_QUERY_THRESHOLD="${CERTV5_QUERY_THRESHOLD:-0.10}"
+CERTV5_QUERY_PER_ATOM="${CERTV5_QUERY_PER_ATOM:-1}"
+CERTV5_STRUCTURAL_WEIGHT="${CERTV5_STRUCTURAL_WEIGHT:-0.40}"
+CERTV5_WHITENING_STRENGTH="${CERTV5_WHITENING_STRENGTH:-0.50}"
+CERTV5_QUALITY_FLOOR="${CERTV5_QUALITY_FLOOR:-0.15}"
+CERTV5_RIDGE="${CERTV5_RIDGE:-0.50}"
+CERTV5_SWAP_STEPS="${CERTV5_SWAP_STEPS:-6}"
+CERTV5_SWAP_POOL="${CERTV5_SWAP_POOL:-24}"
+CERTV5_SWAP_MARGIN="${CERTV5_SWAP_MARGIN:-0.0001}"
+CERTV5_FUSION_ALPHA="${CERTV5_FUSION_ALPHA:-0.06}"
+CERTV5_ASSIGNMENT_TEMPERATURE="${CERTV5_ASSIGNMENT_TEMPERATURE:-0.07}"
+CERTV5_MAX_SCENES="${CERTV5_MAX_SCENES:-8}"
+CERTV5_SCENE_THRESHOLD="${CERTV5_SCENE_THRESHOLD:-0.58}"
+CERTV5_MIN_SCENE_FRAMES="${CERTV5_MIN_SCENE_FRAMES:-2}"
+CERTV5_MOTION_THRESHOLD="${CERTV5_MOTION_THRESHOLD:-0.42}"
+CERTV5_MOTION_CONFIDENCE_THRESHOLD="${CERTV5_MOTION_CONFIDENCE_THRESHOLD:-0.35}"
+CERTV5_MOTION_FUSION_THRESHOLD="${CERTV5_MOTION_FUSION_THRESHOLD:-0.45}"
+CERTV5_ROUTER_STRENGTH="${CERTV5_ROUTER_STRENGTH:-0.65}"
+CERTV5_DEBUG="${CERTV5_DEBUG:-False}"
+
 split_csv() {
   local text="$1"
   text="${text//,/ }"
@@ -288,6 +328,10 @@ common_flash_args() {
     expansion="$CERTV4_EXPANSION"
     pruning_layer="$CERTV4_PRUNING_LAYER"
     llm_retention_ratio="$CERTV4_LLM_RETENTION_RATIO"
+  elif [[ "$method" == "certvid_v5" ]]; then
+    expansion="$CERTV5_EXPANSION"
+    pruning_layer="$CERTV5_PRUNING_LAYER"
+    llm_retention_ratio="$CERTV5_LLM_RETENTION_RATIO"
   fi
   printf 'enable_flashvid=True,retention_ratio=%s,expansion=%s,do_segment=%s,segment_threshold=%s,min_segment_num=%s,complementary_segment=%s,alpha=%s,temporal_threshold=%s,pruning_layer=%s,llm_retention_ratio=%s' \
     "$retention_ratio" "$expansion" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" "$TEMPORAL_THRESHOLD" "$pruning_layer" "$llm_retention_ratio"
@@ -334,6 +378,10 @@ method_flash_args() {
     certvid_v4)
       printf 'compression_variant=certvid_v4,token_selection_method=%s,certv4_budget_mode=%s,certv4_attention_policy=%s,certv4_attention_eps=%s,certv4_certificate_budget_ratio=%s,certv4_query_mode=%s,certv4_design_protect_ratio=%s,certv4_query_atoms=%s,certv4_temporal_bins=%s,certv4_spatial_bins=%s,certv4_candidate_multiplier=%s,certv4_track_threshold=%s,certv4_spatial_penalty=%s,certv4_metric_dim=%s,certv4_frame_coverage_ratio=%s,certv4_cell_coverage_ratio=%s,certv4_query_threshold=%s,certv4_query_per_atom=%s,certv4_structural_weight=%s,certv4_whitening_strength=%s,certv4_quality_floor=%s,certv4_ridge=%s,certv4_swap_steps=%s,certv4_swap_pool=%s,certv4_swap_margin=%s,certv4_fusion_alpha=%s,certv4_assignment_temperature=%s,certv4_debug=%s' \
         "$CERTV4_TOKEN_SELECTION_METHOD" "$CERTV4_BUDGET_MODE" "$CERTV4_ATTENTION_POLICY" "$CERTV4_ATTENTION_EPS" "$CERTV4_CERTIFICATE_BUDGET_RATIO" "$CERTV4_QUERY_MODE" "$CERTV4_DESIGN_PROTECT_RATIO" "$CERTV4_QUERY_ATOMS" "$CERTV4_TEMPORAL_BINS" "$CERTV4_SPATIAL_BINS" "$CERTV4_CANDIDATE_MULTIPLIER" "$CERTV4_TRACK_THRESHOLD" "$CERTV4_SPATIAL_PENALTY" "$CERTV4_METRIC_DIM" "$CERTV4_FRAME_COVERAGE_RATIO" "$CERTV4_CELL_COVERAGE_RATIO" "$CERTV4_QUERY_THRESHOLD" "$CERTV4_QUERY_PER_ATOM" "$CERTV4_STRUCTURAL_WEIGHT" "$CERTV4_WHITENING_STRENGTH" "$CERTV4_QUALITY_FLOOR" "$CERTV4_RIDGE" "$CERTV4_SWAP_STEPS" "$CERTV4_SWAP_POOL" "$CERTV4_SWAP_MARGIN" "$CERTV4_FUSION_ALPHA" "$CERTV4_ASSIGNMENT_TEMPERATURE" "$CERTV4_DEBUG"
+      ;;
+    certvid_v5)
+      printf 'compression_variant=certvid_v5,token_selection_method=%s,certv5_budget_mode=%s,certv5_attention_policy=%s,certv5_attention_eps=%s,certv5_certificate_budget_ratio=%s,certv5_query_mode=%s,certv5_design_protect_ratio=%s,certv5_query_atoms=%s,certv5_temporal_bins=%s,certv5_coarse_bins=%s,certv5_spatial_bins=%s,certv5_candidate_multiplier=%s,certv5_query_weight=%s,certv5_track_threshold=%s,certv5_spatial_penalty=%s,certv5_metric_dim=%s,certv5_frame_coverage_ratio=%s,certv5_query_threshold=%s,certv5_query_per_atom=%s,certv5_structural_weight=%s,certv5_whitening_strength=%s,certv5_quality_floor=%s,certv5_ridge=%s,certv5_swap_steps=%s,certv5_swap_pool=%s,certv5_swap_margin=%s,certv5_fusion_alpha=%s,certv5_assignment_temperature=%s,certv5_max_scenes=%s,certv5_scene_threshold=%s,certv5_min_scene_frames=%s,certv5_motion_threshold=%s,certv5_motion_confidence_threshold=%s,certv5_motion_fusion_threshold=%s,certv5_router_strength=%s,certv5_debug=%s' \
+        "$CERTV5_TOKEN_SELECTION_METHOD" "$CERTV5_BUDGET_MODE" "$CERTV5_ATTENTION_POLICY" "$CERTV5_ATTENTION_EPS" "$CERTV5_CERTIFICATE_BUDGET_RATIO" "$CERTV5_QUERY_MODE" "$CERTV5_DESIGN_PROTECT_RATIO" "$CERTV5_QUERY_ATOMS" "$CERTV5_TEMPORAL_BINS" "$CERTV5_COARSE_BINS" "$CERTV5_SPATIAL_BINS" "$CERTV5_CANDIDATE_MULTIPLIER" "$CERTV5_QUERY_WEIGHT" "$CERTV5_TRACK_THRESHOLD" "$CERTV5_SPATIAL_PENALTY" "$CERTV5_METRIC_DIM" "$CERTV5_FRAME_COVERAGE_RATIO" "$CERTV5_QUERY_THRESHOLD" "$CERTV5_QUERY_PER_ATOM" "$CERTV5_STRUCTURAL_WEIGHT" "$CERTV5_WHITENING_STRENGTH" "$CERTV5_QUALITY_FLOOR" "$CERTV5_RIDGE" "$CERTV5_SWAP_STEPS" "$CERTV5_SWAP_POOL" "$CERTV5_SWAP_MARGIN" "$CERTV5_FUSION_ALPHA" "$CERTV5_ASSIGNMENT_TEMPERATURE" "$CERTV5_MAX_SCENES" "$CERTV5_SCENE_THRESHOLD" "$CERTV5_MIN_SCENE_FRAMES" "$CERTV5_MOTION_THRESHOLD" "$CERTV5_MOTION_CONFIDENCE_THRESHOLD" "$CERTV5_MOTION_FUSION_THRESHOLD" "$CERTV5_ROUTER_STRENGTH" "$CERTV5_DEBUG"
       ;;
     visionzip)
       printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \

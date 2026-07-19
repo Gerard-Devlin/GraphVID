@@ -231,6 +231,41 @@ def flashvid(
     certv4_fusion_alpha: float = 0.12,
     certv4_assignment_temperature: float = 0.07,
     certv4_debug: bool = False,
+    certv5_budget_mode: str = "layer_average",
+    certv5_attention_policy: str = "validated",
+    certv5_attention_eps: float = 1e-6,
+    certv5_certificate_budget_ratio: float = 0.36,
+    certv5_query_mode: str = "certificates_and_design",
+    certv5_design_protect_ratio: float = 0.12,
+    certv5_query_atoms: int = 8,
+    certv5_temporal_bins: int = 12,
+    certv5_coarse_bins: int = 4,
+    certv5_spatial_bins: int = 3,
+    certv5_candidate_multiplier: float = 3.0,
+    certv5_query_weight: float = 0.10,
+    certv5_track_threshold: float = 0.82,
+    certv5_spatial_penalty: float = 0.08,
+    certv5_metric_dim: int = 96,
+    certv5_frame_coverage_ratio: float = 0.75,
+    certv5_query_threshold: float = 0.10,
+    certv5_query_per_atom: int = 1,
+    certv5_structural_weight: float = 0.40,
+    certv5_whitening_strength: float = 0.50,
+    certv5_quality_floor: float = 0.15,
+    certv5_ridge: float = 0.50,
+    certv5_swap_steps: int = 6,
+    certv5_swap_pool: int = 24,
+    certv5_swap_margin: float = 1e-4,
+    certv5_fusion_alpha: float = 0.06,
+    certv5_assignment_temperature: float = 0.07,
+    certv5_max_scenes: int = 8,
+    certv5_scene_threshold: float = 0.58,
+    certv5_min_scene_frames: int = 2,
+    certv5_motion_threshold: float = 0.42,
+    certv5_motion_confidence_threshold: float = 0.35,
+    certv5_motion_fusion_threshold: float = 0.45,
+    certv5_router_strength: float = 0.65,
+    certv5_debug: bool = False,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -475,6 +510,7 @@ def flashvid(
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
+            "certvid_v5" adds scene-pyramid coverage and atomic directed tracklets;
             "prismvid" selects an exact multi-level Qwen3 DeepStack visual coreset;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
@@ -599,10 +635,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|certvid_v5|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -738,6 +774,43 @@ def flashvid(
         certv4_debug=certv4_debug,
         certv4_num_hidden_layers=_text_layer_count(model),
         certv4_inner_hook_enabled=True,
+        certv5_budget_mode=certv5_budget_mode,
+        certv5_attention_policy=certv5_attention_policy,
+        certv5_attention_eps=certv5_attention_eps,
+        certv5_certificate_budget_ratio=certv5_certificate_budget_ratio,
+        certv5_query_mode=certv5_query_mode,
+        certv5_design_protect_ratio=certv5_design_protect_ratio,
+        certv5_query_atoms=certv5_query_atoms,
+        certv5_temporal_bins=certv5_temporal_bins,
+        certv5_coarse_bins=certv5_coarse_bins,
+        certv5_spatial_bins=certv5_spatial_bins,
+        certv5_candidate_multiplier=certv5_candidate_multiplier,
+        certv5_query_weight=certv5_query_weight,
+        certv5_track_threshold=certv5_track_threshold,
+        certv5_spatial_penalty=certv5_spatial_penalty,
+        certv5_metric_dim=certv5_metric_dim,
+        certv5_frame_coverage_ratio=certv5_frame_coverage_ratio,
+        certv5_query_threshold=certv5_query_threshold,
+        certv5_query_per_atom=certv5_query_per_atom,
+        certv5_structural_weight=certv5_structural_weight,
+        certv5_whitening_strength=certv5_whitening_strength,
+        certv5_quality_floor=certv5_quality_floor,
+        certv5_ridge=certv5_ridge,
+        certv5_swap_steps=certv5_swap_steps,
+        certv5_swap_pool=certv5_swap_pool,
+        certv5_swap_margin=certv5_swap_margin,
+        certv5_fusion_alpha=certv5_fusion_alpha,
+        certv5_assignment_temperature=certv5_assignment_temperature,
+        certv5_max_scenes=certv5_max_scenes,
+        certv5_scene_threshold=certv5_scene_threshold,
+        certv5_min_scene_frames=certv5_min_scene_frames,
+        certv5_motion_threshold=certv5_motion_threshold,
+        certv5_motion_confidence_threshold=certv5_motion_confidence_threshold,
+        certv5_motion_fusion_threshold=certv5_motion_fusion_threshold,
+        certv5_router_strength=certv5_router_strength,
+        certv5_debug=certv5_debug,
+        certv5_num_hidden_layers=_text_layer_count(model),
+        certv5_inner_hook_enabled=True,
         prism_budget_uses_expansion=prism_budget_uses_expansion,
         prism_metric_dim=prism_metric_dim,
         prism_query_atoms=prism_query_atoms,
@@ -954,6 +1027,11 @@ def flashvid(
         from .certvid_v4 import _resolve_budget
 
         # Validate the layer-average contract before loading any benchmark sample.
+        _resolve_budget(flashvid_config, total_tokens=1)
+
+    if variant == "certvid_v5":
+        from .certvid_v5 import _resolve_budget
+
         _resolve_budget(flashvid_config, total_tokens=1)
 
     # Store FlashVid Config in the model.
