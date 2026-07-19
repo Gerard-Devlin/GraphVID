@@ -192,30 +192,45 @@ class BenchmarkArgs:
     certv5_budget_mode: str = field(default="layer_average")
     certv5_attention_policy: str = field(default="validated")
     certv5_attention_eps: float = field(default=1e-6)
-    certv5_certificate_budget_ratio: float = field(default=0.36)
-    certv5_query_mode: str = field(default="certificates_and_design")
-    certv5_design_protect_ratio: float = field(default=0.12)
+    certv5_certificate_budget_ratio: float = field(default=0.28)
+    certv5_query_mode: str = field(default="certificates_and_kernel")
+    certv5_kernel_protect_ratio: float = field(default=0.12)
     certv5_query_atoms: int = field(default=8)
     certv5_temporal_bins: int = field(default=12)
     certv5_coarse_bins: int = field(default=4)
     certv5_spatial_bins: int = field(default=3)
-    certv5_candidate_multiplier: float = field(default=3.0)
-    certv5_query_weight: float = field(default=0.10)
+    certv5_candidate_multiplier: float = field(default=2.5)
+    certv5_query_weight: float = field(default=0.12)
     certv5_track_threshold: float = field(default=0.82)
     certv5_spatial_penalty: float = field(default=0.08)
     certv5_metric_dim: int = field(default=96)
     certv5_frame_coverage_ratio: float = field(default=0.75)
     certv5_query_threshold: float = field(default=0.10)
     certv5_query_per_atom: int = field(default=1)
-    certv5_structural_weight: float = field(default=0.40)
-    certv5_whitening_strength: float = field(default=0.50)
-    certv5_quality_floor: float = field(default=0.15)
-    certv5_ridge: float = field(default=0.50)
-    certv5_swap_steps: int = field(default=6)
-    certv5_swap_pool: int = field(default=24)
-    certv5_swap_margin: float = field(default=1e-4)
-    certv5_fusion_alpha: float = field(default=0.06)
+    certv5_whitening_strength: float = field(default=0.25)
+    certv5_quality_floor: float = field(default=0.18)
+    certv5_appearance_kernel_weight: float = field(default=0.46)
+    certv5_temporal_kernel_weight: float = field(default=0.16)
+    certv5_motion_kernel_weight: float = field(default=0.16)
+    certv5_event_kernel_weight: float = field(default=0.10)
+    certv5_spatial_kernel_weight: float = field(default=0.07)
+    certv5_query_kernel_weight: float = field(default=0.05)
+    certv5_appearance_temperature: float = field(default=0.18)
+    certv5_temporal_temperature: float = field(default=0.20)
+    certv5_motion_temperature: float = field(default=0.20)
+    certv5_event_temperature: float = field(default=0.35)
+    certv5_spatial_temperature: float = field(default=0.35)
+    certv5_query_temperature: float = field(default=0.20)
+    certv5_kernel_chunk_size: int = field(default=512)
+    certv5_merge_multiplier: float = field(default=2.0)
+    certv5_greedy_sample_size: int = field(default=48)
+    certv5_dual_strength: float = field(default=0.20)
+    certv5_mmd_weight: float = field(default=0.10)
+    certv5_motion_sector_threshold: float = field(default=0.24)
+    certv5_fusion_alpha: float = field(default=0.04)
     certv5_assignment_temperature: float = field(default=0.07)
+    certv5_transport_steps: int = field(default=4)
+    certv5_transport_balance: float = field(default=0.20)
     certv5_max_scenes: int = field(default=8)
     certv5_scene_threshold: float = field(default=0.58)
     certv5_min_scene_frames: int = field(default=2)
@@ -1208,8 +1223,12 @@ def _get_certv4_metrics(model) -> dict[str, float | None]:
         "average_layer_multiplier",
         "certificate_count",
         "candidate_tokens",
-        "swap_count",
-        "logdet",
+        "facility_objective",
+        "mmd_proxy",
+        "facility_iterations",
+        "divide_survivors",
+        "transport_load_cv",
+        "kernel_protected_count",
         "attention_used",
     )
     output = {f"certv4_{name}": None for name in names}
@@ -2512,7 +2531,7 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv5_attention_eps=args.certv5_attention_eps,
         certv5_certificate_budget_ratio=args.certv5_certificate_budget_ratio,
         certv5_query_mode=args.certv5_query_mode,
-        certv5_design_protect_ratio=args.certv5_design_protect_ratio,
+        certv5_kernel_protect_ratio=args.certv5_kernel_protect_ratio,
         certv5_query_atoms=args.certv5_query_atoms,
         certv5_temporal_bins=args.certv5_temporal_bins,
         certv5_coarse_bins=args.certv5_coarse_bins,
@@ -2525,15 +2544,30 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv5_frame_coverage_ratio=args.certv5_frame_coverage_ratio,
         certv5_query_threshold=args.certv5_query_threshold,
         certv5_query_per_atom=args.certv5_query_per_atom,
-        certv5_structural_weight=args.certv5_structural_weight,
         certv5_whitening_strength=args.certv5_whitening_strength,
         certv5_quality_floor=args.certv5_quality_floor,
-        certv5_ridge=args.certv5_ridge,
-        certv5_swap_steps=args.certv5_swap_steps,
-        certv5_swap_pool=args.certv5_swap_pool,
-        certv5_swap_margin=args.certv5_swap_margin,
+        certv5_appearance_kernel_weight=args.certv5_appearance_kernel_weight,
+        certv5_temporal_kernel_weight=args.certv5_temporal_kernel_weight,
+        certv5_motion_kernel_weight=args.certv5_motion_kernel_weight,
+        certv5_event_kernel_weight=args.certv5_event_kernel_weight,
+        certv5_spatial_kernel_weight=args.certv5_spatial_kernel_weight,
+        certv5_query_kernel_weight=args.certv5_query_kernel_weight,
+        certv5_appearance_temperature=args.certv5_appearance_temperature,
+        certv5_temporal_temperature=args.certv5_temporal_temperature,
+        certv5_motion_temperature=args.certv5_motion_temperature,
+        certv5_event_temperature=args.certv5_event_temperature,
+        certv5_spatial_temperature=args.certv5_spatial_temperature,
+        certv5_query_temperature=args.certv5_query_temperature,
+        certv5_kernel_chunk_size=args.certv5_kernel_chunk_size,
+        certv5_merge_multiplier=args.certv5_merge_multiplier,
+        certv5_greedy_sample_size=args.certv5_greedy_sample_size,
+        certv5_dual_strength=args.certv5_dual_strength,
+        certv5_mmd_weight=args.certv5_mmd_weight,
+        certv5_motion_sector_threshold=args.certv5_motion_sector_threshold,
         certv5_fusion_alpha=args.certv5_fusion_alpha,
         certv5_assignment_temperature=args.certv5_assignment_temperature,
+        certv5_transport_steps=args.certv5_transport_steps,
+        certv5_transport_balance=args.certv5_transport_balance,
         certv5_max_scenes=args.certv5_max_scenes,
         certv5_scene_threshold=args.certv5_scene_threshold,
         certv5_min_scene_frames=args.certv5_min_scene_frames,

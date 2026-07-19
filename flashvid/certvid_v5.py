@@ -27,22 +27,30 @@ from .configuration_flashvid import FlashVidConfig
 
 _CERTIFICATE_CATEGORIES = ("query", "frame", "scene", "motion", "track")
 _CERTIFICATE_SHARES = {
-    "query": 0.14,
-    "frame": 0.18,
-    "scene": 0.18,
-    "motion": 0.30,
-    "track": 0.20,
+    "query": 0.16,
+    "frame": 0.22,
+    "scene": 0.24,
+    "motion": 0.20,
+    "track": 0.18,
 }
 _CANDIDATE_SOURCES = ("motion", "query", "track", "scene", "spatial", "global")
 _CANDIDATE_SHARES = {
-    "motion": 0.26,
-    "query": 0.14,
-    "track": 0.18,
-    "scene": 0.16,
-    "spatial": 0.12,
-    "global": 0.14,
+    "motion": 0.20,
+    "query": 0.15,
+    "track": 0.17,
+    "scene": 0.17,
+    "spatial": 0.14,
+    "global": 0.17,
 }
-_QUERY_MODES = {"certificates_only", "design_only", "certificates_and_design", "off"}
+_QUERY_MODES = {
+    "certificates_only",
+    "kernel_only",
+    "certificates_and_kernel",
+    # Aliases retained so an old launcher fails neither parsing nor resumption.
+    "design_only",
+    "certificates_and_design",
+    "off",
+}
 
 
 @dataclass(frozen=True)
@@ -248,93 +256,64 @@ def _whiten_features(features: torch.Tensor, strength: float) -> torch.Tensor:
     )
 
 
-def _design_features(
+def _query_uses_certificates(mode: str) -> bool:
+    return mode in {"certificates_only", "certificates_and_kernel", "certificates_and_design"}
+
+
+def _query_uses_kernel(mode: str) -> bool:
+    return mode in {"kernel_only", "certificates_and_kernel", "design_only", "certificates_and_design"}
+
+
+def _balanced_target_mass(
     *,
-    metric_features: torch.Tensor,
     quality: torch.Tensor,
-    fine_temporal_ids: torch.Tensor,
-    coarse_temporal_ids: torch.Tensor,
-    scene_ids: torch.Tensor,
-    spatial_ids: torch.Tensor,
-    novelty: torch.Tensor,
-    curvature: torch.Tensor,
-    event: torch.Tensor,
-    detail: torch.Tensor,
+    event_score: torch.Tensor,
     component_support: torch.Tensor,
-    motion_score: torch.Tensor,
-    motion_confidence: torch.Tensor,
-    direction_axes: torch.Tensor,
-    query_relevance: torch.Tensor,
-    atom_weights: torch.Tensor,
-    query_confidence: float,
-    query_mode: str,
-    fine_temporal_count: int,
-    coarse_temporal_count: int,
-    scene_count: int,
-    spatial_count: int,
-    structural_weight: float,
-    whitening_strength: float,
+    query_score: torch.Tensor,
+    frame_ids: torch.Tensor,
+    frame_event: torch.Tensor,
+    query_weight: float,
     quality_floor: float,
-) -> torch.Tensor:
-    visual = _whiten_features(metric_features, whitening_strength)
-    temporal = F.normalize(
-        torch.cat(
-            [
-                F.one_hot(fine_temporal_ids, num_classes=fine_temporal_count).float(),
-                F.one_hot(coarse_temporal_ids, num_classes=coarse_temporal_count).float(),
-                F.one_hot(scene_ids, num_classes=scene_count).float(),
-            ],
-            dim=1,
-        ),
-        p=2,
-        dim=-1,
-        eps=1e-6,
-    )
-    spatial = F.one_hot(spatial_ids, num_classes=spatial_count).float()
-    signals = F.normalize(
-        torch.stack(
-            [
-                novelty,
-                curvature,
-                event,
-                detail,
-                component_support,
-                motion_score,
-                motion_confidence,
-            ],
-            dim=1,
-        ),
-        p=2,
-        dim=-1,
-        eps=1e-6,
-    )
-    direction = F.normalize(direction_axes.float(), p=2, dim=-1, eps=1e-6)
-
-    structural_weight = min(0.80, max(0.0, float(structural_weight)))
-    query_enabled = query_mode in {"design_only", "certificates_and_design"}
-    query_share = (
-        0.12 * structural_weight * min(1.0, max(0.0, float(query_confidence)))
-        if query_enabled and query_relevance.numel() > 0
-        else 0.0
-    )
-    structural_remainder = max(0.0, structural_weight - query_share)
-    parts = [
-        visual * math.sqrt(max(0.20, 1.0 - structural_weight)),
-        temporal * math.sqrt(0.34 * structural_remainder),
-        spatial * math.sqrt(0.16 * structural_remainder),
-        signals * math.sqrt(0.24 * structural_remainder),
-        direction * math.sqrt(0.26 * structural_remainder),
-    ]
-    if query_share > 0.0:
-        query_axes = query_relevance.transpose(0, 1) * torch.sqrt(
-            atom_weights.clamp_min(1e-6)
-        ).unsqueeze(0)
-        parts.append(query_axes * math.sqrt(query_share))
-
-    design = F.normalize(torch.cat(parts, dim=1), p=2, dim=-1, eps=1e-6)
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Build the quality-weighted empirical measure that the coreset represents."""
     quality_floor = min(1.0, max(1e-4, float(quality_floor)))
-    row_mass = quality_floor + (1.0 - quality_floor) * quality.clamp(0.0, 1.0)
-    return design * torch.sqrt(row_mass).unsqueeze(1)
+    query_weight = min(0.20, max(0.0, float(query_weight)))
+    visual_weight = max(0.0, 1.0 - query_weight)
+    local_mass = quality_floor + visual_weight * (
+        0.48 * quality + 0.30 * event_score + 0.22 * component_support
+    )
+    if query_weight > 0.0:
+        local_mass = local_mass + query_weight * query_score
+    local_mass = local_mass.clamp_min(1e-6)
+
+    frame_count = int(frame_event.numel())
+    frame_quality = torch.zeros(frame_count, dtype=torch.float32, device=quality.device)
+    frame_query = torch.zeros_like(frame_quality)
+    within_frame = torch.zeros_like(local_mass)
+    for frame_idx in range(frame_count):
+        members = torch.where(frame_ids == frame_idx)[0]
+        if members.numel() == 0:
+            continue
+        values = local_mass[members]
+        within_frame[members] = values / values.sum().clamp_min(1e-6)
+        frame_quality[frame_idx] = quality[members].mean()
+        frame_query[frame_idx] = query_score[members].max()
+
+    # Quiet frames retain a majority uniform prior; event and query evidence only
+    # redistribute the remaining mass. This prevents long-video blind spots.
+    frame_mass = 0.60 + 0.24 * frame_event.float() + 0.16 * frame_quality
+    if query_weight > 0.0:
+        frame_mass = frame_mass + query_weight * frame_query
+    frame_mass = frame_mass / frame_mass.sum().clamp_min(1e-6)
+    target_mass = within_frame * frame_mass[frame_ids]
+    target_mass = target_mass / target_mass.sum().clamp_min(1e-6)
+    entropy = float((-(target_mass * torch.log(target_mass.clamp_min(1e-12))).sum()).item())
+    return target_mass, {
+        "entropy": entropy,
+        "effective_support": float(math.exp(min(50.0, entropy))),
+        "min_frame_mass": float(frame_mass.min().item()),
+        "max_frame_mass": float(frame_mass.max().item()),
+    }
 
 
 def _evenly_spaced_ids(count: int, keep: int, device: torch.device) -> torch.Tensor:
@@ -661,7 +640,7 @@ def _build_certificate_requests(
         )
 
     if (
-        query_mode in {"certificates_only", "certificates_and_design"}
+        _query_uses_certificates(query_mode)
         and query_relevance.numel() > 0
         and query_confidence >= float(query_threshold)
     ):
@@ -812,7 +791,7 @@ def _candidate_pool(
     limit = min(total_tokens, max(budget, int(math.ceil(budget * max(1.0, multiplier)))))
     offers: dict[str, list[int]] = {name: [] for name in _CANDIDATE_SOURCES}
 
-    if query_mode in {"design_only", "certificates_and_design"} and query_relevance.numel() > 0:
+    if _query_uses_kernel(query_mode) and query_relevance.numel() > 0:
         ranked: list[tuple[float, int]] = []
         for atom_idx, scores in enumerate(query_relevance):
             for scene_id in torch.unique(scene_ids).tolist():
@@ -929,196 +908,542 @@ def _candidate_pool(
     return torch.tensor(sorted(selected), dtype=torch.long, device=quality.device), diagnostics
 
 
-def _d_optimal_greedy(
+def _kernel_weights(
+    config: FlashVidConfig,
+    router: dict[str, float],
+    query_confidence: float,
+    query_enabled: bool,
+) -> dict[str, float]:
+    motion = float(router["motion_activity"])
+    event = float(router["event_activity"])
+    strength = float(router["router_strength"])
+    weights = {
+        "appearance": max(0.0, _cfg_float(config, "certv5_appearance_kernel_weight", 0.46)),
+        "temporal": max(0.0, _cfg_float(config, "certv5_temporal_kernel_weight", 0.16))
+        * (1.0 + strength * 0.45 * event),
+        "motion": max(0.0, _cfg_float(config, "certv5_motion_kernel_weight", 0.16))
+        * (1.0 + strength * 0.75 * motion),
+        "event": max(0.0, _cfg_float(config, "certv5_event_kernel_weight", 0.10))
+        * (1.0 + strength * 0.40 * event),
+        "spatial": max(0.0, _cfg_float(config, "certv5_spatial_kernel_weight", 0.07)),
+        "query": max(0.0, _cfg_float(config, "certv5_query_kernel_weight", 0.05))
+        * min(1.0, max(0.0, float(query_confidence)))
+        if query_enabled
+        else 0.0,
+    }
+    total = sum(weights.values())
+    if total <= 1e-8:
+        weights["appearance"] = 1.0
+        total = 1.0
+    return {name: value / total for name, value in weights.items()}
+
+
+def _prepare_kernel_state(
     *,
-    design: torch.Tensor,
+    metric_features: torch.Tensor,
+    frame_ids: torch.Tensor,
+    frame_count: int,
+    spatial_coords: torch.Tensor,
+    scene_ids: torch.Tensor,
+    novelty: torch.Tensor,
+    curvature: torch.Tensor,
+    event: torch.Tensor,
+    detail: torch.Tensor,
+    component_support: torch.Tensor,
+    motion_score: torch.Tensor,
+    motion_confidence: torch.Tensor,
+    direction_axes: torch.Tensor,
+    query_relevance: torch.Tensor,
+    atom_weights: torch.Tensor,
+    whitening_strength: float,
+) -> dict[str, torch.Tensor]:
+    query_signature = metric_features.new_empty((metric_features.shape[0], 0))
+    if query_relevance.numel() > 0:
+        query_signature = query_relevance.transpose(0, 1) * torch.sqrt(
+            atom_weights.clamp_min(1e-6)
+        ).unsqueeze(0)
+        query_signature = F.normalize(query_signature, p=2, dim=-1, eps=1e-6)
+    event_signature = torch.stack(
+        [novelty, curvature, event, detail, component_support, motion_score],
+        dim=1,
+    ).float()
+    return {
+        "appearance": _whiten_features(metric_features, whitening_strength),
+        "time": frame_ids.float() / float(max(1, frame_count - 1)),
+        "spatial": spatial_coords.float(),
+        "scene": scene_ids.long(),
+        "event": event_signature,
+        "motion": F.normalize(direction_axes.float(), p=2, dim=-1, eps=1e-6),
+        "motion_gate": (motion_score * motion_confidence).clamp(0.0, 1.0),
+        "motion_score": motion_score.float(),
+        "query": query_signature,
+    }
+
+
+def _multi_kernel_block(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    state: dict[str, torch.Tensor],
+    weights: dict[str, float],
+    config: FlashVidConfig,
+) -> torch.Tensor:
+    device = left.device
+    output = torch.zeros((left.numel(), right.numel()), dtype=torch.float32, device=device)
+
+    if weights["appearance"] > 0.0:
+        temperature = max(1e-3, _cfg_float(config, "certv5_appearance_temperature", 0.18))
+        cosine = (state["appearance"][left] @ state["appearance"][right].transpose(0, 1)).clamp(-1.0, 1.0)
+        output += weights["appearance"] * torch.exp((cosine - 1.0) / temperature)
+
+    if weights["temporal"] > 0.0:
+        temperature = max(1e-3, _cfg_float(config, "certv5_temporal_temperature", 0.20))
+        distance = torch.abs(state["time"][left].unsqueeze(1) - state["time"][right].unsqueeze(0))
+        same_scene = state["scene"][left].unsqueeze(1) == state["scene"][right].unsqueeze(0)
+        temporal = torch.exp(-distance / temperature) * (0.35 + 0.65 * same_scene.float())
+        output += weights["temporal"] * temporal
+
+    if weights["motion"] > 0.0:
+        temperature = max(1e-3, _cfg_float(config, "certv5_motion_temperature", 0.20))
+        cosine = (state["motion"][left] @ state["motion"][right].transpose(0, 1)).clamp(-1.0, 1.0)
+        directional = torch.exp((cosine - 1.0) / temperature)
+        scalar_distance = torch.abs(
+            state["motion_score"][left].unsqueeze(1)
+            - state["motion_score"][right].unsqueeze(0)
+        )
+        scalar = torch.exp(-scalar_distance / temperature)
+        left_gate = state["motion_gate"][left].clamp(0.0, 1.0)
+        right_gate = state["motion_gate"][right].clamp(0.0, 1.0)
+        active_gate = torch.sqrt(left_gate.unsqueeze(1) * right_gate.unsqueeze(0))
+        static_gate = torch.sqrt((1.0 - left_gate).unsqueeze(1) * (1.0 - right_gate).unsqueeze(0))
+        output += weights["motion"] * (active_gate * directional + static_gate * scalar)
+
+    if weights["event"] > 0.0:
+        temperature = max(1e-3, _cfg_float(config, "certv5_event_temperature", 0.35))
+        distance = torch.cdist(state["event"][left], state["event"][right], p=2)
+        output += weights["event"] * torch.exp(-distance.square() / (2.0 * temperature**2))
+
+    if weights["spatial"] > 0.0:
+        temperature = max(1e-3, _cfg_float(config, "certv5_spatial_temperature", 0.35))
+        distance = torch.cdist(state["spatial"][left], state["spatial"][right], p=1)
+        output += weights["spatial"] * torch.exp(-distance / temperature)
+
+    if weights["query"] > 0.0 and state["query"].shape[1] > 0:
+        temperature = max(1e-3, _cfg_float(config, "certv5_query_temperature", 0.20))
+        cosine = (state["query"][left] @ state["query"][right].transpose(0, 1)).clamp(-1.0, 1.0)
+        output += weights["query"] * torch.exp((cosine - 1.0) / temperature)
+    return torch.nan_to_num(output, nan=0.0, posinf=1.0, neginf=0.0).clamp_(0.0, 1.0)
+
+
+def _kernel_matrices(
+    *,
     candidates: torch.Tensor,
+    target_mass: torch.Tensor,
+    state: dict[str, torch.Tensor],
+    weights: dict[str, float],
+    config: FlashVidConfig,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    total_tokens = int(target_mass.numel())
+    chunk_size = max(64, _cfg_int(config, "certv5_kernel_chunk_size", 512))
+    kernel = torch.empty(
+        (int(candidates.numel()), total_tokens),
+        dtype=torch.float32,
+        device=candidates.device,
+    )
+    for start in range(0, total_tokens, chunk_size):
+        end = min(total_tokens, start + chunk_size)
+        right = torch.arange(start, end, dtype=torch.long, device=candidates.device)
+        kernel[:, start:end] = _multi_kernel_block(candidates, right, state, weights, config)
+    target_mean = kernel @ target_mass.float()
+    candidate_kernel = kernel.index_select(1, candidates)
+    candidate_kernel = 0.5 * (candidate_kernel + candidate_kernel.transpose(0, 1))
+    return kernel, candidate_kernel, target_mean
+
+
+def _composable_divide_and_conquer(
+    *,
+    kernel: torch.Tensor,
+    candidate_kernel: torch.Tensor,
+    target_mean: torch.Tensor,
+    candidates: torch.Tensor,
+    target_mass: torch.Tensor,
+    quality: torch.Tensor,
+    coarse_temporal_ids: torch.Tensor,
+    scene_ids: torch.Tensor,
     locked: list[int],
     budget: int,
-    ridge: float,
-) -> torch.Tensor:
-    rows = design[candidates].float()
-    candidate_count, design_dim = rows.shape
-    if candidate_count < budget:
-        raise RuntimeError(f"D-optimal pool has {candidate_count} candidates for budget {budget}")
-    ridge = max(1e-4, float(ridge))
-    inverse = torch.eye(design_dim, dtype=torch.float32, device=rows.device) / ridge
-    leverage = rows.square().sum(dim=1) / ridge
-    active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
-    token_to_column = {int(token): idx for idx, token in enumerate(candidates.detach().cpu().tolist())}
-    selected_columns: list[int] = []
+    merge_multiplier: float,
+) -> tuple[torch.Tensor, dict[str, object]]:
+    """Compose local scene-time coresets before the global submodular pass."""
+    candidate_count = int(candidates.numel())
+    limit = min(
+        candidate_count,
+        max(budget, int(math.ceil(budget * max(1.0, float(merge_multiplier))))),
+    )
+    if limit >= candidate_count:
+        return torch.arange(candidate_count, dtype=torch.long, device=candidates.device), {
+            "input_candidates": candidate_count,
+            "survivors": candidate_count,
+            "shards": 1,
+            "covered_shards": 1,
+            "bypassed": True,
+        }
 
-    def add(column: int) -> None:
-        nonlocal inverse, leverage
-        if not bool(active[column]):
+    coarse_count = int(coarse_temporal_ids.max().item()) + 1
+    shard_ids = scene_ids * coarse_count + coarse_temporal_ids
+    candidate_shards = shard_ids[candidates]
+    shard_values = sorted(int(value) for value in torch.unique(candidate_shards).tolist())
+    token_to_position = {
+        int(token): position for position, token in enumerate(candidates.detach().cpu().tolist())
+    }
+    locked_positions = {
+        token_to_position[int(token)] for token in locked if int(token) in token_to_position
+    }
+    survivor_positions: set[int] = set(locked_positions)
+
+    shard_candidates: dict[int, torch.Tensor] = {}
+    shard_locked: dict[int, list[int]] = {}
+    shard_capacity: dict[int, int] = {}
+    shard_mass: dict[int, float] = {}
+    extras: dict[int, int] = {shard: 0 for shard in shard_values}
+    for shard in shard_values:
+        positions = torch.where(candidate_shards == shard)[0]
+        shard_candidates[shard] = positions
+        local_locked = [position for position in positions.tolist() if position in locked_positions]
+        shard_locked[shard] = local_locked
+        shard_capacity[shard] = max(0, int(positions.numel()) - len(local_locked))
+        members = torch.where(shard_ids == shard)[0]
+        shard_mass[shard] = float(target_mass[members].sum().item())
+
+    # Reserve one representative per uncovered shard when the merge budget
+    # permits, then use discrete water filling for the remaining capacity.
+    # Locked certificates are charged first.
+    remaining = max(0, limit - len(survivor_positions))
+    uncovered = sorted(
+        (
+            shard
+            for shard in shard_values
+            if not shard_locked[shard] and shard_capacity[shard] > 0
+        ),
+        key=lambda value: (-shard_mass[value], value),
+    )
+    for shard in uncovered:
+        if remaining <= 0:
+            break
+        extras[shard] += 1
+        remaining -= 1
+    while remaining > 0:
+        active_shards = [shard for shard in shard_values if extras[shard] < shard_capacity[shard]]
+        if not active_shards:
+            break
+        shard = max(
+            active_shards,
+            key=lambda value: (
+                shard_mass[value] / float(extras[value] + len(shard_locked[value]) + 1),
+                -value,
+            ),
+        )
+        extras[shard] += 1
+        remaining -= 1
+
+    shard_diagnostics: dict[str, object] = {}
+    for shard in shard_values:
+        positions = shard_candidates[shard]
+        chosen = list(shard_locked[shard])
+        quota = len(chosen) + extras[shard]
+        if quota > len(chosen):
+            members = torch.where(shard_ids == shard)[0]
+            local_mass = target_mass[members]
+            local_mass = local_mass / local_mass.sum().clamp_min(1e-6)
+            local_mean = kernel[positions][:, members] @ local_mass
+            local_active = torch.ones(positions.numel(), dtype=torch.bool, device=candidates.device)
+            redundancy = torch.zeros_like(local_mean)
+            if chosen:
+                chosen_tensor = torch.tensor(chosen, dtype=torch.long, device=candidates.device)
+                local_columns = torch.searchsorted(positions, chosen_tensor)
+                local_active[local_columns] = False
+                redundancy = candidate_kernel[positions][:, chosen_tensor].max(dim=1).values
+            while len(chosen) < quota:
+                score = (
+                    local_mean
+                    - 0.45 * redundancy
+                    + 0.04 * quality[candidates[positions]]
+                ).masked_fill(~local_active, float("-inf"))
+                local_position = int(torch.argmax(score))
+                if not math.isfinite(float(score[local_position])):
+                    break
+                global_position = int(positions[local_position])
+                chosen.append(global_position)
+                local_active[local_position] = False
+                redundancy = torch.maximum(
+                    redundancy,
+                    candidate_kernel[positions, global_position],
+                )
+        survivor_positions.update(chosen)
+        shard_diagnostics[str(shard)] = {
+            "mass": shard_mass[shard],
+            "candidates": int(positions.numel()),
+            "locked": len(shard_locked[shard]),
+            "survivors": len(chosen),
+        }
+
+    if len(survivor_positions) < limit:
+        global_order = torch.argsort(target_mean, descending=True, stable=True).tolist()
+        for position in global_order:
+            survivor_positions.add(int(position))
+            if len(survivor_positions) >= limit:
+                break
+    if len(survivor_positions) < budget:
+        raise RuntimeError(
+            f"divide-and-conquer stage kept {len(survivor_positions)} candidates for budget {budget}"
+        )
+    survivors = torch.tensor(
+        sorted(survivor_positions),
+        dtype=torch.long,
+        device=candidates.device,
+    )
+    return survivors, {
+        "input_candidates": candidate_count,
+        "survivors": int(survivors.numel()),
+        "shards": len(shard_values),
+        "covered_shards": sum(
+            1 for shard in shard_values if len(shard_locked[shard]) + extras[shard] > 0
+        ),
+        "bypassed": False,
+        "details": shard_diagnostics,
+    }
+
+
+def _motion_sectors(
+    direction_axes: torch.Tensor,
+    motion_score: torch.Tensor,
+    motion_confidence: torch.Tensor,
+    threshold: float,
+) -> torch.Tensor:
+    velocity = direction_axes[:, :2].float()
+    angle = torch.atan2(velocity[:, 0], velocity[:, 1])
+    sector = torch.floor((angle + math.pi) * (8.0 / (2.0 * math.pi))).long().remainder(8)
+    active = (motion_score >= float(threshold)) & (motion_confidence >= 0.20)
+    return torch.where(active, sector, torch.full_like(sector, 8))
+
+
+def _group_targets(
+    group_ids: torch.Tensor,
+    target_mass: torch.Tensor,
+    budget: int,
+    fraction: float,
+) -> torch.Tensor:
+    group_count = int(group_ids.max().item()) + 1
+    mass = torch.zeros(group_count, dtype=torch.float32, device=group_ids.device)
+    mass.index_add_(0, group_ids, target_mass.float())
+    present = mass > 0.0
+    targets = float(budget) * max(0.0, float(fraction)) * mass / mass.sum().clamp_min(1e-6)
+    targets[present] = targets[present].clamp_min(1.0)
+    return targets
+
+
+def _constrained_facility_location(
+    *,
+    kernel: torch.Tensor,
+    candidate_kernel: torch.Tensor,
+    target_mean: torch.Tensor,
+    candidates: torch.Tensor,
+    target_mass: torch.Tensor,
+    quality: torch.Tensor,
+    locked: list[int],
+    budget: int,
+    fine_temporal_ids: torch.Tensor,
+    scene_ids: torch.Tensor,
+    spatial_ids: torch.Tensor,
+    motion_sectors: torch.Tensor,
+    query_relevance: torch.Tensor,
+    atom_weights: torch.Tensor,
+    query_enabled: bool,
+    dual_strength: float,
+    mmd_weight: float,
+    sample_size: int,
+) -> tuple[torch.Tensor, dict[str, object], torch.Tensor]:
+    candidate_tokens = [int(token) for token in candidates.detach().cpu().tolist()]
+    token_to_position = {token: position for position, token in enumerate(candidate_tokens)}
+    selected_positions: list[int] = []
+    active = torch.ones(candidates.numel(), dtype=torch.bool, device=candidates.device)
+    coverage = torch.zeros(target_mass.numel(), dtype=torch.float32, device=candidates.device)
+    repulsion = torch.zeros(candidates.numel(), dtype=torch.float32, device=candidates.device)
+
+    fine_targets = _group_targets(fine_temporal_ids, target_mass, budget, 0.75)
+    scene_targets = _group_targets(scene_ids, target_mass, budget, 0.65)
+    spatial_targets = _group_targets(spatial_ids, target_mass, budget, 0.30)
+    motion_targets = _group_targets(motion_sectors, target_mass, budget, 0.30)
+    fine_counts = torch.zeros_like(fine_targets)
+    scene_counts = torch.zeros_like(scene_targets)
+    spatial_counts = torch.zeros_like(spatial_targets)
+    motion_counts = torch.zeros_like(motion_targets)
+    query_coverage = (
+        torch.zeros(query_relevance.shape[0], dtype=torch.float32, device=candidates.device)
+        if query_enabled and query_relevance.numel() > 0
+        else torch.empty(0, dtype=torch.float32, device=candidates.device)
+    )
+    query_targets = (
+        0.85 * query_relevance.max(dim=1).values
+        if query_coverage.numel() > 0
+        else query_coverage
+    )
+
+    def add(position: int) -> None:
+        if not bool(active[position]):
             return
-        row = rows[column]
-        direction = inverse @ row
-        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
-        projection = rows @ direction
-        leverage = (leverage - projection.square() / denominator).clamp_min(0.0)
-        inverse = inverse - torch.outer(direction, direction) / denominator
-        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
-        active[column] = False
-        leverage[column] = -1.0
-        selected_columns.append(column)
+        token = int(candidates[position])
+        selected_positions.append(position)
+        active[position] = False
+        coverage.copy_(torch.maximum(coverage, kernel[position]))
+        repulsion.add_(candidate_kernel[:, position])
+        fine_counts[fine_temporal_ids[token]] += 1.0
+        scene_counts[scene_ids[token]] += 1.0
+        spatial_counts[spatial_ids[token]] += 1.0
+        motion_counts[motion_sectors[token]] += 1.0
+        if query_coverage.numel() > 0:
+            query_coverage.copy_(torch.maximum(query_coverage, query_relevance[:, token]))
 
     for token in locked:
-        if len(selected_columns) >= budget:
+        if len(selected_positions) >= budget:
             break
-        column = token_to_column.get(int(token))
-        if column is not None:
-            add(column)
-    while len(selected_columns) < budget:
-        score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(~active, float("-inf"))
-        column = int(torch.argmax(score).item())
-        if not math.isfinite(float(score[column])):
-            remaining = torch.where(active)[0]
-            if remaining.numel() == 0:
-                break
-            column = int(remaining[0])
-        add(column)
-    if len(selected_columns) != budget:
-        raise RuntimeError(f"D-optimal selector produced {len(selected_columns)} tokens for budget {budget}")
-    return candidates[torch.tensor(selected_columns, dtype=torch.long, device=candidates.device)]
+        position = token_to_position.get(int(token))
+        if position is not None:
+            add(position)
+
+    dual_strength = max(0.0, float(dual_strength))
+    mmd_weight = max(0.0, float(mmd_weight))
+    sample_size = max(8, int(sample_size))
+    tie_break = (
+        1.0
+        - torch.arange(candidates.numel(), device=candidates.device).float()
+        / float(max(1, candidates.numel()))
+    ) * 1e-7
+    step = 0
+    while len(selected_positions) < budget:
+        available = torch.where(active)[0]
+        if available.numel() == 0:
+            break
+        take = min(sample_size, int(available.numel()))
+        priority = (
+            target_mean
+            - repulsion / float(max(1, len(selected_positions)))
+            + tie_break
+        )
+        priority = priority.masked_fill(~active, float("-inf"))
+        top_take = min((take + 1) // 2, int(available.numel()))
+        top_positions = torch.topk(priority, k=top_take, largest=True, sorted=True).indices
+
+        rotate_take = take - top_take
+        if rotate_take > 0:
+            start = (step * max(1, rotate_take) * 17) % int(available.numel())
+            order = torch.cat([available[start:], available[:start]])
+            rotating = order[~torch.isin(order, top_positions)][:rotate_take]
+            shortlist = torch.cat([top_positions, rotating])
+        else:
+            shortlist = top_positions
+
+        marginal = (
+            (kernel[shortlist] - coverage.unsqueeze(0)).clamp_min(0.0)
+            * target_mass.unsqueeze(0)
+        ).sum(dim=1)
+        witness = target_mean[shortlist] - repulsion[shortlist] / float(
+            max(1, len(selected_positions))
+        )
+        witness = _minmax(witness, dim=0)
+
+        fine_deficit = ((fine_targets - fine_counts).clamp_min(0.0) / fine_targets.clamp_min(1.0))
+        scene_deficit = ((scene_targets - scene_counts).clamp_min(0.0) / scene_targets.clamp_min(1.0))
+        spatial_deficit = ((spatial_targets - spatial_counts).clamp_min(0.0) / spatial_targets.clamp_min(1.0))
+        motion_deficit = ((motion_targets - motion_counts).clamp_min(0.0) / motion_targets.clamp_min(1.0))
+        tokens = candidates[shortlist]
+        dual_bonus = (
+            0.34 * fine_deficit[fine_temporal_ids[tokens]]
+            + 0.26 * scene_deficit[scene_ids[tokens]]
+            + 0.16 * spatial_deficit[spatial_ids[tokens]]
+            + 0.24 * motion_deficit[motion_sectors[tokens]]
+        )
+        if query_coverage.numel() > 0:
+            query_deficit = (
+                (query_targets - query_coverage).clamp_min(0.0)
+                / query_targets.clamp_min(1e-6)
+            )
+            query_bonus = (
+                query_relevance[:, tokens]
+                * (query_deficit * atom_weights.clamp_min(1e-6)).unsqueeze(1)
+            ).sum(dim=0)
+            dual_bonus = dual_bonus + 0.30 * query_bonus
+
+        score = (
+            marginal
+            + mmd_weight * witness
+            + dual_strength * dual_bonus
+            + 0.01 * quality[tokens]
+            + tie_break[shortlist]
+        )
+        best = int(shortlist[int(torch.argmax(score))])
+        add(best)
+        step += 1
+
+    if len(selected_positions) != budget:
+        raise RuntimeError(
+            f"facility-location selector produced {len(selected_positions)} tokens for budget {budget}"
+        )
+    positions = torch.tensor(selected_positions, dtype=torch.long, device=candidates.device)
+    selected = candidates[positions]
+    if not set(int(token) for token in locked).issubset(set(int(token) for token in selected.tolist())):
+        raise RuntimeError("facility-location selector removed a locked certificate")
+    selected_kernel = candidate_kernel[positions][:, positions]
+    mmd_proxy = float(
+        (
+            selected_kernel.mean()
+            - 2.0 * target_mean[positions].mean()
+        ).item()
+    )
+    diagnostics: dict[str, object] = {
+        "objective": float(torch.dot(target_mass, coverage).item()),
+        "mmd_proxy": mmd_proxy,
+        "iterations": step,
+        "sample_size": sample_size,
+        "locked": len(locked),
+        "coverage": {
+            "fine_unmet": int((fine_counts + 1e-6 < fine_targets).sum().item()),
+            "scene_unmet": int((scene_counts + 1e-6 < scene_targets).sum().item()),
+            "spatial_unmet": int((spatial_counts + 1e-6 < spatial_targets).sum().item()),
+            "motion_unmet": int((motion_counts + 1e-6 < motion_targets).sum().item()),
+            "query_unmet": int((query_coverage + 1e-6 < query_targets).sum().item())
+            if query_coverage.numel() > 0
+            else 0,
+        },
+    }
+    return selected, diagnostics, target_mean
 
 
-def _factor_information(
-    rows: torch.Tensor,
-    ridge: float,
-) -> tuple[torch.Tensor, float, float]:
-    dimension = int(rows.shape[1])
-    identity = torch.eye(dimension, dtype=torch.float32, device=rows.device)
-    base = max(1e-4, float(ridge)) * identity + rows.float().transpose(0, 1) @ rows.float()
-    for jitter in (0.0, 1e-6, 1e-5, 1e-4):
-        chol, info = torch.linalg.cholesky_ex(base + jitter * identity, check_errors=False)
-        if int(info.max().item()) == 0:
-            logdet = float((2.0 * torch.log(torch.diagonal(chol).clamp_min(1e-20))).sum().item())
-            return chol, logdet, jitter
-    raise RuntimeError("CertVID V5 information matrix is not positive definite after jitter")
-
-
-def _leverage(rows: torch.Tensor, chol: torch.Tensor) -> torch.Tensor:
-    if rows.numel() == 0:
-        return rows.new_empty((0,), dtype=torch.float32)
-    solved = torch.cholesky_solve(rows.float().transpose(0, 1), chol)
-    return torch.sum(rows.float().transpose(0, 1) * solved, dim=0)
-
-
-def _swap_refine(
-    *,
+def _kernel_protected_tokens(
     selected: torch.Tensor,
     candidates: torch.Tensor,
-    design: torch.Tensor,
-    locked: list[int],
-    ridge: float,
-    steps: int,
-    pool_size: int,
-    margin: float,
-) -> tuple[torch.Tensor, int, float, float]:
-    locked_set = set(int(token) for token in locked)
-    candidate_tokens = candidates.detach().cpu().tolist()
-    token_to_column = {int(token): idx for idx, token in enumerate(candidate_tokens)}
-    selected_tokens = [int(token) for token in selected.detach().cpu().tolist()]
-    selected_columns = [token_to_column[token] for token in selected_tokens]
-    rows = design[candidates].float()
-    swaps = 0
-    max_jitter = 0.0
-    current_rows = rows[torch.tensor(selected_columns, dtype=torch.long, device=rows.device)]
-    _, current_logdet, jitter = _factor_information(current_rows, ridge)
-    max_jitter = max(max_jitter, jitter)
-
-    for _ in range(max(0, int(steps))):
-        selected_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
-        selected_rows = rows[selected_tensor]
-        chol, iteration_logdet, jitter = _factor_information(selected_rows, ridge)
-        max_jitter = max(max_jitter, jitter)
-        current_logdet = iteration_logdet
-        selected_leverage = _leverage(selected_rows, chol).clamp(0.0, 1.0 - 1e-6)
-        removal_loss = -torch.log1p(-selected_leverage)
-        removable = [idx for idx, token in enumerate(selected_tokens) if token not in locked_set]
-        if not removable:
-            break
-        removable.sort(key=lambda idx: (float(removal_loss[idx]), selected_tokens[idx]))
-        removable = removable[: max(1, int(pool_size))]
-
-        selected_set = set(selected_columns)
-        outside_columns = [idx for idx in range(len(candidate_tokens)) if idx not in selected_set]
-        if not outside_columns:
-            break
-        outside_tensor = torch.tensor(outside_columns, dtype=torch.long, device=rows.device)
-        outside_rows = rows[outside_tensor]
-        outside_leverage = _leverage(outside_rows, chol).clamp_min(0.0)
-        outside_order = torch.argsort(outside_leverage, descending=True, stable=True)
-        outside_order = outside_order[: max(1, int(pool_size))]
-        outside_tensor = outside_tensor[outside_order]
-        outside_rows = rows[outside_tensor]
-        outside_leverage = outside_leverage[outside_order]
-
-        best_delta = float(margin)
-        best_remove = -1
-        best_add = -1
-        for position in removable:
-            removed = selected_rows[position]
-            direction = torch.cholesky_solve(removed.unsqueeze(1), chol).squeeze(1)
-            remove_denominator = 1.0 - torch.dot(removed, direction)
-            if float(remove_denominator) <= 1e-6:
-                continue
-            cross = outside_rows @ direction
-            add_without = (outside_leverage + cross.square() / remove_denominator).clamp_min(0.0)
-            delta = torch.log(remove_denominator) + torch.log1p(add_without)
-            local = int(torch.argmax(delta))
-            local_delta = float(delta[local])
-            add_column = int(outside_tensor[local])
-            if local_delta > best_delta or (
-                abs(local_delta - best_delta) <= 1e-12
-                and best_add >= 0
-                and candidate_tokens[add_column] < candidate_tokens[best_add]
-            ):
-                best_delta = local_delta
-                best_remove = position
-                best_add = add_column
-        if best_remove < 0:
-            break
-
-        proposed_columns = list(selected_columns)
-        proposed_columns[best_remove] = best_add
-        proposed_rows = rows[torch.tensor(proposed_columns, dtype=torch.long, device=rows.device)]
-        _, proposed_logdet, jitter = _factor_information(proposed_rows, ridge)
-        max_jitter = max(max_jitter, jitter)
-        if proposed_logdet + 1e-6 < current_logdet:
-            raise RuntimeError(
-                f"CertVID V5 swap reduced log-det from {current_logdet:.8f} to {proposed_logdet:.8f}"
-            )
-        if proposed_logdet <= current_logdet + float(margin):
-            break
-        selected_columns = proposed_columns
-        selected_tokens[best_remove] = int(candidate_tokens[best_add])
-        current_logdet = proposed_logdet
-        swaps += 1
-
-    if not locked_set.issubset(set(selected_tokens)):
-        raise RuntimeError("CertVID V5 swap refinement removed a locked certificate")
-    final_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
-    _, final_logdet, jitter = _factor_information(rows[final_tensor], ridge)
-    max_jitter = max(max_jitter, jitter)
-    return candidates[final_tensor], swaps, final_logdet, max_jitter
-
-
-def _design_protected_tokens(
-    selected: torch.Tensor,
-    design: torch.Tensor,
-    ridge: float,
+    candidate_kernel: torch.Tensor,
+    target_mean: torch.Tensor,
     ratio: float,
-) -> tuple[set[int], float]:
-    rows = design[selected].float()
-    chol, _, jitter = _factor_information(rows, ridge)
-    leverage = _leverage(rows, chol)
+) -> set[int]:
     count = min(int(selected.numel()), max(0, int(math.ceil(selected.numel() * max(0.0, ratio)))))
     if count <= 0:
-        return set(), jitter
-    positions = torch.argsort(leverage, descending=True, stable=True)[:count]
-    return {int(selected[position]) for position in positions}, jitter
+        return set()
+    token_to_position = {
+        int(token): position for position, token in enumerate(candidates.detach().cpu().tolist())
+    }
+    positions = torch.tensor(
+        [token_to_position[int(token)] for token in selected.detach().cpu().tolist()],
+        dtype=torch.long,
+        device=selected.device,
+    )
+    similarity = candidate_kernel[positions][:, positions]
+    redundancy = (
+        (similarity.sum(dim=1) - torch.diagonal(similarity))
+        / float(max(1, selected.numel() - 1))
+    )
+    witness = target_mean[positions] - 0.50 * redundancy
+    protected_positions = torch.argsort(witness, descending=True, stable=True)[:count]
+    return {int(selected[position]) for position in protected_positions}
 
 
 def _build_plan(
@@ -1133,7 +1458,9 @@ def _build_plan(
     temperature: float,
     protected_tokens: set[int],
     motion_fusion_threshold: float,
-) -> CertVidPlan:
+    transport_steps: int,
+    transport_balance: float,
+) -> tuple[CertVidPlan, dict[str, float]]:
     total_tokens = int(metric_features.shape[0])
     budget = int(selected.numel())
     similarity = metric_features @ metric_features[selected].transpose(0, 1)
@@ -1141,13 +1468,57 @@ def _build_plan(
     similarity = similarity.masked_fill(~same_scene, -2.0)
     same_component = component_ids.unsqueeze(1) == component_ids[selected].unsqueeze(0)
     similarity = similarity + 0.08 * same_component.float()
-    values, assignment = torch.topk(similarity, k=min(2, budget), dim=1, largest=True)
-    weights = torch.softmax(values.float() / max(1e-4, float(temperature)), dim=1)
+
+    # A small transport dual discourages all residual mass from collapsing onto
+    # one visually generic anchor. It only changes fusion assignments, not the
+    # selected raw-token coreset.
+    neighbor_count = min(2, budget)
+    temperature = max(1e-4, float(temperature))
+    balance = max(0.0, float(transport_balance))
+    dual = torch.zeros(budget, dtype=torch.float32, device=selected.device)
+    normalized_demand = demand_weight.float() / demand_weight.float().sum().clamp_min(1e-6)
+    target_load = torch.full_like(dual, 1.0 / float(max(1, budget)))
+    for _ in range(max(0, int(transport_steps))):
+        values, assignment = torch.topk(
+            similarity - dual.unsqueeze(0),
+            k=neighbor_count,
+            dim=1,
+            largest=True,
+        )
+        weights = torch.softmax(values.float() / temperature, dim=1)
+        load = torch.zeros_like(dual)
+        for neighbor in range(neighbor_count):
+            load.index_add_(
+                0,
+                assignment[:, neighbor],
+                normalized_demand * weights[:, neighbor],
+            )
+        dual.add_(
+            balance
+            * torch.log((load + 1e-6) / (target_load + 1e-6))
+        )
+        dual.sub_(dual.mean())
+
+    values, assignment = torch.topk(
+        similarity - dual.unsqueeze(0),
+        k=neighbor_count,
+        dim=1,
+        largest=True,
+    )
+    weights = torch.softmax(values.float() / temperature, dim=1)
 
     positions = torch.arange(budget, dtype=torch.long, device=selected.device)
     assignment[selected, 0] = positions
     weights[selected] = 0.0
     weights[selected, 0] = 1.0
+
+    load = torch.zeros(budget, dtype=torch.float32, device=selected.device)
+    for neighbor in range(neighbor_count):
+        load.index_add_(
+            0,
+            assignment[:, neighbor],
+            normalized_demand * weights[:, neighbor],
+        )
     source_mass = (0.5 + 0.5 * demand_weight * float(total_tokens)).clamp(0.25, 2.0)
     base_alpha = min(max(float(fusion_alpha), 0.0), 0.75)
     alpha = base_alpha * (1.0 - motion_score[selected].clamp(0.0, 1.0))
@@ -1156,7 +1527,7 @@ def _build_plan(
     if protected_tokens:
         protected = torch.tensor(sorted(protected_tokens), dtype=torch.long, device=selected.device)
         alpha[torch.isin(selected, protected)] = 0.0
-    return CertVidPlan(
+    plan = CertVidPlan(
         anchor_indices=selected,
         assignment_indices=assignment,
         assignment_weights=weights,
@@ -1164,16 +1535,25 @@ def _build_plan(
         fusion_alpha=alpha,
         raw_token_count=total_tokens,
     )
+    diagnostics = {
+        "steps": float(max(0, int(transport_steps))),
+        "load_cv": float((load.std(unbiased=False) / load.mean().clamp_min(1e-6)).item()),
+        "min_load": float(load.min().item()),
+        "max_load": float(load.max().item()),
+    }
+    return plan, diagnostics
 
 
 def _publish_diagnostics(config: FlashVidConfig, diagnostics: dict[str, object]) -> None:
     setattr(config, "last_certv5_diagnostics", diagnostics)
     budget = diagnostics["budget"]
     certificates = diagnostics["certificates"]
-    d_optimal = diagnostics["d_optimal"]
+    facility = diagnostics["facility_location"]
     attention = diagnostics["attention"]
     scene_pyramid = diagnostics["scene_pyramid"]
     router = diagnostics["router"]
+    divide = diagnostics["divide_and_conquer"]
+    transport = diagnostics["transport"]
     setattr(config, "last_certv5_target_tokens", float(budget["target_tokens"]))
     setattr(config, "last_certv5_nominal_retention", float(budget["nominal_retention"]))
     setattr(config, "last_certv5_outer_retention", float(budget["outer_retention"]))
@@ -1185,8 +1565,16 @@ def _publish_diagnostics(config: FlashVidConfig, diagnostics: dict[str, object])
     setattr(config, "last_certv5_candidate_tokens", float(diagnostics["candidate_count"]))
     setattr(config, "last_certv5_component_count", float(diagnostics["component_count"]))
     setattr(config, "last_certv5_query_confidence", float(diagnostics["query_confidence"]))
-    setattr(config, "last_certv5_swap_count", float(d_optimal["swaps"]))
-    setattr(config, "last_certv5_logdet", float(d_optimal["logdet"]))
+    setattr(config, "last_certv5_facility_objective", float(facility["objective"]))
+    setattr(config, "last_certv5_mmd_proxy", float(facility["mmd_proxy"]))
+    setattr(config, "last_certv5_facility_iterations", float(facility["iterations"]))
+    setattr(config, "last_certv5_divide_survivors", float(divide["survivors"]))
+    setattr(config, "last_certv5_transport_load_cv", float(transport["load_cv"]))
+    setattr(
+        config,
+        "last_certv5_kernel_protected_count",
+        float(diagnostics["kernel_protected_count"]),
+    )
     setattr(config, "last_certv5_attention_used", float(bool(attention["used"])))
     setattr(config, "last_certv5_scene_count", float(scene_pyramid["scene_count"]))
     setattr(config, "last_certv5_motion_activity", float(router["motion_activity"]))
@@ -1202,7 +1590,7 @@ def certvid_v5_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build a motion-complete, long-horizon D-optimal visual coreset."""
+    """Build a composable, quality-weighted facility-location visual coreset."""
     if video_features.ndim != 3:
         raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
     frame_count, tokens_per_frame, _ = video_features.shape
@@ -1215,7 +1603,9 @@ def certvid_v5_compression(
         flashvid_config,
     )
     flat_features = video_features.reshape(total_tokens, -1)
-    query_mode = str(getattr(flashvid_config, "certv5_query_mode", "certificates_and_design")).strip().lower()
+    query_mode = str(
+        getattr(flashvid_config, "certv5_query_mode", "certificates_and_kernel")
+    ).strip().lower()
     if query_mode not in _QUERY_MODES:
         raise ValueError(f"unsupported certv5_query_mode={query_mode!r}")
 
@@ -1230,7 +1620,7 @@ def certvid_v5_compression(
             "scene_pyramid": {"boundaries": [], "scene_count": 1, "fine_count": 1, "coarse_count": 1},
             "router": {"motion_activity": 0.0, "event_activity": 0.0, "router_strength": 0.0},
             "certificates": {
-                "cap": int(math.floor(total_tokens * min(1.0, max(0.0, _cfg_float(flashvid_config, "certv5_certificate_budget_ratio", 0.36))))),
+                "cap": int(math.floor(total_tokens * min(1.0, max(0.0, _cfg_float(flashvid_config, "certv5_certificate_budget_ratio", 0.28))))),
                 "admitted_unique": 0,
                 "ratio": 0.0,
                 "requested": 0,
@@ -1241,9 +1631,43 @@ def certvid_v5_compression(
             "candidate_count": total_tokens,
             "component_count": 0,
             "motion_pair_count": 0,
-            "design_protected_count": 0,
+            "target_measure": {
+                "entropy": float(math.log(max(1, total_tokens))),
+                "effective_support": float(total_tokens),
+                "min_frame_mass": 1.0 / float(max(1, frame_count)),
+                "max_frame_mass": 1.0 / float(max(1, frame_count)),
+            },
+            "kernel_weights": {
+                "appearance": 1.0,
+                "temporal": 0.0,
+                "motion": 0.0,
+                "event": 0.0,
+                "spatial": 0.0,
+                "query": 0.0,
+            },
+            "divide_and_conquer": {
+                "input_candidates": total_tokens,
+                "survivors": total_tokens,
+                "shards": 1,
+                "covered_shards": 1,
+                "bypassed": True,
+            },
+            "facility_location": {
+                "objective": 1.0,
+                "mmd_proxy": -1.0,
+                "iterations": 0,
+                "sample_size": 0,
+                "locked": 0,
+                "coverage": {},
+            },
+            "kernel_protected_count": 0,
             "fusion_protected_count": 0,
-            "d_optimal": {"swaps": 0, "logdet": 0.0, "cholesky_jitter": 0.0},
+            "transport": {
+                "steps": 0.0,
+                "load_cv": 0.0,
+                "min_load": 1.0 / float(max(1, total_tokens)),
+                "max_load": 1.0 / float(max(1, total_tokens)),
+            },
         }
     else:
         metric_dim = max(32, _cfg_int(flashvid_config, "certv5_metric_dim", 96))
@@ -1345,17 +1769,17 @@ def certvid_v5_compression(
         query_scalar_enabled = query_mode != "off" and query_relevance.numel() > 0
         query_weight = (
             min(
-                0.18,
-                max(0.0, _cfg_float(flashvid_config, "certv5_query_weight", 0.10))
+                0.20,
+                max(0.0, _cfg_float(flashvid_config, "certv5_query_weight", 0.12))
                 * float(query_confidence),
             )
             if query_scalar_enabled
             else 0.0
         )
-        quality = _minmax(
-            (1.0 - query_weight) * visual_quality + query_weight * query_score,
-            dim=0,
-        )
+        # Query evidence is represented by certificates, target mass, and the
+        # query kernel. Keeping it out of scalar quality avoids counting the
+        # same signal repeatedly.
+        quality = visual_quality
         event_score = _minmax(
             0.24 * novelty
             + 0.18 * curvature
@@ -1365,8 +1789,16 @@ def certvid_v5_compression(
             + 0.12 * component_value,
             dim=0,
         )
-        demand_weight = 0.18 + 0.38 * quality + 0.24 * event_score + 0.20 * component_value
-        demand_weight = demand_weight / demand_weight.sum().clamp_min(1e-6)
+        demand_weight, target_diagnostics = _balanced_target_mass(
+            quality=quality,
+            event_score=event_score,
+            component_support=component_value,
+            query_score=query_score,
+            frame_ids=frame_ids,
+            frame_event=frame_event,
+            query_weight=query_weight,
+            quality_floor=_cfg_float(flashvid_config, "certv5_quality_floor", 0.18),
+        )
 
         requests = _build_certificate_requests(
             quality=quality,
@@ -1400,7 +1832,7 @@ def certvid_v5_compression(
         locked, certificate_diagnostics, protected_by_category = _admit_certificates(
             requests,
             budget,
-            _cfg_float(flashvid_config, "certv5_certificate_budget_ratio", 0.36),
+            _cfg_float(flashvid_config, "certv5_certificate_budget_ratio", 0.28),
             certificate_shares,
         )
         candidates, candidate_diagnostics = _candidate_pool(
@@ -1417,16 +1849,24 @@ def certvid_v5_compression(
             query_mode=query_mode,
             requests=requests,
             locked=locked,
-            multiplier=_cfg_float(flashvid_config, "certv5_candidate_multiplier", 3.0),
+            multiplier=_cfg_float(flashvid_config, "certv5_candidate_multiplier", 2.5),
             shares=candidate_shares,
         )
-        design = _design_features(
+
+        kernel_query_enabled = _query_uses_kernel(query_mode) and query_relevance.numel() > 0
+        kernel_weights = _kernel_weights(
+            flashvid_config,
+            router_diagnostics,
+            query_confidence,
+            kernel_query_enabled,
+        )
+        global_coords = coords.repeat(frame_count, 1)
+        kernel_state = _prepare_kernel_state(
             metric_features=metric_flat,
-            quality=quality,
-            fine_temporal_ids=fine_temporal_ids,
-            coarse_temporal_ids=coarse_temporal_ids,
+            frame_ids=frame_ids,
+            frame_count=frame_count,
+            spatial_coords=global_coords,
             scene_ids=scene_ids,
-            spatial_ids=spatial_ids,
             novelty=novelty,
             curvature=curvature,
             event=event,
@@ -1437,52 +1877,77 @@ def certvid_v5_compression(
             direction_axes=direction_axes,
             query_relevance=query_relevance,
             atom_weights=atom_weights,
-            query_confidence=query_confidence,
-            query_mode=query_mode,
-            fine_temporal_count=fine_temporal_count,
-            coarse_temporal_count=coarse_temporal_count,
-            scene_count=scene_count,
-            spatial_count=spatial_count,
-            structural_weight=_cfg_float(flashvid_config, "certv5_structural_weight", 0.40),
-            whitening_strength=_cfg_float(flashvid_config, "certv5_whitening_strength", 0.50),
-            quality_floor=_cfg_float(flashvid_config, "certv5_quality_floor", 0.15),
+            whitening_strength=_cfg_float(flashvid_config, "certv5_whitening_strength", 0.25),
         )
-        ridge = _cfg_float(flashvid_config, "certv5_ridge", 0.50)
-        selected = _d_optimal_greedy(
-            design=design,
+        kernel, candidate_kernel, target_mean = _kernel_matrices(
             candidates=candidates,
+            target_mass=demand_weight,
+            state=kernel_state,
+            weights=kernel_weights,
+            config=flashvid_config,
+        )
+
+        survivor_positions, divide_diagnostics = _composable_divide_and_conquer(
+            kernel=kernel,
+            candidate_kernel=candidate_kernel,
+            target_mean=target_mean,
+            candidates=candidates,
+            target_mass=demand_weight,
+            quality=quality,
+            coarse_temporal_ids=coarse_temporal_ids,
+            scene_ids=scene_ids,
             locked=locked,
             budget=budget,
-            ridge=ridge,
+            merge_multiplier=_cfg_float(flashvid_config, "certv5_merge_multiplier", 2.0),
         )
-        selected, swaps, logdet, swap_jitter = _swap_refine(
-            selected=selected,
+        candidates = candidates[survivor_positions]
+        kernel = kernel[survivor_positions]
+        candidate_kernel = candidate_kernel[survivor_positions][:, survivor_positions]
+        target_mean = target_mean[survivor_positions]
+
+        motion_sectors = _motion_sectors(
+            direction_axes,
+            motion_score,
+            motion_confidence,
+            _cfg_float(flashvid_config, "certv5_motion_sector_threshold", 0.24),
+        )
+        selected, facility_diagnostics, target_mean = _constrained_facility_location(
+            kernel=kernel,
+            candidate_kernel=candidate_kernel,
+            target_mean=target_mean,
             candidates=candidates,
-            design=design,
+            target_mass=demand_weight,
+            quality=quality,
             locked=locked,
-            ridge=ridge,
-            steps=_cfg_int(flashvid_config, "certv5_swap_steps", 6),
-            pool_size=_cfg_int(flashvid_config, "certv5_swap_pool", 24),
-            margin=_cfg_float(flashvid_config, "certv5_swap_margin", 1e-4),
+            budget=budget,
+            fine_temporal_ids=fine_temporal_ids,
+            scene_ids=scene_ids,
+            spatial_ids=spatial_ids,
+            motion_sectors=motion_sectors,
+            query_relevance=query_relevance,
+            atom_weights=atom_weights,
+            query_enabled=kernel_query_enabled,
+            dual_strength=_cfg_float(flashvid_config, "certv5_dual_strength", 0.20),
+            mmd_weight=_cfg_float(flashvid_config, "certv5_mmd_weight", 0.10),
+            sample_size=_cfg_int(flashvid_config, "certv5_greedy_sample_size", 48),
         )
         selected = torch.sort(selected).values
-        design_protected, protection_jitter = _design_protected_tokens(
-            selected,
-            design,
-            ridge,
-            _cfg_float(flashvid_config, "certv5_design_protect_ratio", 0.12),
+        kernel_protected = _kernel_protected_tokens(
+            selected=selected,
+            candidates=candidates,
+            candidate_kernel=candidate_kernel,
+            target_mean=target_mean,
+            ratio=_cfg_float(flashvid_config, "certv5_kernel_protect_ratio", 0.12),
         )
-        motion_protected = protected_by_category["motion"] | protected_by_category["track"]
-        scene_protected = protected_by_category["scene"] | protected_by_category["query"]
-        protected_tokens = set(locked) | design_protected | motion_protected | scene_protected
-        plan = _build_plan(
+        protected_tokens = set(locked) | kernel_protected
+        plan, transport_diagnostics = _build_plan(
             selected=selected,
             metric_features=metric_flat,
             demand_weight=demand_weight,
             scene_ids=scene_ids,
             component_ids=component_ids,
             motion_score=motion_score,
-            fusion_alpha=_cfg_float(flashvid_config, "certv5_fusion_alpha", 0.06),
+            fusion_alpha=_cfg_float(flashvid_config, "certv5_fusion_alpha", 0.04),
             temperature=_cfg_float(flashvid_config, "certv5_assignment_temperature", 0.07),
             protected_tokens=protected_tokens,
             motion_fusion_threshold=_cfg_float(
@@ -1490,6 +1955,8 @@ def certvid_v5_compression(
                 "certv5_motion_fusion_threshold",
                 0.45,
             ),
+            transport_steps=_cfg_int(flashvid_config, "certv5_transport_steps", 4),
+            transport_balance=_cfg_float(flashvid_config, "certv5_transport_balance", 0.20),
         )
         output = apply_certvid_plan(flat_features, plan)
         diagnostics = {
@@ -1506,13 +1973,13 @@ def certvid_v5_compression(
             "motion_pair_count": sum(
                 1 for request in requests if request.category == "motion"
             ),
-            "design_protected_count": len(design_protected),
+            "target_measure": target_diagnostics,
+            "kernel_weights": kernel_weights,
+            "divide_and_conquer": divide_diagnostics,
+            "facility_location": facility_diagnostics,
+            "kernel_protected_count": len(kernel_protected),
             "fusion_protected_count": len(protected_tokens),
-            "d_optimal": {
-                "swaps": int(swaps),
-                "logdet": float(logdet),
-                "cholesky_jitter": float(max(swap_jitter, protection_jitter)),
-            },
+            "transport": transport_diagnostics,
         }
 
     setattr(flashvid_config, "_certvid_plan", plan)

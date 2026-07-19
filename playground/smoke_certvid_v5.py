@@ -23,6 +23,7 @@ from flashvid.certvid_v5 import (
     _CERTIFICATE_SHARES,
     _CertificateRequest,
     _admit_certificates,
+    _composable_divide_and_conquer,
     _resolve_budget,
     _scene_pyramid,
     _tie_safe_rank_normalize,
@@ -42,7 +43,8 @@ def _config(**overrides) -> FlashVidConfig:
         compression_variant="certvid_v5",
         certv5_num_hidden_layers=28,
         certv5_inner_hook_enabled=True,
-        certv5_swap_steps=2,
+        certv5_merge_multiplier=1.6,
+        certv5_greedy_sample_size=24,
         certv5_scene_threshold=0.30,
         certv5_motion_threshold=0.0,
         certv5_motion_confidence_threshold=0.0,
@@ -142,6 +144,54 @@ def test_scene_pyramid_and_atomic_certificates() -> None:
     assert diagnostics["admitted_unique"] == len(locked)
 
 
+def test_composable_divide_and_conquer() -> None:
+    candidate_count = 12
+    candidates = torch.arange(candidate_count, dtype=torch.long)
+    kernel = torch.eye(candidate_count, dtype=torch.float32)
+    target_mass = torch.full((candidate_count,), 1.0 / candidate_count)
+    target_mean = kernel @ target_mass
+    scene_ids = torch.tensor([0] * 6 + [1] * 6, dtype=torch.long)
+    coarse_ids = torch.tensor([0] * 3 + [1] * 3 + [0] * 3 + [1] * 3, dtype=torch.long)
+    survivors, diagnostics = _composable_divide_and_conquer(
+        kernel=kernel,
+        candidate_kernel=kernel,
+        target_mean=target_mean,
+        candidates=candidates,
+        target_mass=target_mass,
+        quality=torch.linspace(0.0, 1.0, candidate_count),
+        coarse_temporal_ids=coarse_ids,
+        scene_ids=scene_ids,
+        locked=[],
+        budget=4,
+        merge_multiplier=1.0,
+    )
+    shard_ids = scene_ids * 2 + coarse_ids
+    assert survivors.numel() == 4
+    assert torch.unique(shard_ids[survivors]).numel() == 4
+    assert diagnostics["covered_shards"] == diagnostics["shards"] == 4
+
+
+def test_query_off_isolation() -> None:
+    torch.manual_seed(31)
+    video = torch.randn(4, 9, 32)
+    attention = torch.randn(4, 9)
+    question = torch.randn(6, 32)
+    without_question, indices_without = certvid_v5_compression(
+        video,
+        attention,
+        _config(certv5_query_mode="off"),
+        None,
+    )
+    with_question, indices_with = certvid_v5_compression(
+        video,
+        attention,
+        _config(certv5_query_mode="off"),
+        question,
+    )
+    assert torch.equal(indices_without, indices_with)
+    assert torch.allclose(without_question, with_question)
+
+
 def test_integration() -> None:
     torch.manual_seed(23)
     frame_count, tokens_per_frame, feature_dim = 8, 16, 48
@@ -163,14 +213,31 @@ def test_integration() -> None:
 
     diagnostics = config.last_certv5_diagnostics
     assert diagnostics["motion_pair_count"] > 0
-    assert diagnostics["certificates"]["ratio"] <= 0.36
+    assert diagnostics["certificates"]["ratio"] <= 0.28
     assert diagnostics["scene_pyramid"]["fine_count"] == frame_count
     assert 0.0 <= diagnostics["router"]["motion_activity"] <= 1.0
+    assert diagnostics["facility_location"]["objective"] > 0.0
+    assert diagnostics["facility_location"]["iterations"] >= 0
+    assert diagnostics["divide_and_conquer"]["survivors"] >= target
+    assert diagnostics["divide_and_conquer"]["survivors"] <= diagnostics["divide_and_conquer"]["input_candidates"]
+    assert diagnostics["divide_and_conquer"]["covered_shards"] == diagnostics["divide_and_conquer"]["shards"]
+    assert diagnostics["kernel_weights"]["appearance"] > 0.0
+    assert "d_optimal" not in diagnostics
 
     plan = config._certvid_plan
     expected = apply_certvid_plan(video.reshape(-1, feature_dim), plan)
     assert torch.allclose(output, expected)
-    assert torch.all((plan.fusion_alpha >= 0.0) & (plan.fusion_alpha <= 0.06 + 1e-6))
+    assert torch.all((plan.fusion_alpha >= 0.0) & (plan.fusion_alpha <= 0.04 + 1e-6))
+
+    second_config = _config()
+    second_output, second_indices = certvid_v5_compression(
+        video,
+        attention,
+        second_config,
+        question,
+    )
+    assert torch.equal(second_indices, indices)
+    assert torch.allclose(second_output, output)
 
     deepstack = [torch.randn(frame_count * tokens_per_frame, feature_dim) for _ in range(3)]
     compressed = compress_certvid_deepstack(deepstack, plan)
@@ -185,6 +252,8 @@ def test_integration() -> None:
 def main() -> None:
     test_attention_and_budget()
     test_scene_pyramid_and_atomic_certificates()
+    test_composable_divide_and_conquer()
+    test_query_off_isolation()
     test_integration()
     print("CertVID V5 smoke tests passed.")
 
