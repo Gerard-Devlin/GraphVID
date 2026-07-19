@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 from dataclasses import dataclass
@@ -44,11 +44,8 @@ _CANDIDATE_SHARES = {
 }
 _QUERY_MODES = {
     "certificates_only",
-    "kernel_only",
-    "certificates_and_kernel",
-    # Aliases retained so an old launcher fails neither parsing nor resumption.
-    "design_only",
-    "certificates_and_design",
+    "spectral_only",
+    "certificates_and_spectral",
     "off",
 }
 
@@ -257,63 +254,18 @@ def _whiten_features(features: torch.Tensor, strength: float) -> torch.Tensor:
 
 
 def _query_uses_certificates(mode: str) -> bool:
-    return mode in {"certificates_only", "certificates_and_kernel", "certificates_and_design"}
-
-
-def _query_uses_kernel(mode: str) -> bool:
-    return mode in {"kernel_only", "certificates_and_kernel", "design_only", "certificates_and_design"}
-
-
-def _balanced_target_mass(
-    *,
-    quality: torch.Tensor,
-    event_score: torch.Tensor,
-    component_support: torch.Tensor,
-    query_score: torch.Tensor,
-    frame_ids: torch.Tensor,
-    frame_event: torch.Tensor,
-    query_weight: float,
-    quality_floor: float,
-) -> tuple[torch.Tensor, dict[str, float]]:
-    """Build the quality-weighted empirical measure that the coreset represents."""
-    quality_floor = min(1.0, max(1e-4, float(quality_floor)))
-    query_weight = min(0.20, max(0.0, float(query_weight)))
-    visual_weight = max(0.0, 1.0 - query_weight)
-    local_mass = quality_floor + visual_weight * (
-        0.48 * quality + 0.30 * event_score + 0.22 * component_support
-    )
-    if query_weight > 0.0:
-        local_mass = local_mass + query_weight * query_score
-    local_mass = local_mass.clamp_min(1e-6)
-
-    frame_count = int(frame_event.numel())
-    frame_quality = torch.zeros(frame_count, dtype=torch.float32, device=quality.device)
-    frame_query = torch.zeros_like(frame_quality)
-    within_frame = torch.zeros_like(local_mass)
-    for frame_idx in range(frame_count):
-        members = torch.where(frame_ids == frame_idx)[0]
-        if members.numel() == 0:
-            continue
-        values = local_mass[members]
-        within_frame[members] = values / values.sum().clamp_min(1e-6)
-        frame_quality[frame_idx] = quality[members].mean()
-        frame_query[frame_idx] = query_score[members].max()
-
-    # Quiet frames retain a majority uniform prior; event and query evidence only
-    # redistribute the remaining mass. This prevents long-video blind spots.
-    frame_mass = 0.60 + 0.24 * frame_event.float() + 0.16 * frame_quality
-    if query_weight > 0.0:
-        frame_mass = frame_mass + query_weight * frame_query
-    frame_mass = frame_mass / frame_mass.sum().clamp_min(1e-6)
-    target_mass = within_frame * frame_mass[frame_ids]
-    target_mass = target_mass / target_mass.sum().clamp_min(1e-6)
-    entropy = float((-(target_mass * torch.log(target_mass.clamp_min(1e-12))).sum()).item())
-    return target_mass, {
-        "entropy": entropy,
-        "effective_support": float(math.exp(min(50.0, entropy))),
-        "min_frame_mass": float(frame_mass.min().item()),
-        "max_frame_mass": float(frame_mass.max().item()),
+    return mode in {
+        "certificates_only",
+        "certificates_and_spectral",
     }
+
+
+def _query_uses_spectral(mode: str) -> bool:
+    return mode in {
+        "spectral_only",
+        "certificates_and_spectral",
+    }
+
 
 
 def _evenly_spaced_ids(count: int, keep: int, device: torch.device) -> torch.Tensor:
@@ -791,7 +743,7 @@ def _candidate_pool(
     limit = min(total_tokens, max(budget, int(math.ceil(budget * max(1.0, multiplier)))))
     offers: dict[str, list[int]] = {name: [] for name in _CANDIDATE_SOURCES}
 
-    if _query_uses_kernel(query_mode) and query_relevance.numel() > 0:
+    if _query_uses_spectral(query_mode) and query_relevance.numel() > 0:
         ranked: list[tuple[float, int]] = []
         for atom_idx, scores in enumerate(query_relevance):
             for scene_id in torch.unique(scene_ids).tolist():
@@ -908,310 +860,6 @@ def _candidate_pool(
     return torch.tensor(sorted(selected), dtype=torch.long, device=quality.device), diagnostics
 
 
-def _kernel_weights(
-    config: FlashVidConfig,
-    router: dict[str, float],
-    query_confidence: float,
-    query_enabled: bool,
-) -> dict[str, float]:
-    motion = float(router["motion_activity"])
-    event = float(router["event_activity"])
-    strength = float(router["router_strength"])
-    weights = {
-        "appearance": max(0.0, _cfg_float(config, "certv5_appearance_kernel_weight", 0.46)),
-        "temporal": max(0.0, _cfg_float(config, "certv5_temporal_kernel_weight", 0.16))
-        * (1.0 + strength * 0.45 * event),
-        "motion": max(0.0, _cfg_float(config, "certv5_motion_kernel_weight", 0.16))
-        * (1.0 + strength * 0.75 * motion),
-        "event": max(0.0, _cfg_float(config, "certv5_event_kernel_weight", 0.10))
-        * (1.0 + strength * 0.40 * event),
-        "spatial": max(0.0, _cfg_float(config, "certv5_spatial_kernel_weight", 0.07)),
-        "query": max(0.0, _cfg_float(config, "certv5_query_kernel_weight", 0.05))
-        * min(1.0, max(0.0, float(query_confidence)))
-        if query_enabled
-        else 0.0,
-    }
-    total = sum(weights.values())
-    if total <= 1e-8:
-        weights["appearance"] = 1.0
-        total = 1.0
-    return {name: value / total for name, value in weights.items()}
-
-
-def _prepare_kernel_state(
-    *,
-    metric_features: torch.Tensor,
-    frame_ids: torch.Tensor,
-    frame_count: int,
-    spatial_coords: torch.Tensor,
-    scene_ids: torch.Tensor,
-    novelty: torch.Tensor,
-    curvature: torch.Tensor,
-    event: torch.Tensor,
-    detail: torch.Tensor,
-    component_support: torch.Tensor,
-    motion_score: torch.Tensor,
-    motion_confidence: torch.Tensor,
-    direction_axes: torch.Tensor,
-    query_relevance: torch.Tensor,
-    atom_weights: torch.Tensor,
-    whitening_strength: float,
-) -> dict[str, torch.Tensor]:
-    query_signature = metric_features.new_empty((metric_features.shape[0], 0))
-    if query_relevance.numel() > 0:
-        query_signature = query_relevance.transpose(0, 1) * torch.sqrt(
-            atom_weights.clamp_min(1e-6)
-        ).unsqueeze(0)
-        query_signature = F.normalize(query_signature, p=2, dim=-1, eps=1e-6)
-    event_signature = torch.stack(
-        [novelty, curvature, event, detail, component_support, motion_score],
-        dim=1,
-    ).float()
-    return {
-        "appearance": _whiten_features(metric_features, whitening_strength),
-        "time": frame_ids.float() / float(max(1, frame_count - 1)),
-        "spatial": spatial_coords.float(),
-        "scene": scene_ids.long(),
-        "event": event_signature,
-        "motion": F.normalize(direction_axes.float(), p=2, dim=-1, eps=1e-6),
-        "motion_gate": (motion_score * motion_confidence).clamp(0.0, 1.0),
-        "motion_score": motion_score.float(),
-        "query": query_signature,
-    }
-
-
-def _multi_kernel_block(
-    left: torch.Tensor,
-    right: torch.Tensor,
-    state: dict[str, torch.Tensor],
-    weights: dict[str, float],
-    config: FlashVidConfig,
-) -> torch.Tensor:
-    device = left.device
-    output = torch.zeros((left.numel(), right.numel()), dtype=torch.float32, device=device)
-
-    if weights["appearance"] > 0.0:
-        temperature = max(1e-3, _cfg_float(config, "certv5_appearance_temperature", 0.18))
-        cosine = (state["appearance"][left] @ state["appearance"][right].transpose(0, 1)).clamp(-1.0, 1.0)
-        output += weights["appearance"] * torch.exp((cosine - 1.0) / temperature)
-
-    if weights["temporal"] > 0.0:
-        temperature = max(1e-3, _cfg_float(config, "certv5_temporal_temperature", 0.20))
-        distance = torch.abs(state["time"][left].unsqueeze(1) - state["time"][right].unsqueeze(0))
-        same_scene = state["scene"][left].unsqueeze(1) == state["scene"][right].unsqueeze(0)
-        temporal = torch.exp(-distance / temperature) * (0.35 + 0.65 * same_scene.float())
-        output += weights["temporal"] * temporal
-
-    if weights["motion"] > 0.0:
-        temperature = max(1e-3, _cfg_float(config, "certv5_motion_temperature", 0.20))
-        cosine = (state["motion"][left] @ state["motion"][right].transpose(0, 1)).clamp(-1.0, 1.0)
-        directional = torch.exp((cosine - 1.0) / temperature)
-        scalar_distance = torch.abs(
-            state["motion_score"][left].unsqueeze(1)
-            - state["motion_score"][right].unsqueeze(0)
-        )
-        scalar = torch.exp(-scalar_distance / temperature)
-        left_gate = state["motion_gate"][left].clamp(0.0, 1.0)
-        right_gate = state["motion_gate"][right].clamp(0.0, 1.0)
-        active_gate = torch.sqrt(left_gate.unsqueeze(1) * right_gate.unsqueeze(0))
-        static_gate = torch.sqrt((1.0 - left_gate).unsqueeze(1) * (1.0 - right_gate).unsqueeze(0))
-        output += weights["motion"] * (active_gate * directional + static_gate * scalar)
-
-    if weights["event"] > 0.0:
-        temperature = max(1e-3, _cfg_float(config, "certv5_event_temperature", 0.35))
-        distance = torch.cdist(state["event"][left], state["event"][right], p=2)
-        output += weights["event"] * torch.exp(-distance.square() / (2.0 * temperature**2))
-
-    if weights["spatial"] > 0.0:
-        temperature = max(1e-3, _cfg_float(config, "certv5_spatial_temperature", 0.35))
-        distance = torch.cdist(state["spatial"][left], state["spatial"][right], p=1)
-        output += weights["spatial"] * torch.exp(-distance / temperature)
-
-    if weights["query"] > 0.0 and state["query"].shape[1] > 0:
-        temperature = max(1e-3, _cfg_float(config, "certv5_query_temperature", 0.20))
-        cosine = (state["query"][left] @ state["query"][right].transpose(0, 1)).clamp(-1.0, 1.0)
-        output += weights["query"] * torch.exp((cosine - 1.0) / temperature)
-    return torch.nan_to_num(output, nan=0.0, posinf=1.0, neginf=0.0).clamp_(0.0, 1.0)
-
-
-def _kernel_matrices(
-    *,
-    candidates: torch.Tensor,
-    target_mass: torch.Tensor,
-    state: dict[str, torch.Tensor],
-    weights: dict[str, float],
-    config: FlashVidConfig,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    total_tokens = int(target_mass.numel())
-    chunk_size = max(64, _cfg_int(config, "certv5_kernel_chunk_size", 512))
-    kernel = torch.empty(
-        (int(candidates.numel()), total_tokens),
-        dtype=torch.float32,
-        device=candidates.device,
-    )
-    for start in range(0, total_tokens, chunk_size):
-        end = min(total_tokens, start + chunk_size)
-        right = torch.arange(start, end, dtype=torch.long, device=candidates.device)
-        kernel[:, start:end] = _multi_kernel_block(candidates, right, state, weights, config)
-    target_mean = kernel @ target_mass.float()
-    candidate_kernel = kernel.index_select(1, candidates)
-    candidate_kernel = 0.5 * (candidate_kernel + candidate_kernel.transpose(0, 1))
-    return kernel, candidate_kernel, target_mean
-
-
-def _composable_divide_and_conquer(
-    *,
-    kernel: torch.Tensor,
-    candidate_kernel: torch.Tensor,
-    target_mean: torch.Tensor,
-    candidates: torch.Tensor,
-    target_mass: torch.Tensor,
-    quality: torch.Tensor,
-    coarse_temporal_ids: torch.Tensor,
-    scene_ids: torch.Tensor,
-    locked: list[int],
-    budget: int,
-    merge_multiplier: float,
-) -> tuple[torch.Tensor, dict[str, object]]:
-    """Compose local scene-time coresets before the global submodular pass."""
-    candidate_count = int(candidates.numel())
-    limit = min(
-        candidate_count,
-        max(budget, int(math.ceil(budget * max(1.0, float(merge_multiplier))))),
-    )
-    if limit >= candidate_count:
-        return torch.arange(candidate_count, dtype=torch.long, device=candidates.device), {
-            "input_candidates": candidate_count,
-            "survivors": candidate_count,
-            "shards": 1,
-            "covered_shards": 1,
-            "bypassed": True,
-        }
-
-    coarse_count = int(coarse_temporal_ids.max().item()) + 1
-    shard_ids = scene_ids * coarse_count + coarse_temporal_ids
-    candidate_shards = shard_ids[candidates]
-    shard_values = sorted(int(value) for value in torch.unique(candidate_shards).tolist())
-    token_to_position = {
-        int(token): position for position, token in enumerate(candidates.detach().cpu().tolist())
-    }
-    locked_positions = {
-        token_to_position[int(token)] for token in locked if int(token) in token_to_position
-    }
-    survivor_positions: set[int] = set(locked_positions)
-
-    shard_candidates: dict[int, torch.Tensor] = {}
-    shard_locked: dict[int, list[int]] = {}
-    shard_capacity: dict[int, int] = {}
-    shard_mass: dict[int, float] = {}
-    extras: dict[int, int] = {shard: 0 for shard in shard_values}
-    for shard in shard_values:
-        positions = torch.where(candidate_shards == shard)[0]
-        shard_candidates[shard] = positions
-        local_locked = [position for position in positions.tolist() if position in locked_positions]
-        shard_locked[shard] = local_locked
-        shard_capacity[shard] = max(0, int(positions.numel()) - len(local_locked))
-        members = torch.where(shard_ids == shard)[0]
-        shard_mass[shard] = float(target_mass[members].sum().item())
-
-    # Reserve one representative per uncovered shard when the merge budget
-    # permits, then use discrete water filling for the remaining capacity.
-    # Locked certificates are charged first.
-    remaining = max(0, limit - len(survivor_positions))
-    uncovered = sorted(
-        (
-            shard
-            for shard in shard_values
-            if not shard_locked[shard] and shard_capacity[shard] > 0
-        ),
-        key=lambda value: (-shard_mass[value], value),
-    )
-    for shard in uncovered:
-        if remaining <= 0:
-            break
-        extras[shard] += 1
-        remaining -= 1
-    while remaining > 0:
-        active_shards = [shard for shard in shard_values if extras[shard] < shard_capacity[shard]]
-        if not active_shards:
-            break
-        shard = max(
-            active_shards,
-            key=lambda value: (
-                shard_mass[value] / float(extras[value] + len(shard_locked[value]) + 1),
-                -value,
-            ),
-        )
-        extras[shard] += 1
-        remaining -= 1
-
-    shard_diagnostics: dict[str, object] = {}
-    for shard in shard_values:
-        positions = shard_candidates[shard]
-        chosen = list(shard_locked[shard])
-        quota = len(chosen) + extras[shard]
-        if quota > len(chosen):
-            members = torch.where(shard_ids == shard)[0]
-            local_mass = target_mass[members]
-            local_mass = local_mass / local_mass.sum().clamp_min(1e-6)
-            local_mean = kernel[positions][:, members] @ local_mass
-            local_active = torch.ones(positions.numel(), dtype=torch.bool, device=candidates.device)
-            redundancy = torch.zeros_like(local_mean)
-            if chosen:
-                chosen_tensor = torch.tensor(chosen, dtype=torch.long, device=candidates.device)
-                local_columns = torch.searchsorted(positions, chosen_tensor)
-                local_active[local_columns] = False
-                redundancy = candidate_kernel[positions][:, chosen_tensor].max(dim=1).values
-            while len(chosen) < quota:
-                score = (
-                    local_mean
-                    - 0.45 * redundancy
-                    + 0.04 * quality[candidates[positions]]
-                ).masked_fill(~local_active, float("-inf"))
-                local_position = int(torch.argmax(score))
-                if not math.isfinite(float(score[local_position])):
-                    break
-                global_position = int(positions[local_position])
-                chosen.append(global_position)
-                local_active[local_position] = False
-                redundancy = torch.maximum(
-                    redundancy,
-                    candidate_kernel[positions, global_position],
-                )
-        survivor_positions.update(chosen)
-        shard_diagnostics[str(shard)] = {
-            "mass": shard_mass[shard],
-            "candidates": int(positions.numel()),
-            "locked": len(shard_locked[shard]),
-            "survivors": len(chosen),
-        }
-
-    if len(survivor_positions) < limit:
-        global_order = torch.argsort(target_mean, descending=True, stable=True).tolist()
-        for position in global_order:
-            survivor_positions.add(int(position))
-            if len(survivor_positions) >= limit:
-                break
-    if len(survivor_positions) < budget:
-        raise RuntimeError(
-            f"divide-and-conquer stage kept {len(survivor_positions)} candidates for budget {budget}"
-        )
-    survivors = torch.tensor(
-        sorted(survivor_positions),
-        dtype=torch.long,
-        device=candidates.device,
-    )
-    return survivors, {
-        "input_candidates": candidate_count,
-        "survivors": int(survivors.numel()),
-        "shards": len(shard_values),
-        "covered_shards": sum(
-            1 for shard in shard_values if len(shard_locked[shard]) + extras[shard] > 0
-        ),
-        "bypassed": False,
-        "details": shard_diagnostics,
-    }
-
 
 def _motion_sectors(
     direction_axes: torch.Tensor,
@@ -1241,13 +889,181 @@ def _group_targets(
     return targets
 
 
-def _constrained_facility_location(
+
+def _spectral_block_weights(
+    config: FlashVidConfig,
+    router: dict[str, float],
+    query_confidence: float,
+    query_enabled: bool,
+) -> dict[str, float]:
+    """Allocate evidence energy across independent spectral subspaces."""
+    motion_activity = float(router["motion_activity"])
+    event_activity = float(router["event_activity"])
+    strength = float(router["router_strength"])
+    weights = {
+        "appearance": max(0.0, _cfg_float(config, "certv5_appearance_weight", 0.46)),
+        "temporal": max(0.0, _cfg_float(config, "certv5_temporal_weight", 0.16))
+        * (1.0 + 0.25 * strength * event_activity),
+        "motion": max(0.0, _cfg_float(config, "certv5_motion_weight", 0.16))
+        * (1.0 + 0.55 * strength * motion_activity),
+        "event": max(0.0, _cfg_float(config, "certv5_event_weight", 0.10))
+        * (1.0 + 0.35 * strength * event_activity),
+        "spatial": max(0.0, _cfg_float(config, "certv5_spatial_weight", 0.07)),
+        # The interaction block distinguishes repeated objects at different
+        # space-time locations instead of treating them as redundant copies.
+        "instance": max(0.0, _cfg_float(config, "certv5_instance_weight", 0.10)),
+        "query": (
+            max(0.0, _cfg_float(config, "certv5_query_axis_weight", 0.05))
+            * min(1.0, max(0.0, float(query_confidence)))
+            if query_enabled
+            else 0.0
+        ),
+    }
+    total = sum(weights.values())
+    if total <= 1e-8:
+        weights["appearance"] = 1.0
+        total = 1.0
+    return {name: value / total for name, value in weights.items()}
+
+
+def _spectral_evidence_features(
     *,
-    kernel: torch.Tensor,
-    candidate_kernel: torch.Tensor,
-    target_mean: torch.Tensor,
+    metric_features: torch.Tensor,
+    quality: torch.Tensor,
+    demand_weight: torch.Tensor,
+    attention: torch.Tensor,
+    novelty: torch.Tensor,
+    curvature: torch.Tensor,
+    event: torch.Tensor,
+    detail: torch.Tensor,
+    component_support: torch.Tensor,
+    motion_score: torch.Tensor,
+    motion_confidence: torch.Tensor,
+    direction_axes: torch.Tensor,
+    frame_ids: torch.Tensor,
+    frame_count: int,
+    fine_temporal_ids: torch.Tensor,
+    fine_temporal_count: int,
+    spatial_ids: torch.Tensor,
+    spatial_count: int,
+    spatial_coords: torch.Tensor,
+    query_relevance: torch.Tensor,
+    atom_weights: torch.Tensor,
+    block_weights: dict[str, float],
+    whitening_strength: float,
+    quality_floor: float,
+    ridge: float,
+    max_dimension: int,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Whiten the target evidence covariance before subset construction.
+
+    Unlike D-optimal design, the selector never optimizes a determinant. The
+    whitening only defines a common metric in which a weak eigen-direction is
+    a genuinely under-represented type of evidence.
+    """
+
+    def append_block(parts: list[torch.Tensor], name: str, values: torch.Tensor) -> None:
+        weight = max(0.0, float(block_weights.get(name, 0.0)))
+        if weight <= 0.0 or values.numel() == 0:
+            return
+        normalized = F.normalize(values.float(), p=2, dim=-1, eps=1e-6)
+        parts.append(normalized * math.sqrt(weight))
+
+    parts: list[torch.Tensor] = []
+    append_block(parts, "appearance", _whiten_features(metric_features, whitening_strength))
+    append_block(
+        parts,
+        "temporal",
+        F.one_hot(fine_temporal_ids, num_classes=max(1, fine_temporal_count)).float(),
+    )
+    append_block(
+        parts,
+        "spatial",
+        F.one_hot(spatial_ids, num_classes=max(1, spatial_count)).float(),
+    )
+    event_signature = torch.stack(
+        [attention, novelty, curvature, event, detail, component_support],
+        dim=1,
+    )
+    append_block(parts, "event", event_signature)
+
+    motion_gate = torch.sqrt((motion_score * motion_confidence).clamp(0.0, 1.0)).unsqueeze(1)
+    append_block(parts, "motion", direction_axes.float() * motion_gate)
+
+    # A compact tensor-product code preserves cardinality-sensitive local
+    # evidence without introducing a frame x cell one-hot matrix.
+    time = frame_ids.float() / float(max(1, frame_count - 1))
+    temporal_fourier = torch.stack(
+        [
+            torch.sin(math.pi * time),
+            torch.cos(math.pi * time),
+            torch.sin(2.0 * math.pi * time),
+            torch.cos(2.0 * math.pi * time),
+        ],
+        dim=1,
+    )
+    x_coord = spatial_coords[:, 0].float()
+    y_coord = spatial_coords[:, 1].float()
+    spatial_code = torch.stack(
+        [x_coord, y_coord, 1.0 - x_coord, 1.0 - y_coord],
+        dim=1,
+    )
+    interaction = torch.einsum("ni,nj->nij", temporal_fourier, spatial_code).flatten(1)
+    interaction = interaction * (0.20 + 0.80 * detail).unsqueeze(1)
+    append_block(parts, "instance", interaction)
+
+    if query_relevance.numel() > 0:
+        query_signature = query_relevance.transpose(0, 1) * torch.sqrt(
+            atom_weights.clamp_min(1e-6)
+        ).unsqueeze(0)
+        append_block(parts, "query", query_signature)
+
+    if not parts:
+        raise RuntimeError("CertVID V5 spectral evidence space is empty")
+    design = torch.cat(parts, dim=1)
+    quality_floor = min(1.0, max(1e-4, float(quality_floor)))
+    design = design * torch.sqrt(
+        quality_floor + (1.0 - quality_floor) * quality.clamp(0.0, 1.0)
+    ).unsqueeze(1)
+
+    covariance = design.transpose(0, 1) @ (demand_weight.float().unsqueeze(1) * design)
+    covariance = 0.5 * (covariance + covariance.transpose(0, 1))
+    original_dimension = int(covariance.shape[0])
+    scale = float(torch.diagonal(covariance).mean().clamp_min(1e-6).item())
+    ridge_value = max(1e-6, float(ridge)) * scale
+    eigenvalues, eigenvectors = torch.linalg.eigh(
+        covariance + ridge_value * torch.eye(original_dimension, device=design.device)
+    )
+    retained_dimension = min(
+        original_dimension,
+        max(1, int(max_dimension)),
+        int((eigenvalues > ridge_value * 1.001).sum().clamp_min(1).item()),
+    )
+    retained_values = eigenvalues[-retained_dimension:]
+    retained_vectors = eigenvectors[:, -retained_dimension:]
+    whitened = (design @ retained_vectors) * retained_values.clamp_min(ridge_value).rsqrt().unsqueeze(0)
+
+    # Clamp only extreme leverage outliers. They otherwise dominate every
+    # weak-direction update even when they are projection artifacts.
+    row_norm = whitened.norm(dim=1).clamp_min(1e-6)
+    cap = torch.quantile(row_norm, 0.98).clamp_min(1e-6)
+    whitened = whitened * torch.minimum(torch.ones_like(row_norm), cap / row_norm).unsqueeze(1)
+    whitened = torch.nan_to_num(whitened, nan=0.0, posinf=0.0, neginf=0.0)
+    return whitened, {
+        "dimension": float(retained_dimension),
+        "original_dimension": float(original_dimension),
+        "target_min_eigenvalue": float(retained_values.min().item()),
+        "target_max_eigenvalue": float(retained_values.max().item()),
+        "ridge": float(ridge_value),
+        "leverage_cap": float(cap.item()),
+    }
+
+
+def _tail_risk_spectral_selection(
+    *,
+    design: torch.Tensor,
     candidates: torch.Tensor,
-    target_mass: torch.Tensor,
+    demand_weight: torch.Tensor,
     quality: torch.Tensor,
     locked: list[int],
     budget: int,
@@ -1258,21 +1074,29 @@ def _constrained_facility_location(
     query_relevance: torch.Tensor,
     atom_weights: torch.Tensor,
     query_enabled: bool,
+    tail_fraction: float,
+    tail_temperature: float,
+    ridge: float,
+    refresh_interval: int,
     dual_strength: float,
-    mmd_weight: float,
-    sample_size: int,
+    mean_weight: float,
 ) -> tuple[torch.Tensor, dict[str, object], torch.Tensor]:
+    """Greedily raise the CVaR of the weakest evidence eigen-directions."""
     candidate_tokens = [int(token) for token in candidates.detach().cpu().tolist()]
     token_to_position = {token: position for position, token in enumerate(candidate_tokens)}
-    selected_positions: list[int] = []
+    candidate_design = design[candidates].float()
+    dimension = int(candidate_design.shape[1])
+    ridge = max(1e-6, float(ridge))
+    information = ridge * torch.eye(dimension, dtype=torch.float32, device=candidates.device)
     active = torch.ones(candidates.numel(), dtype=torch.bool, device=candidates.device)
-    coverage = torch.zeros(target_mass.numel(), dtype=torch.float32, device=candidates.device)
-    repulsion = torch.zeros(candidates.numel(), dtype=torch.float32, device=candidates.device)
+    selected_positions: list[int] = []
+    selected_sum = torch.zeros(dimension, dtype=torch.float32, device=candidates.device)
+    target_mean = torch.sum(design * demand_weight.float().unsqueeze(1), dim=0)
 
-    fine_targets = _group_targets(fine_temporal_ids, target_mass, budget, 0.75)
-    scene_targets = _group_targets(scene_ids, target_mass, budget, 0.65)
-    spatial_targets = _group_targets(spatial_ids, target_mass, budget, 0.30)
-    motion_targets = _group_targets(motion_sectors, target_mass, budget, 0.30)
+    fine_targets = _group_targets(fine_temporal_ids, demand_weight, budget, 0.75)
+    scene_targets = _group_targets(scene_ids, demand_weight, budget, 0.65)
+    spatial_targets = _group_targets(spatial_ids, demand_weight, budget, 0.35)
+    motion_targets = _group_targets(motion_sectors, demand_weight, budget, 0.30)
     fine_counts = torch.zeros_like(fine_targets)
     scene_counts = torch.zeros_like(scene_targets)
     spatial_counts = torch.zeros_like(spatial_targets)
@@ -1289,13 +1113,15 @@ def _constrained_facility_location(
     )
 
     def add(position: int) -> None:
+        nonlocal information, selected_sum
         if not bool(active[position]):
             return
         token = int(candidates[position])
+        vector = candidate_design[position]
         selected_positions.append(position)
         active[position] = False
-        coverage.copy_(torch.maximum(coverage, kernel[position]))
-        repulsion.add_(candidate_kernel[:, position])
+        information = information + torch.outer(vector, vector)
+        selected_sum = selected_sum + vector
         fine_counts[fine_temporal_ids[token]] += 1.0
         scene_counts[scene_ids[token]] += 1.0
         spatial_counts[spatial_ids[token]] += 1.0
@@ -1310,56 +1136,58 @@ def _constrained_facility_location(
         if position is not None:
             add(position)
 
+    tail_fraction = min(1.0, max(1.0 / max(1, dimension), float(tail_fraction)))
+    tail_count = min(dimension, max(1, int(math.ceil(dimension * tail_fraction))))
+    tail_temperature = max(1e-4, float(tail_temperature))
+    refresh_interval = max(1, int(refresh_interval))
     dual_strength = max(0.0, float(dual_strength))
-    mmd_weight = max(0.0, float(mmd_weight))
-    sample_size = max(8, int(sample_size))
+    mean_weight = max(0.0, float(mean_weight))
+    tail_vectors = torch.eye(dimension, device=candidates.device)[:, :tail_count]
+    tail_weights = torch.full((tail_count,), 1.0 / tail_count, device=candidates.device)
+    eigenvalues = torch.full((dimension,), ridge, device=candidates.device)
+    refreshes = 0
+    iterations = 0
     tie_break = (
         1.0
         - torch.arange(candidates.numel(), device=candidates.device).float()
         / float(max(1, candidates.numel()))
     ) * 1e-7
-    step = 0
+
     while len(selected_positions) < budget:
         available = torch.where(active)[0]
         if available.numel() == 0:
             break
-        take = min(sample_size, int(available.numel()))
-        priority = (
-            target_mean
-            - repulsion / float(max(1, len(selected_positions)))
-            + tie_break
-        )
-        priority = priority.masked_fill(~active, float("-inf"))
-        top_take = min((take + 1) // 2, int(available.numel()))
-        top_positions = torch.topk(priority, k=top_take, largest=True, sorted=True).indices
+        if iterations % refresh_interval == 0:
+            eigenvalues, eigenvectors = torch.linalg.eigh(
+                0.5 * (information + information.transpose(0, 1))
+            )
+            tail_values = eigenvalues[:tail_count]
+            tail_vectors = eigenvectors[:, :tail_count]
+            scale = tail_values.mean().abs().clamp_min(ridge)
+            tail_weights = torch.softmax(
+                -(tail_values - tail_values.min()) / (tail_temperature * scale),
+                dim=0,
+            )
+            refreshes += 1
 
-        rotate_take = take - top_take
-        if rotate_take > 0:
-            start = (step * max(1, rotate_take) * 17) % int(available.numel())
-            order = torch.cat([available[start:], available[:start]])
-            rotating = order[~torch.isin(order, top_positions)][:rotate_take]
-            shortlist = torch.cat([top_positions, rotating])
-        else:
-            shortlist = top_positions
+        projection = candidate_design[available] @ tail_vectors
+        spectral_gain = (projection.square() * tail_weights.unsqueeze(0)).sum(dim=1)
+        spectral_gain = _minmax(spectral_gain, dim=0)
 
-        marginal = (
-            (kernel[shortlist] - coverage.unsqueeze(0)).clamp_min(0.0)
-            * target_mass.unsqueeze(0)
-        ).sum(dim=1)
-        witness = target_mean[shortlist] - repulsion[shortlist] / float(
-            max(1, len(selected_positions))
-        )
-        witness = _minmax(witness, dim=0)
+        selected_mean = selected_sum / float(max(1, len(selected_positions)))
+        mean_residual = target_mean - selected_mean
+        mean_gain = (candidate_design[available] @ mean_residual).clamp_min(0.0)
+        mean_gain = _minmax(mean_gain, dim=0)
 
-        fine_deficit = ((fine_targets - fine_counts).clamp_min(0.0) / fine_targets.clamp_min(1.0))
-        scene_deficit = ((scene_targets - scene_counts).clamp_min(0.0) / scene_targets.clamp_min(1.0))
-        spatial_deficit = ((spatial_targets - spatial_counts).clamp_min(0.0) / spatial_targets.clamp_min(1.0))
-        motion_deficit = ((motion_targets - motion_counts).clamp_min(0.0) / motion_targets.clamp_min(1.0))
-        tokens = candidates[shortlist]
+        fine_deficit = (fine_targets - fine_counts).clamp_min(0.0) / fine_targets.clamp_min(1.0)
+        scene_deficit = (scene_targets - scene_counts).clamp_min(0.0) / scene_targets.clamp_min(1.0)
+        spatial_deficit = (spatial_targets - spatial_counts).clamp_min(0.0) / spatial_targets.clamp_min(1.0)
+        motion_deficit = (motion_targets - motion_counts).clamp_min(0.0) / motion_targets.clamp_min(1.0)
+        tokens = candidates[available]
         dual_bonus = (
-            0.34 * fine_deficit[fine_temporal_ids[tokens]]
-            + 0.26 * scene_deficit[scene_ids[tokens]]
-            + 0.16 * spatial_deficit[spatial_ids[tokens]]
+            0.32 * fine_deficit[fine_temporal_ids[tokens]]
+            + 0.24 * scene_deficit[scene_ids[tokens]]
+            + 0.20 * spatial_deficit[spatial_ids[tokens]]
             + 0.24 * motion_deficit[motion_sectors[tokens]]
         )
         if query_coverage.numel() > 0:
@@ -1367,43 +1195,43 @@ def _constrained_facility_location(
                 (query_targets - query_coverage).clamp_min(0.0)
                 / query_targets.clamp_min(1e-6)
             )
-            query_bonus = (
+            dual_bonus = dual_bonus + 0.25 * (
                 query_relevance[:, tokens]
                 * (query_deficit * atom_weights.clamp_min(1e-6)).unsqueeze(1)
             ).sum(dim=0)
-            dual_bonus = dual_bonus + 0.30 * query_bonus
 
         score = (
-            marginal
-            + mmd_weight * witness
+            spectral_gain
+            + mean_weight * mean_gain
             + dual_strength * dual_bonus
-            + 0.01 * quality[tokens]
-            + tie_break[shortlist]
+            + 0.02 * quality[tokens]
+            + tie_break[available]
         )
-        best = int(shortlist[int(torch.argmax(score))])
-        add(best)
-        step += 1
+        add(int(available[int(torch.argmax(score))]))
+        iterations += 1
 
     if len(selected_positions) != budget:
         raise RuntimeError(
-            f"facility-location selector produced {len(selected_positions)} tokens for budget {budget}"
+            f"tail-risk selector produced {len(selected_positions)} tokens for budget {budget}"
         )
     positions = torch.tensor(selected_positions, dtype=torch.long, device=candidates.device)
     selected = candidates[positions]
     if not set(int(token) for token in locked).issubset(set(int(token) for token in selected.tolist())):
-        raise RuntimeError("facility-location selector removed a locked certificate")
-    selected_kernel = candidate_kernel[positions][:, positions]
-    mmd_proxy = float(
-        (
-            selected_kernel.mean()
-            - 2.0 * target_mean[positions].mean()
-        ).item()
+        raise RuntimeError("tail-risk selector removed a locked certificate")
+
+    eigenvalues, eigenvectors = torch.linalg.eigh(
+        0.5 * (information + information.transpose(0, 1))
     )
+    tail_values = eigenvalues[:tail_count]
     diagnostics: dict[str, object] = {
-        "objective": float(torch.dot(target_mass, coverage).item()),
-        "mmd_proxy": mmd_proxy,
-        "iterations": step,
-        "sample_size": sample_size,
+        "objective": float(tail_values.mean().item()),
+        "tail_cvar": float(tail_values.mean().item()),
+        "minimum_eigenvalue": float(eigenvalues.min().item()),
+        "median_eigenvalue": float(eigenvalues.median().item()),
+        "maximum_eigenvalue": float(eigenvalues.max().item()),
+        "tail_count": tail_count,
+        "iterations": iterations,
+        "refreshes": refreshes,
         "locked": len(locked),
         "coverage": {
             "fine_unmet": int((fine_counts + 1e-6 < fine_targets).sum().item()),
@@ -1415,35 +1243,24 @@ def _constrained_facility_location(
             else 0,
         },
     }
-    return selected, diagnostics, target_mean
+    return selected, diagnostics, eigenvectors[:, :tail_count]
 
 
-def _kernel_protected_tokens(
+def _spectral_protected_tokens(
     selected: torch.Tensor,
-    candidates: torch.Tensor,
-    candidate_kernel: torch.Tensor,
-    target_mean: torch.Tensor,
+    design: torch.Tensor,
+    tail_vectors: torch.Tensor,
     ratio: float,
 ) -> set[int]:
-    count = min(int(selected.numel()), max(0, int(math.ceil(selected.numel() * max(0.0, ratio)))))
-    if count <= 0:
+    count = min(
+        int(selected.numel()),
+        max(0, int(math.ceil(selected.numel() * max(0.0, float(ratio))))),
+    )
+    if count <= 0 or tail_vectors.numel() == 0:
         return set()
-    token_to_position = {
-        int(token): position for position, token in enumerate(candidates.detach().cpu().tolist())
-    }
-    positions = torch.tensor(
-        [token_to_position[int(token)] for token in selected.detach().cpu().tolist()],
-        dtype=torch.long,
-        device=selected.device,
-    )
-    similarity = candidate_kernel[positions][:, positions]
-    redundancy = (
-        (similarity.sum(dim=1) - torch.diagonal(similarity))
-        / float(max(1, selected.numel() - 1))
-    )
-    witness = target_mean[positions] - 0.50 * redundancy
-    protected_positions = torch.argsort(witness, descending=True, stable=True)[:count]
-    return {int(selected[position]) for position in protected_positions}
+    energy = (design[selected] @ tail_vectors).square().sum(dim=1)
+    protected = torch.argsort(energy, descending=True, stable=True)[:count]
+    return {int(selected[position]) for position in protected}
 
 
 def _build_plan(
@@ -1548,11 +1365,10 @@ def _publish_diagnostics(config: FlashVidConfig, diagnostics: dict[str, object])
     setattr(config, "last_certv5_diagnostics", diagnostics)
     budget = diagnostics["budget"]
     certificates = diagnostics["certificates"]
-    facility = diagnostics["facility_location"]
+    spectral = diagnostics["spectral_design"]
     attention = diagnostics["attention"]
     scene_pyramid = diagnostics["scene_pyramid"]
     router = diagnostics["router"]
-    divide = diagnostics["divide_and_conquer"]
     transport = diagnostics["transport"]
     setattr(config, "last_certv5_target_tokens", float(budget["target_tokens"]))
     setattr(config, "last_certv5_nominal_retention", float(budget["nominal_retention"]))
@@ -1565,15 +1381,15 @@ def _publish_diagnostics(config: FlashVidConfig, diagnostics: dict[str, object])
     setattr(config, "last_certv5_candidate_tokens", float(diagnostics["candidate_count"]))
     setattr(config, "last_certv5_component_count", float(diagnostics["component_count"]))
     setattr(config, "last_certv5_query_confidence", float(diagnostics["query_confidence"]))
-    setattr(config, "last_certv5_facility_objective", float(facility["objective"]))
-    setattr(config, "last_certv5_mmd_proxy", float(facility["mmd_proxy"]))
-    setattr(config, "last_certv5_facility_iterations", float(facility["iterations"]))
-    setattr(config, "last_certv5_divide_survivors", float(divide["survivors"]))
+    setattr(config, "last_certv5_spectral_objective", float(spectral["objective"]))
+    setattr(config, "last_certv5_tail_cvar", float(spectral["tail_cvar"]))
+    setattr(config, "last_certv5_minimum_eigenvalue", float(spectral["minimum_eigenvalue"]))
+    setattr(config, "last_certv5_spectral_iterations", float(spectral["iterations"]))
     setattr(config, "last_certv5_transport_load_cv", float(transport["load_cv"]))
     setattr(
         config,
-        "last_certv5_kernel_protected_count",
-        float(diagnostics["kernel_protected_count"]),
+        "last_certv5_spectral_protected_count",
+        float(diagnostics["spectral_protected_count"]),
     )
     setattr(config, "last_certv5_attention_used", float(bool(attention["used"])))
     setattr(config, "last_certv5_scene_count", float(scene_pyramid["scene_count"]))
@@ -1590,7 +1406,7 @@ def certvid_v5_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build a composable, quality-weighted facility-location visual coreset."""
+    """Build a certificate-constrained tail-risk spectral visual coreset."""
     if video_features.ndim != 3:
         raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
     frame_count, tokens_per_frame, _ = video_features.shape
@@ -1604,7 +1420,7 @@ def certvid_v5_compression(
     )
     flat_features = video_features.reshape(total_tokens, -1)
     query_mode = str(
-        getattr(flashvid_config, "certv5_query_mode", "certificates_and_kernel")
+        getattr(flashvid_config, "certv5_query_mode", "certificates_and_spectral")
     ).strip().lower()
     if query_mode not in _QUERY_MODES:
         raise ValueError(f"unsupported certv5_query_mode={query_mode!r}")
@@ -1637,30 +1453,33 @@ def certvid_v5_compression(
                 "min_frame_mass": 1.0 / float(max(1, frame_count)),
                 "max_frame_mass": 1.0 / float(max(1, frame_count)),
             },
-            "kernel_weights": {
+            "spectral_weights": {
                 "appearance": 1.0,
                 "temporal": 0.0,
                 "motion": 0.0,
                 "event": 0.0,
                 "spatial": 0.0,
+                "instance": 0.0,
                 "query": 0.0,
             },
-            "divide_and_conquer": {
-                "input_candidates": total_tokens,
-                "survivors": total_tokens,
-                "shards": 1,
-                "covered_shards": 1,
-                "bypassed": True,
-            },
-            "facility_location": {
+            "spectral_design": {
+                "dimension": float(flat_features.shape[-1]),
+                "target_min_eigenvalue": 1.0,
+                "target_max_eigenvalue": 1.0,
+                "ridge": 0.0,
+                "leverage_cap": 0.0,
                 "objective": 1.0,
-                "mmd_proxy": -1.0,
+                "tail_cvar": 1.0,
+                "minimum_eigenvalue": 1.0,
+                "median_eigenvalue": 1.0,
+                "maximum_eigenvalue": 1.0,
+                "tail_count": 1,
                 "iterations": 0,
-                "sample_size": 0,
+                "refreshes": 0,
                 "locked": 0,
                 "coverage": {},
             },
-            "kernel_protected_count": 0,
+            "spectral_protected_count": 0,
             "fusion_protected_count": 0,
             "transport": {
                 "steps": 0.0,
@@ -1750,55 +1569,56 @@ def certvid_v5_compression(
             if query_relevance.numel() > 0
             else torch.zeros_like(attention)
         )
+        effective_query_score = (
+            query_score if query_mode != "off" else torch.zeros_like(query_score)
+        )
 
-        motion_weight = 0.12 + 0.10 * float(router_diagnostics["motion_activity"])
-        quality_weight_sum = 0.18 + 0.16 + 0.10 + 0.10 + 0.10 + 0.14 + motion_weight
+        # Reuse the empirically strong V3 evidence decomposition, but not its
+        # D-optimal selector. Directed motion is represented in certificates
+        # and an independent spectral block instead of being counted twice in
+        # this scalar saliency score.
         visual_quality = _minmax(
-            (
-                0.18 * attention
-                + 0.16 * novelty
-                + 0.10 * curvature
-                + 0.10 * event
-                + 0.10 * detail
-                + 0.14 * component_value
-                + motion_weight * motion_score
-            )
-            / quality_weight_sum,
+            0.28 * attention
+            + 0.20 * novelty
+            + 0.14 * curvature
+            + 0.12 * event
+            + 0.12 * detail
+            + 0.14 * component_value,
             dim=0,
         )
         query_scalar_enabled = query_mode != "off" and query_relevance.numel() > 0
         query_weight = (
             min(
-                0.20,
-                max(0.0, _cfg_float(flashvid_config, "certv5_query_weight", 0.12))
+                0.30,
+                max(0.0, _cfg_float(flashvid_config, "certv5_query_weight", 0.18))
                 * float(query_confidence),
             )
             if query_scalar_enabled
             else 0.0
         )
-        # Query evidence is represented by certificates, target mass, and the
-        # query kernel. Keeping it out of scalar quality avoids counting the
-        # same signal repeatedly.
-        quality = visual_quality
-        event_score = _minmax(
-            0.24 * novelty
-            + 0.18 * curvature
-            + 0.18 * event
-            + 0.10 * detail
-            + 0.18 * motion_score
-            + 0.12 * component_value,
+        quality = _minmax(
+            (1.0 - query_weight) * visual_quality + query_weight * effective_query_score,
             dim=0,
         )
-        demand_weight, target_diagnostics = _balanced_target_mass(
-            quality=quality,
-            event_score=event_score,
-            component_support=component_value,
-            query_score=query_score,
-            frame_ids=frame_ids,
-            frame_event=frame_event,
-            query_weight=query_weight,
-            quality_floor=_cfg_float(flashvid_config, "certv5_quality_floor", 0.18),
+        event_score = _minmax(
+            0.34 * novelty
+            + 0.28 * curvature
+            + 0.18 * event
+            + 0.10 * detail
+            + 0.10 * effective_query_score,
+            dim=0,
         )
+        demand_weight = 0.20 + 0.42 * quality + 0.20 * event_score + 0.18 * component_value
+        demand_weight = demand_weight / demand_weight.sum().clamp_min(1e-6)
+        frame_mass = torch.zeros(frame_count, dtype=torch.float32, device=video_features.device)
+        frame_mass.index_add_(0, frame_ids, demand_weight)
+        target_entropy = -torch.sum(demand_weight * torch.log(demand_weight.clamp_min(1e-8)))
+        target_diagnostics = {
+            "entropy": float(target_entropy.item()),
+            "effective_support": float(torch.exp(target_entropy).item()),
+            "min_frame_mass": float(frame_mass.min().item()),
+            "max_frame_mass": float(frame_mass.max().item()),
+        }
 
         requests = _build_certificate_requests(
             quality=quality,
@@ -1853,20 +1673,24 @@ def certvid_v5_compression(
             shares=candidate_shares,
         )
 
-        kernel_query_enabled = _query_uses_kernel(query_mode) and query_relevance.numel() > 0
-        kernel_weights = _kernel_weights(
+        spectral_query_enabled = _query_uses_spectral(query_mode) and query_relevance.numel() > 0
+        spectral_weights = _spectral_block_weights(
             flashvid_config,
             router_diagnostics,
             query_confidence,
-            kernel_query_enabled,
+            spectral_query_enabled,
         )
         global_coords = coords.repeat(frame_count, 1)
-        kernel_state = _prepare_kernel_state(
+        spectral_ridge = _cfg_float(flashvid_config, "certv5_spectral_ridge", 0.05)
+        spectral_rank_ratio = min(
+            1.0,
+            max(0.10, _cfg_float(flashvid_config, "certv5_spectral_rank_ratio", 0.60)),
+        )
+        spectral_design, design_diagnostics = _spectral_evidence_features(
             metric_features=metric_flat,
-            frame_ids=frame_ids,
-            frame_count=frame_count,
-            spatial_coords=global_coords,
-            scene_ids=scene_ids,
+            quality=quality,
+            demand_weight=demand_weight,
+            attention=attention,
             novelty=novelty,
             curvature=curvature,
             event=event,
@@ -1875,48 +1699,31 @@ def certvid_v5_compression(
             motion_score=motion_score,
             motion_confidence=motion_confidence,
             direction_axes=direction_axes,
+            frame_ids=frame_ids,
+            frame_count=frame_count,
+            fine_temporal_ids=fine_temporal_ids,
+            fine_temporal_count=fine_temporal_count,
+            spatial_ids=spatial_ids,
+            spatial_count=spatial_count,
+            spatial_coords=global_coords,
             query_relevance=query_relevance,
             atom_weights=atom_weights,
-            whitening_strength=_cfg_float(flashvid_config, "certv5_whitening_strength", 0.25),
+            block_weights=spectral_weights,
+            whitening_strength=_cfg_float(flashvid_config, "certv5_whitening_strength", 0.50),
+            quality_floor=_cfg_float(flashvid_config, "certv5_quality_floor", 0.15),
+            ridge=spectral_ridge,
+            max_dimension=max(8, int(math.floor(budget * spectral_rank_ratio))),
         )
-        kernel, candidate_kernel, target_mean = _kernel_matrices(
-            candidates=candidates,
-            target_mass=demand_weight,
-            state=kernel_state,
-            weights=kernel_weights,
-            config=flashvid_config,
-        )
-
-        survivor_positions, divide_diagnostics = _composable_divide_and_conquer(
-            kernel=kernel,
-            candidate_kernel=candidate_kernel,
-            target_mean=target_mean,
-            candidates=candidates,
-            target_mass=demand_weight,
-            quality=quality,
-            coarse_temporal_ids=coarse_temporal_ids,
-            scene_ids=scene_ids,
-            locked=locked,
-            budget=budget,
-            merge_multiplier=_cfg_float(flashvid_config, "certv5_merge_multiplier", 2.0),
-        )
-        candidates = candidates[survivor_positions]
-        kernel = kernel[survivor_positions]
-        candidate_kernel = candidate_kernel[survivor_positions][:, survivor_positions]
-        target_mean = target_mean[survivor_positions]
-
         motion_sectors = _motion_sectors(
             direction_axes,
             motion_score,
             motion_confidence,
             _cfg_float(flashvid_config, "certv5_motion_sector_threshold", 0.24),
         )
-        selected, facility_diagnostics, target_mean = _constrained_facility_location(
-            kernel=kernel,
-            candidate_kernel=candidate_kernel,
-            target_mean=target_mean,
+        selected, selector_diagnostics, tail_vectors = _tail_risk_spectral_selection(
+            design=spectral_design,
             candidates=candidates,
-            target_mass=demand_weight,
+            demand_weight=demand_weight,
             quality=quality,
             locked=locked,
             budget=budget,
@@ -1926,20 +1733,22 @@ def certvid_v5_compression(
             motion_sectors=motion_sectors,
             query_relevance=query_relevance,
             atom_weights=atom_weights,
-            query_enabled=kernel_query_enabled,
+            query_enabled=spectral_query_enabled,
+            tail_fraction=_cfg_float(flashvid_config, "certv5_tail_fraction", 0.25),
+            tail_temperature=_cfg_float(flashvid_config, "certv5_tail_temperature", 0.15),
+            ridge=spectral_ridge,
+            refresh_interval=_cfg_int(flashvid_config, "certv5_spectral_refresh", 4),
             dual_strength=_cfg_float(flashvid_config, "certv5_dual_strength", 0.20),
-            mmd_weight=_cfg_float(flashvid_config, "certv5_mmd_weight", 0.10),
-            sample_size=_cfg_int(flashvid_config, "certv5_greedy_sample_size", 48),
+            mean_weight=_cfg_float(flashvid_config, "certv5_mean_weight", 0.10),
         )
         selected = torch.sort(selected).values
-        kernel_protected = _kernel_protected_tokens(
+        spectral_protected = _spectral_protected_tokens(
             selected=selected,
-            candidates=candidates,
-            candidate_kernel=candidate_kernel,
-            target_mean=target_mean,
-            ratio=_cfg_float(flashvid_config, "certv5_kernel_protect_ratio", 0.12),
+            design=spectral_design,
+            tail_vectors=tail_vectors,
+            ratio=_cfg_float(flashvid_config, "certv5_spectral_protect_ratio", 0.12),
         )
-        protected_tokens = set(locked) | kernel_protected
+        protected_tokens = set(locked) | spectral_protected
         plan, transport_diagnostics = _build_plan(
             selected=selected,
             metric_features=metric_flat,
@@ -1947,7 +1756,7 @@ def certvid_v5_compression(
             scene_ids=scene_ids,
             component_ids=component_ids,
             motion_score=motion_score,
-            fusion_alpha=_cfg_float(flashvid_config, "certv5_fusion_alpha", 0.04),
+            fusion_alpha=_cfg_float(flashvid_config, "certv5_fusion_alpha", 0.10),
             temperature=_cfg_float(flashvid_config, "certv5_assignment_temperature", 0.07),
             protected_tokens=protected_tokens,
             motion_fusion_threshold=_cfg_float(
@@ -1974,10 +1783,9 @@ def certvid_v5_compression(
                 1 for request in requests if request.category == "motion"
             ),
             "target_measure": target_diagnostics,
-            "kernel_weights": kernel_weights,
-            "divide_and_conquer": divide_diagnostics,
-            "facility_location": facility_diagnostics,
-            "kernel_protected_count": len(kernel_protected),
+            "spectral_weights": spectral_weights,
+            "spectral_design": {**design_diagnostics, **selector_diagnostics},
+            "spectral_protected_count": len(spectral_protected),
             "fusion_protected_count": len(protected_tokens),
             "transport": transport_diagnostics,
         }

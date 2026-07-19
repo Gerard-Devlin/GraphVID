@@ -23,9 +23,9 @@ from flashvid.certvid_v5 import (
     _CERTIFICATE_SHARES,
     _CertificateRequest,
     _admit_certificates,
-    _composable_divide_and_conquer,
     _resolve_budget,
     _scene_pyramid,
+    _tail_risk_spectral_selection,
     _tie_safe_rank_normalize,
     _validated_attention,
     certvid_v5_compression,
@@ -43,8 +43,6 @@ def _config(**overrides) -> FlashVidConfig:
         compression_variant="certvid_v5",
         certv5_num_hidden_layers=28,
         certv5_inner_hook_enabled=True,
-        certv5_merge_multiplier=1.6,
-        certv5_greedy_sample_size=24,
         certv5_scene_threshold=0.30,
         certv5_motion_threshold=0.0,
         certv5_motion_confidence_threshold=0.0,
@@ -144,31 +142,47 @@ def test_scene_pyramid_and_atomic_certificates() -> None:
     assert diagnostics["admitted_unique"] == len(locked)
 
 
-def test_composable_divide_and_conquer() -> None:
-    candidate_count = 12
-    candidates = torch.arange(candidate_count, dtype=torch.long)
-    kernel = torch.eye(candidate_count, dtype=torch.float32)
-    target_mass = torch.full((candidate_count,), 1.0 / candidate_count)
-    target_mean = kernel @ target_mass
-    scene_ids = torch.tensor([0] * 6 + [1] * 6, dtype=torch.long)
-    coarse_ids = torch.tensor([0] * 3 + [1] * 3 + [0] * 3 + [1] * 3, dtype=torch.long)
-    survivors, diagnostics = _composable_divide_and_conquer(
-        kernel=kernel,
-        candidate_kernel=kernel,
-        target_mean=target_mean,
-        candidates=candidates,
-        target_mass=target_mass,
-        quality=torch.linspace(0.0, 1.0, candidate_count),
-        coarse_temporal_ids=coarse_ids,
-        scene_ids=scene_ids,
-        locked=[],
-        budget=4,
-        merge_multiplier=1.0,
+def test_tail_risk_recovers_weak_directions() -> None:
+    design = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.8, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.8, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.8],
+        ]
     )
-    shard_ids = scene_ids * 2 + coarse_ids
-    assert survivors.numel() == 4
-    assert torch.unique(shard_ids[survivors]).numel() == 4
-    assert diagnostics["covered_shards"] == diagnostics["shards"] == 4
+    candidates = torch.arange(6, dtype=torch.long)
+    groups = torch.arange(6, dtype=torch.long)
+    selected, diagnostics, tail_vectors = _tail_risk_spectral_selection(
+        design=design,
+        candidates=candidates,
+        demand_weight=torch.full((6,), 1.0 / 6.0),
+        quality=torch.ones(6),
+        locked=[0],
+        budget=3,
+        fine_temporal_ids=groups,
+        scene_ids=groups,
+        spatial_ids=groups,
+        motion_sectors=groups,
+        query_relevance=torch.empty((0, 6)),
+        atom_weights=torch.empty(0),
+        query_enabled=False,
+        tail_fraction=1.0,
+        tail_temperature=0.10,
+        ridge=0.05,
+        refresh_interval=1,
+        dual_strength=0.0,
+        mean_weight=0.0,
+    )
+    selected_set = set(selected.tolist())
+    assert 0 in selected_set
+    assert selected_set.intersection({2, 3})
+    assert selected_set.intersection({4, 5})
+    assert diagnostics["tail_cvar"] > 0.05
+    assert diagnostics["minimum_eigenvalue"] > 0.05
+    assert tail_vectors.shape == (3, 3)
 
 
 def test_query_off_isolation() -> None:
@@ -216,18 +230,20 @@ def test_integration() -> None:
     assert diagnostics["certificates"]["ratio"] <= 0.28
     assert diagnostics["scene_pyramid"]["fine_count"] == frame_count
     assert 0.0 <= diagnostics["router"]["motion_activity"] <= 1.0
-    assert diagnostics["facility_location"]["objective"] > 0.0
-    assert diagnostics["facility_location"]["iterations"] >= 0
-    assert diagnostics["divide_and_conquer"]["survivors"] >= target
-    assert diagnostics["divide_and_conquer"]["survivors"] <= diagnostics["divide_and_conquer"]["input_candidates"]
-    assert diagnostics["divide_and_conquer"]["covered_shards"] == diagnostics["divide_and_conquer"]["shards"]
-    assert diagnostics["kernel_weights"]["appearance"] > 0.0
+    assert diagnostics["spectral_design"]["objective"] > 0.0
+    assert diagnostics["spectral_design"]["tail_cvar"] > 0.0
+    assert diagnostics["spectral_design"]["iterations"] >= 0
+    assert diagnostics["spectral_weights"]["appearance"] > 0.0
+    assert diagnostics["spectral_weights"]["instance"] > 0.0
+    assert "facility_location" not in diagnostics
+    assert "divide_and_conquer" not in diagnostics
     assert "d_optimal" not in diagnostics
+    assert "logdet" not in diagnostics
 
     plan = config._certvid_plan
     expected = apply_certvid_plan(video.reshape(-1, feature_dim), plan)
     assert torch.allclose(output, expected)
-    assert torch.all((plan.fusion_alpha >= 0.0) & (plan.fusion_alpha <= 0.04 + 1e-6))
+    assert torch.all((plan.fusion_alpha >= 0.0) & (plan.fusion_alpha <= 0.10 + 1e-6))
 
     second_config = _config()
     second_output, second_indices = certvid_v5_compression(
@@ -252,7 +268,7 @@ def test_integration() -> None:
 def main() -> None:
     test_attention_and_budget()
     test_scene_pyramid_and_atomic_certificates()
-    test_composable_divide_and_conquer()
+    test_tail_risk_recovers_weak_directions()
     test_query_off_isolation()
     test_integration()
     print("CertVID V5 smoke tests passed.")
