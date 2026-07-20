@@ -541,7 +541,7 @@ def Qwen3VLModel_forward(
         compression_variant = str(
             getattr(flashvid_config, "compression_variant", "flashvid")
         ).strip().lower()
-        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5"}:
+        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "certvid_e"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
             certvid_plan = getattr(flashvid_config, "_certvid_plan", None)
@@ -567,32 +567,6 @@ def Qwen3VLModel_forward(
             finally:
                 # The plan owns GPU tensors and is only valid for this prefill.
                 flashvid_config._certvid_plan = None
-        elif compression_variant == "kronvid":
-            from .certvid_qwen3 import merge_certvid_visual_deepstack
-            from .kronvid import compress_kronvid_deepstack
-
-            kronvid_plan = getattr(flashvid_config, "_kronvid_plan", None)
-            if kronvid_plan is None:
-                raise RuntimeError(
-                    "kronvid compression did not publish its DeepStack aggregation plan"
-                )
-            try:
-                compressed_deepstack_video = compress_kronvid_deepstack(
-                    deepstack_video_embeds,
-                    kronvid_plan,
-                )
-                if image_mask is not None:
-                    deepstack_visual_embeds = merge_certvid_visual_deepstack(
-                        deepstack_image_embeds=deepstack_image_embeds,
-                        compressed_video_embeds=compressed_deepstack_video,
-                        image_mask=image_mask,
-                        video_mask=video_mask,
-                        kept_video_indices=keep_visual_global_indices,
-                    )
-                else:
-                    deepstack_visual_embeds = compressed_deepstack_video
-            finally:
-                flashvid_config._kronvid_plan = None
         elif compression_variant == "prismvid":
             from .prismvid import compress_prism_deepstack, merge_prism_visual_deepstack
 
@@ -770,7 +744,7 @@ def Qwen3VLTextModel_forward(
         "certvid_v3",
         "certvid_v4",
         "certvid_v5",
-        "kronvid",
+        "certvid_e",
     }
     enable_inner_pruning = is_prefill and (
         not is_certvid

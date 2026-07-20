@@ -1,0 +1,942 @@
+from __future__ import annotations
+
+import math
+from typing import Optional
+
+import torch
+import torch.nn.functional as F
+
+from .certvid import (
+    CertVidPlan,
+    _build_components,
+    _build_plan,
+    _cfg_float,
+    _cfg_int,
+    _grid_hw,
+    _local_detail,
+    _metric_features,
+    _minmax,
+    _question_atoms,
+    _question_relevance,
+    _rank_normalize,
+    _spatial_layout,
+    apply_certvid_plan,
+)
+from .certvid_v2 import _component_support, _trajectory_signals
+from .configuration_flashvid import FlashVidConfig
+
+
+def _effective_ratio(config: FlashVidConfig) -> float:
+    ratio = _cfg_float(config, "retention_ratio", 0.10)
+    if bool(getattr(config, "certe_budget_uses_expansion", True)):
+        ratio *= _cfg_float(config, "expansion", 1.0)
+    return min(1.0, max(0.0, ratio))
+
+
+def _identity_plan(total_tokens: int, device: torch.device) -> CertVidPlan:
+    indices = torch.arange(total_tokens, dtype=torch.long, device=device)
+    return CertVidPlan(
+        anchor_indices=indices,
+        assignment_indices=indices.unsqueeze(1),
+        assignment_weights=torch.ones((total_tokens, 1), dtype=torch.float32, device=device),
+        source_mass=torch.ones(total_tokens, dtype=torch.float32, device=device),
+        fusion_alpha=torch.zeros(total_tokens, dtype=torch.float32, device=device),
+        raw_token_count=total_tokens,
+    )
+
+
+def _whiten_features(features: torch.Tensor, strength: float) -> torch.Tensor:
+    """Shrinkage whitening exposes complementary directions without amplifying noise."""
+    strength = min(1.0, max(0.0, float(strength)))
+    centered = features.float() - features.float().mean(dim=0, keepdim=True)
+    if strength <= 1e-6 or centered.shape[0] <= 1:
+        return F.normalize(centered, p=2, dim=-1, eps=1e-6)
+
+    covariance = centered.transpose(0, 1) @ centered
+    covariance = covariance / float(max(1, centered.shape[0] - 1))
+    eigenvalues, eigenvectors = torch.linalg.eigh(covariance)
+    mean_eigenvalue = eigenvalues.mean().clamp_min(1e-6)
+    eigenvalues = eigenvalues.clamp_min(mean_eigenvalue * 1e-4)
+    # strength=0 leaves the spectrum unchanged; strength=1 fully whitens it.
+    scales = torch.pow(eigenvalues / mean_eigenvalue, -0.5 * strength)
+    whitened = (centered @ eigenvectors) * scales.unsqueeze(0)
+    return F.normalize(
+        torch.nan_to_num(whitened, nan=0.0, posinf=0.0, neginf=0.0),
+        p=2,
+        dim=-1,
+        eps=1e-6,
+    )
+
+
+def _design_features(
+    *,
+    metric_features: torch.Tensor,
+    quality: torch.Tensor,
+    temporal_ids: torch.Tensor,
+    spatial_ids: torch.Tensor,
+    attention: torch.Tensor,
+    novelty: torch.Tensor,
+    curvature: torch.Tensor,
+    event: torch.Tensor,
+    detail: torch.Tensor,
+    component_support: torch.Tensor,
+    query_relevance: torch.Tensor,
+    atom_weights: torch.Tensor,
+    query_confidence: float,
+    temporal_count: int,
+    spatial_count: int,
+    structural_weight: float,
+    whitening_strength: float,
+    quality_floor: float,
+) -> torch.Tensor:
+    visual = _whiten_features(metric_features, whitening_strength)
+    temporal = F.one_hot(temporal_ids, num_classes=temporal_count).float()
+    spatial = F.one_hot(spatial_ids, num_classes=spatial_count).float()
+    signals = torch.stack(
+        [attention, novelty, curvature, event, detail, component_support],
+        dim=1,
+    )
+    signals = F.normalize(signals, p=2, dim=-1, eps=1e-6)
+
+    structural_weight = min(0.80, max(0.0, float(structural_weight)))
+    visual_weight = max(0.20, 1.0 - structural_weight)
+    query_gate = min(1.0, max(0.0, float(query_confidence)))
+    query_share = 0.20 * structural_weight * query_gate if query_relevance.numel() > 0 else 0.0
+    structural_remainder = max(0.0, structural_weight - query_share)
+    parts = [
+        visual * math.sqrt(visual_weight),
+        temporal * math.sqrt(0.45 * structural_remainder),
+        spatial * math.sqrt(0.25 * structural_remainder),
+        signals * math.sqrt(0.30 * structural_remainder),
+    ]
+    if query_relevance.numel() > 0 and query_share > 0.0:
+        query_axes = query_relevance.transpose(0, 1) * torch.sqrt(
+            atom_weights.clamp_min(1e-6)
+        ).unsqueeze(0)
+        parts.append(query_axes * math.sqrt(query_share))
+
+    design = F.normalize(torch.cat(parts, dim=1), p=2, dim=-1, eps=1e-6)
+    quality_floor = min(1.0, max(1e-4, float(quality_floor)))
+    row_mass = quality_floor + (1.0 - quality_floor) * quality.clamp(0.0, 1.0)
+    return design * torch.sqrt(row_mass).unsqueeze(1)
+
+
+def _evenly_spaced_ids(count: int, keep: int, device: torch.device) -> torch.Tensor:
+    if keep >= count:
+        return torch.arange(count, dtype=torch.long, device=device)
+    if keep <= 1:
+        return torch.tensor([count // 2], dtype=torch.long, device=device)
+    return torch.round(torch.linspace(0, count - 1, steps=keep, device=device)).long().unique()
+
+
+def _hard_certificates(
+    *,
+    budget: int,
+    quality: torch.Tensor,
+    event_score: torch.Tensor,
+    frame_ids: torch.Tensor,
+    temporal_ids: torch.Tensor,
+    spatial_ids: torch.Tensor,
+    query_relevance: torch.Tensor,
+    atom_weights: torch.Tensor,
+    query_confidence: float,
+    frame_count: int,
+    temporal_count: int,
+    spatial_count: int,
+    frame_coverage_ratio: float,
+    cell_coverage_ratio: float,
+    query_threshold: float,
+    query_per_atom: int,
+) -> tuple[list[int], list[int]]:
+    """Build immutable temporal, spatial, event, and query evidence constraints."""
+    entries: list[tuple[float, float, int, bool]] = []
+
+    frame_keep = max(1, int(math.ceil(frame_count * min(1.0, max(0.0, frame_coverage_ratio)))))
+    for frame_id in _evenly_spaced_ids(frame_count, frame_keep, quality.device).tolist():
+        members = torch.where(frame_ids == int(frame_id))[0]
+        if members.numel() > 0:
+            token = int(members[torch.argmax(quality[members])].item())
+            entries.append((5.0, float(quality[token].item()), token, False))
+
+    # Every temporal interval keeps its strongest transition or curved trajectory.
+    for temporal_id in range(temporal_count):
+        members = torch.where(temporal_ids == temporal_id)[0]
+        if members.numel() > 0:
+            token = int(members[torch.argmax(event_score[members])].item())
+            entries.append((4.5, float(event_score[token].item()), token, False))
+
+    cells_per_interval = max(
+        0,
+        min(spatial_count, int(math.ceil(spatial_count * min(1.0, max(0.0, cell_coverage_ratio))))),
+    )
+    for temporal_id in range(temporal_count):
+        cell_representatives: list[tuple[float, int]] = []
+        for spatial_id in range(spatial_count):
+            members = torch.where(
+                (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
+            )[0]
+            if members.numel() == 0:
+                continue
+            token = int(members[torch.argmax(quality[members])].item())
+            cell_representatives.append((float(quality[token].item()), token))
+        cell_representatives.sort(key=lambda item: (-item[0], item[1]))
+        for score, token in cell_representatives[:cells_per_interval]:
+            entries.append((3.0, score, token, False))
+
+    query_seeds: list[int] = []
+    if query_relevance.numel() > 0 and query_confidence >= float(query_threshold):
+        per_atom = max(1, int(query_per_atom))
+        for atom_idx, atom_scores in enumerate(query_relevance):
+            per_interval: list[tuple[float, int]] = []
+            for temporal_id in range(temporal_count):
+                members = torch.where(temporal_ids == temporal_id)[0]
+                if members.numel() == 0:
+                    continue
+                token = int(members[torch.argmax(atom_scores[members])].item())
+                per_interval.append((float(atom_scores[token].item()), token))
+            per_interval.sort(key=lambda item: (-item[0], item[1]))
+            atom_priority = 6.0 + float(atom_weights[atom_idx].item())
+            for score, token in per_interval[:per_atom]:
+                entries.append((atom_priority, score, token, True))
+                query_seeds.append(token)
+
+    best_by_token: dict[int, tuple[float, float, int, bool]] = {}
+    for entry in entries:
+        previous = best_by_token.get(entry[2])
+        if previous is None or (entry[0], entry[1]) > (previous[0], previous[1]):
+            best_by_token[entry[2]] = entry
+    ordered = sorted(best_by_token.values(), key=lambda item: (-item[0], -item[1], item[2]))
+    mandatory = [entry[2] for entry in ordered[:budget]]
+    mandatory_set = set(mandatory)
+    query_seeds = list(dict.fromkeys(token for token in query_seeds if token in mandatory_set))
+    return mandatory, query_seeds
+
+
+def _candidate_pool(
+    *,
+    budget: int,
+    quality: torch.Tensor,
+    component_ids: torch.Tensor,
+    temporal_ids: torch.Tensor,
+    spatial_ids: torch.Tensor,
+    query_relevance: torch.Tensor,
+    mandatory: list[int],
+    multiplier: float,
+) -> torch.Tensor:
+    total_tokens = int(quality.numel())
+    limit = min(total_tokens, max(budget, int(math.ceil(budget * max(1.0, multiplier)))))
+    candidates: set[int] = set(int(token) for token in mandatory)
+
+    def offer(tokens: list[int]) -> None:
+        for token in tokens:
+            if len(candidates) >= limit:
+                return
+            candidates.add(int(token))
+
+    # Expose query alternatives across time before filling with generic quality peaks.
+    if query_relevance.numel() > 0:
+        query_offers: list[tuple[float, int]] = []
+        for scores in query_relevance:
+            for temporal_id in torch.unique(temporal_ids).tolist():
+                members = torch.where(temporal_ids == int(temporal_id))[0]
+                if members.numel() == 0:
+                    continue
+                token = int(members[torch.argmax(scores[members])].item())
+                query_offers.append((float(scores[token].item()), token))
+        query_offers.sort(key=lambda item: (-item[0], item[1]))
+        offer([token for _, token in query_offers])
+
+    # Semantic trajectory representatives make rare persistent objects eligible.
+    component_cpu = component_ids.detach().cpu().tolist()
+    quality_cpu = quality.detach().float().cpu().tolist()
+    representatives: dict[int, int] = {}
+    for token, component in enumerate(component_cpu):
+        previous = representatives.get(component)
+        if previous is None or quality_cpu[token] > quality_cpu[previous]:
+            representatives[component] = token
+    component_tokens = sorted(
+        representatives.values(),
+        key=lambda token: (-quality_cpu[token], token),
+    )
+    offer(component_tokens)
+
+    # Add one strong alternative for every temporal-spatial cell.
+    cell_tokens: list[tuple[float, int]] = []
+    joint_cells = temporal_ids * (int(spatial_ids.max().item()) + 1) + spatial_ids
+    for cell_id in torch.unique(joint_cells).tolist():
+        members = torch.where(joint_cells == int(cell_id))[0]
+        token = int(members[torch.argmax(quality[members])].item())
+        cell_tokens.append((float(quality[token].item()), token))
+    cell_tokens.sort(key=lambda item: (-item[0], item[1]))
+    offer([token for _, token in cell_tokens])
+
+    offer(torch.argsort(quality, descending=True, stable=True).detach().cpu().tolist())
+    if len(candidates) < budget:
+        offer(list(range(total_tokens)))
+    return torch.tensor(sorted(candidates), dtype=torch.long, device=quality.device)
+
+
+def _d_optimal_greedy(
+    *,
+    design: torch.Tensor,
+    candidates: torch.Tensor,
+    mandatory: list[int],
+    budget: int,
+    ridge: float,
+) -> torch.Tensor:
+    """Greedy regularized D-optimal design with exact rank-one leverage updates."""
+    rows = design[candidates].float()
+    candidate_count, design_dim = rows.shape
+    if candidate_count < budget:
+        raise RuntimeError(f"D-optimal pool has {candidate_count} candidates for budget {budget}")
+
+    ridge = max(1e-4, float(ridge))
+    inverse = torch.eye(design_dim, dtype=torch.float32, device=rows.device) / ridge
+    leverage = rows.square().sum(dim=1) / ridge
+    active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
+    token_to_column = {
+        int(token): column for column, token in enumerate(candidates.detach().cpu().tolist())
+    }
+    selected_columns: list[int] = []
+
+    def add(column: int) -> None:
+        nonlocal inverse, leverage
+        if not bool(active[column]):
+            return
+        row = rows[column]
+        direction = inverse @ row
+        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
+        projection = rows @ direction
+        leverage = (leverage - projection.square() / denominator).clamp_min(0.0)
+        inverse = inverse - torch.outer(direction, direction) / denominator
+        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
+        active[column] = False
+        leverage[column] = -1.0
+        selected_columns.append(column)
+
+    for token in mandatory:
+        column = token_to_column.get(int(token))
+        if column is not None and len(selected_columns) < budget:
+            add(column)
+
+    while len(selected_columns) < budget:
+        score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(~active, float("-inf"))
+        column = int(torch.argmax(score).item())
+        if not math.isfinite(float(score[column].item())):
+            remaining = torch.where(active)[0]
+            if remaining.numel() == 0:
+                break
+            column = int(remaining[0].item())
+        add(column)
+
+    if len(selected_columns) != budget:
+        raise RuntimeError(f"D-optimal selector produced {len(selected_columns)} tokens for budget {budget}")
+    columns = torch.tensor(selected_columns, dtype=torch.long, device=candidates.device)
+    return candidates[columns]
+
+
+def _swap_refine(
+    *,
+    selected: torch.Tensor,
+    candidates: torch.Tensor,
+    design: torch.Tensor,
+    mandatory: list[int],
+    ridge: float,
+    steps: int,
+    pool_size: int,
+    margin: float,
+) -> tuple[torch.Tensor, int, float]:
+    """Fedorov-style exchanges improve log-det while preserving hard certificates."""
+    steps = max(0, int(steps))
+    if steps == 0 or selected.numel() == 0:
+        return selected, 0, 0.0
+
+    mandatory_set = set(int(token) for token in mandatory)
+    candidate_tokens = candidates.detach().cpu().tolist()
+    token_to_column = {int(token): column for column, token in enumerate(candidate_tokens)}
+    selected_tokens = selected.detach().cpu().tolist()
+    selected_columns = [token_to_column[int(token)] for token in selected_tokens]
+    rows = design[candidates].float()
+    ridge = max(1e-4, float(ridge))
+    dimension = int(rows.shape[1])
+    identity = torch.eye(dimension, dtype=torch.float32, device=rows.device)
+    swaps = 0
+
+    for _ in range(steps):
+        selected_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
+        selected_rows = rows[selected_tensor]
+        information = ridge * identity + selected_rows.transpose(0, 1) @ selected_rows
+        inverse = torch.linalg.inv(information)
+        selected_leverage = torch.sum((selected_rows @ inverse) * selected_rows, dim=1).clamp(0.0, 1.0 - 1e-5)
+        removal_loss = -torch.log1p(-selected_leverage)
+
+        removable_positions = [
+            position for position, token in enumerate(selected_tokens) if int(token) not in mandatory_set
+        ]
+        if not removable_positions:
+            break
+        removable_positions.sort(key=lambda position: (float(removal_loss[position].item()), selected_tokens[position]))
+        removable_positions = removable_positions[: max(1, int(pool_size))]
+
+        selected_column_set = set(selected_columns)
+        outside_columns = [column for column in range(len(candidate_tokens)) if column not in selected_column_set]
+        if not outside_columns:
+            break
+        outside_tensor = torch.tensor(outside_columns, dtype=torch.long, device=rows.device)
+        outside_rows = rows[outside_tensor]
+        outside_leverage = torch.sum((outside_rows @ inverse) * outside_rows, dim=1)
+        outside_order = torch.argsort(outside_leverage, descending=True, stable=True)
+        outside_order = outside_order[: max(1, int(pool_size))]
+        outside_tensor = outside_tensor[outside_order]
+        outside_rows = rows[outside_tensor]
+
+        best_delta = float(margin)
+        best_remove = -1
+        best_add_column = -1
+        for position in removable_positions:
+            removed = selected_rows[position]
+            direction = inverse @ removed
+            remove_denominator = (1.0 - torch.dot(removed, direction)).clamp_min(1e-5)
+            inverse_without = inverse + torch.outer(direction, direction) / remove_denominator
+            add_leverage = torch.sum((outside_rows @ inverse_without) * outside_rows, dim=1).clamp_min(0.0)
+            delta = torch.log(remove_denominator) + torch.log1p(add_leverage)
+            local = int(torch.argmax(delta).item())
+            local_delta = float(delta[local].item())
+            if local_delta > best_delta:
+                best_delta = local_delta
+                best_remove = position
+                best_add_column = int(outside_tensor[local].item())
+
+        if best_remove < 0:
+            break
+        selected_columns[best_remove] = best_add_column
+        selected_tokens[best_remove] = int(candidate_tokens[best_add_column])
+        swaps += 1
+
+    selected_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
+    final_rows = rows[selected_tensor]
+    final_information = ridge * identity + final_rows.transpose(0, 1) @ final_rows
+    sign, logabsdet = torch.linalg.slogdet(final_information)
+    final_logdet = float(logabsdet.item()) if float(sign.item()) > 0.0 else float("-inf")
+    return candidates[selected_tensor], swaps, final_logdet
+
+
+def _information_spectrum(
+    rows: torch.Tensor,
+    ridge: float,
+    bottom_k: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float, float]:
+    """Return a stable information spectrum and E/D-optimal diagnostics."""
+    rows = rows.float()
+    dimension = int(rows.shape[1])
+    identity = torch.eye(dimension, dtype=torch.float32, device=rows.device)
+    information = max(1e-4, float(ridge)) * identity + rows.transpose(0, 1) @ rows
+    information = 0.5 * (information + information.transpose(0, 1))
+    eigenvalues, eigenvectors = torch.linalg.eigh(information)
+    if not bool(torch.isfinite(eigenvalues).all()):
+        raise RuntimeError("CertVID-E information spectrum contains NaN or Inf")
+    width = min(dimension, max(1, int(bottom_k)))
+    minimum = float(eigenvalues[0].item())
+    tail_mean = float(eigenvalues[:width].mean().item())
+    logdet = float(torch.log(eigenvalues.clamp_min(1e-12)).sum().item())
+    return information, eigenvalues, eigenvectors, minimum, tail_mean, logdet
+
+
+def _active_design_subspace(
+    rows: torch.Tensor,
+    *,
+    max_rank: int,
+    rank_tolerance: float,
+) -> tuple[torch.Tensor, int]:
+    """Remove null/redundant design axes before evaluating the E-criterion."""
+    covariance = rows.float().transpose(0, 1) @ rows.float()
+    covariance = 0.5 * (covariance + covariance.transpose(0, 1))
+    eigenvalues, eigenvectors = torch.linalg.eigh(covariance)
+    if not bool(torch.isfinite(eigenvalues).all()):
+        raise RuntimeError("CertVID-E candidate covariance contains NaN or Inf")
+
+    largest = float(eigenvalues[-1].item()) if eigenvalues.numel() else 0.0
+    threshold = max(1e-12, largest * max(0.0, float(rank_tolerance)))
+    active = torch.where(eigenvalues > threshold)[0]
+    if active.numel() == 0:
+        return rows[:, :1].float(), 0
+
+    rank = min(int(active.numel()), max(1, int(max_rank)))
+    basis = eigenvectors[:, active[-rank:]]
+    reduced = rows.float() @ basis
+    return reduced, rank
+
+
+def _e_optimal_refine(
+    *,
+    selected: torch.Tensor,
+    candidates: torch.Tensor,
+    design: torch.Tensor,
+    mandatory: list[int],
+    ridge: float,
+    steps: int,
+    bottom_k: int,
+    remove_pool: int,
+    add_pool: int,
+    verify_pool: int,
+    margin: float,
+    spectral_temperature: float,
+    d_efficiency_floor: float,
+    rank_tolerance: float,
+) -> tuple[torch.Tensor, int, int, float, float, float, float, float]:
+    """Improve the weakest information direction while preserving V3 evidence.
+
+    The V3 solution is a high-quality D-optimal warm start. Exchanges are accepted
+    only when they improve the E-criterion and retain the requested D-efficiency,
+    which prevents a narrow minimum-eigenvalue gain from collapsing total coverage.
+    """
+    candidate_tokens = candidates.detach().cpu().tolist()
+    token_to_column = {int(token): column for column, token in enumerate(candidate_tokens)}
+    selected_tokens = [int(token) for token in selected.detach().cpu().tolist()]
+    selected_columns = [token_to_column[token] for token in selected_tokens]
+    mandatory_set = set(int(token) for token in mandatory)
+    full_rows = design[candidates].float()
+    rows, active_rank = _active_design_subspace(
+        full_rows,
+        max_rank=len(selected_columns),
+        rank_tolerance=rank_tolerance,
+    )
+
+    selected_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
+    selected_rows = rows[selected_tensor]
+    (
+        information,
+        eigenvalues,
+        eigenvectors,
+        baseline_minimum,
+        current_tail_mean,
+        _,
+    ) = _information_spectrum(selected_rows, ridge, bottom_k)
+    full_information, _, _, _, _, baseline_logdet = _information_spectrum(
+        full_rows[selected_tensor],
+        ridge,
+        full_rows.shape[1],
+    )
+    current_minimum = baseline_minimum
+    current_logdet = baseline_logdet
+    swaps = 0
+
+    steps = max(0, int(steps))
+    minimum_margin = max(0.0, float(margin))
+    numerical_tolerance = max(1e-7, minimum_margin * 0.1)
+    d_efficiency_floor = min(1.0, max(0.0, float(d_efficiency_floor)))
+
+    for _ in range(steps):
+        removable_positions = [
+            position
+            for position, token in enumerate(selected_tokens)
+            if token not in mandatory_set
+        ]
+        selected_column_set = set(selected_columns)
+        outside_columns = [
+            column for column in range(len(candidate_tokens)) if column not in selected_column_set
+        ]
+        if not removable_positions or not outside_columns:
+            break
+
+        width = min(int(eigenvalues.numel()), max(1, int(bottom_k)))
+        bottom_vectors = eigenvectors[:, :width]
+        bottom_values = eigenvalues[:width]
+        scale = max(1e-6, float(bottom_values.abs().mean().item()))
+        temperature = max(1e-6, float(spectral_temperature) * scale)
+        spectral_weights = torch.softmax(
+            -(bottom_values - bottom_values[0]) / temperature,
+            dim=0,
+        )
+        sensitivity = (rows @ bottom_vectors).square() @ spectral_weights
+
+        removable_positions.sort(
+            key=lambda position: (
+                float(sensitivity[selected_columns[position]].item()),
+                selected_tokens[position],
+            )
+        )
+        removable_positions = removable_positions[: max(1, int(remove_pool))]
+        outside_columns.sort(
+            key=lambda column: (-float(sensitivity[column].item()), candidate_tokens[column])
+        )
+        outside_columns = outside_columns[: max(1, int(add_pool))]
+
+        pair_proposals: list[tuple[float, int, int]] = []
+        projected_information = bottom_vectors.transpose(0, 1) @ information @ bottom_vectors
+        for position in removable_positions:
+            removed_projection = bottom_vectors.transpose(0, 1) @ rows[selected_columns[position]]
+            without = projected_information - torch.outer(removed_projection, removed_projection)
+            for add_column in outside_columns:
+                added_projection = bottom_vectors.transpose(0, 1) @ rows[add_column]
+                projected = without + torch.outer(added_projection, added_projection)
+                projected = 0.5 * (projected + projected.transpose(0, 1))
+                projected_minimum = float(torch.linalg.eigvalsh(projected)[0].item())
+                pair_proposals.append((projected_minimum, position, add_column))
+        pair_proposals.sort(
+            key=lambda item: (-item[0], selected_tokens[item[1]], candidate_tokens[item[2]])
+        )
+
+        best: tuple[float, float, float, int, int, torch.Tensor, torch.Tensor] | None = None
+        for _, position, add_column in pair_proposals[: max(1, int(verify_pool))]:
+            removed = rows[selected_columns[position]]
+            added = rows[add_column]
+            proposed_information = information - torch.outer(removed, removed) + torch.outer(added, added)
+            proposed_information = 0.5 * (
+                proposed_information + proposed_information.transpose(0, 1)
+            )
+            proposed_values, proposed_vectors = torch.linalg.eigh(proposed_information)
+            if not bool(torch.isfinite(proposed_values).all()):
+                continue
+            proposed_minimum = float(proposed_values[0].item())
+            proposed_tail_mean = float(proposed_values[:width].mean().item())
+            full_removed = full_rows[selected_columns[position]]
+            full_added = full_rows[add_column]
+            proposed_full_information = (
+                full_information
+                - torch.outer(full_removed, full_removed)
+                + torch.outer(full_added, full_added)
+            )
+            proposed_full_information = 0.5 * (
+                proposed_full_information + proposed_full_information.transpose(0, 1)
+            )
+            sign, proposed_full_logdet = torch.linalg.slogdet(proposed_full_information)
+            if float(sign.item()) <= 0.0 or not bool(torch.isfinite(proposed_full_logdet)):
+                continue
+            proposed_logdet = float(proposed_full_logdet.item())
+            d_efficiency = math.exp(
+                max(-50.0, min(50.0, (proposed_logdet - baseline_logdet) / full_rows.shape[1]))
+            )
+            if d_efficiency + numerical_tolerance < d_efficiency_floor:
+                continue
+            improves_minimum = proposed_minimum > current_minimum + minimum_margin
+            preserves_minimum = proposed_minimum + numerical_tolerance >= current_minimum
+            improves_tail = proposed_tail_mean > current_tail_mean + minimum_margin
+            if not (improves_minimum or (preserves_minimum and improves_tail)):
+                continue
+            score = (proposed_minimum, proposed_tail_mean, proposed_logdet)
+            if best is None or score > best[:3]:
+                best = (
+                    proposed_minimum,
+                    proposed_tail_mean,
+                    proposed_logdet,
+                    position,
+                    add_column,
+                    proposed_values,
+                    proposed_vectors,
+                )
+
+        if best is None:
+            break
+        (
+            current_minimum,
+            current_tail_mean,
+            current_logdet,
+            position,
+            add_column,
+            eigenvalues,
+            eigenvectors,
+        ) = best
+        removed = rows[selected_columns[position]]
+        added = rows[add_column]
+        information = information - torch.outer(removed, removed) + torch.outer(added, added)
+        information = 0.5 * (information + information.transpose(0, 1))
+        full_removed = full_rows[selected_columns[position]]
+        full_added = full_rows[add_column]
+        full_information = (
+            full_information
+            - torch.outer(full_removed, full_removed)
+            + torch.outer(full_added, full_added)
+        )
+        full_information = 0.5 * (
+            full_information + full_information.transpose(0, 1)
+        )
+        selected_columns[position] = add_column
+        selected_tokens[position] = int(candidate_tokens[add_column])
+        swaps += 1
+
+    final_efficiency = math.exp(
+        max(-50.0, min(50.0, (current_logdet - baseline_logdet) / max(1, full_rows.shape[1])))
+    )
+    final_columns = torch.tensor(selected_columns, dtype=torch.long, device=candidates.device)
+    return (
+        candidates[final_columns],
+        swaps,
+        active_rank,
+        baseline_minimum,
+        current_minimum,
+        current_tail_mean,
+        current_logdet,
+        final_efficiency,
+    )
+
+
+def certvid_e_compression(
+    video_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+    question_features: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Select a V3-compatible, D-efficient E-optimal visual evidence coreset."""
+    if video_features.ndim != 3:
+        raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
+    frame_count, tokens_per_frame, _ = video_features.shape
+    total_tokens = int(frame_count * tokens_per_frame)
+    ratio = _effective_ratio(flashvid_config)
+    budget = max(1, min(total_tokens, int(round(total_tokens * ratio))))
+    flat_features = video_features.reshape(total_tokens, -1)
+
+    if budget >= total_tokens:
+        plan = _identity_plan(total_tokens, video_features.device)
+        output = flat_features
+        candidates = total_tokens
+        components = total_tokens
+        mandatory: list[int] = list(range(total_tokens))
+        query_seeds: list[int] = []
+        query_confidence = 0.0
+        d_swaps = 0
+        e_swaps = 0
+        active_rank = 0
+        v3_logdet = 0.0
+        lambda_min_before = 0.0
+        lambda_min = 0.0
+        tail_mean = 0.0
+        logdet = 0.0
+        d_efficiency = 1.0
+    else:
+        metric_dim = max(32, _cfg_int(flashvid_config, "certv3_metric_dim", 96))
+        metric_flat = _metric_features(video_features, metric_dim)
+        metric_frames = metric_flat.view(frame_count, tokens_per_frame, -1)
+        height, width = _grid_hw(tokens_per_frame, flashvid_config)
+        spatial_bins = max(1, _cfg_int(flashvid_config, "certv3_spatial_bins", 3))
+        coords, frame_spatial_ids = _spatial_layout(
+            tokens_per_frame,
+            height,
+            width,
+            spatial_bins,
+            video_features.device,
+        )
+        frame_event, _, novelty_2d, curvature_2d, matches = _trajectory_signals(
+            metric_frames,
+            coords,
+            _cfg_float(flashvid_config, "certv3_spatial_penalty", 0.08),
+        )
+        component_ids_cpu, component_sizes_cpu = _build_components(
+            frame_count,
+            tokens_per_frame,
+            frame_event,
+            matches,
+            _cfg_float(flashvid_config, "certv3_track_threshold", 0.82),
+        )
+        component_ids = component_ids_cpu.to(video_features.device)
+        component_sizes = component_sizes_cpu.to(video_features.device)
+        frame_ids = torch.arange(frame_count, device=video_features.device).repeat_interleave(tokens_per_frame)
+        component_value = _component_support(
+            metric_flat,
+            component_ids,
+            component_sizes,
+            frame_ids,
+            frame_count,
+        )
+
+        temporal_count = min(frame_count, max(1, _cfg_int(flashvid_config, "certv3_temporal_bins", 12)))
+        temporal_ids = torch.div(
+            frame_ids * temporal_count,
+            max(1, frame_count),
+            rounding_mode="floor",
+        ).clamp_max(temporal_count - 1)
+        spatial_ids = frame_spatial_ids.repeat(frame_count)
+        spatial_count = spatial_bins * spatial_bins
+
+        attention = _rank_normalize(cls_attention.float()).reshape(-1)
+        novelty = novelty_2d.reshape(-1)
+        curvature = curvature_2d.reshape(-1)
+        detail = _local_detail(video_features, height, width).reshape(-1)
+        event = frame_event.repeat_interleave(tokens_per_frame)
+        atoms = _question_atoms(
+            question_features,
+            max(0, _cfg_int(flashvid_config, "certv3_query_atoms", 8)),
+            metric_dim,
+        ).to(video_features.device)
+        query_relevance, atom_weights, query_confidence = _question_relevance(atoms, metric_flat)
+        query_score = (
+            (query_relevance * atom_weights.unsqueeze(1)).sum(dim=0)
+            if query_relevance.numel() > 0
+            else torch.zeros(total_tokens, dtype=torch.float32, device=video_features.device)
+        )
+
+        query_weight = min(
+            0.30,
+            max(0.0, _cfg_float(flashvid_config, "certv3_query_weight", 0.18) * query_confidence),
+        )
+        visual_quality = _minmax(
+            0.28 * attention
+            + 0.20 * novelty
+            + 0.14 * curvature
+            + 0.12 * event
+            + 0.12 * detail
+            + 0.14 * component_value,
+            dim=0,
+        )
+        quality = _minmax((1.0 - query_weight) * visual_quality + query_weight * query_score, dim=0)
+        event_score = _minmax(
+            0.34 * novelty
+            + 0.28 * curvature
+            + 0.18 * event
+            + 0.10 * detail
+            + 0.10 * query_score,
+            dim=0,
+        )
+        demand_weight = 0.20 + 0.42 * quality + 0.20 * event_score + 0.18 * component_value
+        demand_weight = demand_weight / demand_weight.sum().clamp_min(1e-6)
+
+        mandatory, query_seeds = _hard_certificates(
+            budget=budget,
+            quality=quality,
+            event_score=event_score,
+            frame_ids=frame_ids,
+            temporal_ids=temporal_ids,
+            spatial_ids=spatial_ids,
+            query_relevance=query_relevance,
+            atom_weights=atom_weights,
+            query_confidence=query_confidence,
+            frame_count=frame_count,
+            temporal_count=temporal_count,
+            spatial_count=spatial_count,
+            frame_coverage_ratio=_cfg_float(flashvid_config, "certv3_frame_coverage_ratio", 1.0),
+            cell_coverage_ratio=_cfg_float(flashvid_config, "certv3_cell_coverage_ratio", 0.50),
+            query_threshold=_cfg_float(flashvid_config, "certv3_query_threshold", 0.10),
+            query_per_atom=_cfg_int(flashvid_config, "certv3_query_per_atom", 1),
+        )
+        candidate_indices = _candidate_pool(
+            budget=budget,
+            quality=quality,
+            component_ids=component_ids,
+            temporal_ids=temporal_ids,
+            spatial_ids=spatial_ids,
+            query_relevance=query_relevance,
+            mandatory=mandatory,
+            multiplier=_cfg_float(flashvid_config, "certv3_candidate_multiplier", 2.5),
+        )
+        design = _design_features(
+            metric_features=metric_flat,
+            quality=quality,
+            temporal_ids=temporal_ids,
+            spatial_ids=spatial_ids,
+            attention=attention,
+            novelty=novelty,
+            curvature=curvature,
+            event=event,
+            detail=detail,
+            component_support=component_value,
+            query_relevance=query_relevance,
+            atom_weights=atom_weights,
+            query_confidence=query_confidence,
+            temporal_count=temporal_count,
+            spatial_count=spatial_count,
+            structural_weight=_cfg_float(flashvid_config, "certv3_structural_weight", 0.32),
+            whitening_strength=_cfg_float(flashvid_config, "certv3_whitening_strength", 0.50),
+            quality_floor=_cfg_float(flashvid_config, "certv3_quality_floor", 0.15),
+        )
+        ridge = _cfg_float(flashvid_config, "certv3_ridge", 0.50)
+        selected = _d_optimal_greedy(
+            design=design,
+            candidates=candidate_indices,
+            mandatory=mandatory,
+            budget=budget,
+            ridge=ridge,
+        )
+        selected, d_swaps, v3_logdet = _swap_refine(
+            selected=selected,
+            candidates=candidate_indices,
+            design=design,
+            mandatory=mandatory,
+            ridge=ridge,
+            steps=_cfg_int(flashvid_config, "certv3_swap_steps", 6),
+            pool_size=_cfg_int(flashvid_config, "certv3_swap_pool", 24),
+            margin=_cfg_float(flashvid_config, "certv3_swap_margin", 1e-4),
+        )
+        (
+            selected,
+            e_swaps,
+            active_rank,
+            lambda_min_before,
+            lambda_min,
+            tail_mean,
+            logdet,
+            d_efficiency,
+        ) = _e_optimal_refine(
+            selected=selected,
+            candidates=candidate_indices,
+            design=design,
+            mandatory=mandatory,
+            ridge=_cfg_float(flashvid_config, "certe_ridge", ridge),
+            steps=_cfg_int(flashvid_config, "certe_swap_steps", 6),
+            bottom_k=_cfg_int(flashvid_config, "certe_bottom_k", 8),
+            remove_pool=_cfg_int(flashvid_config, "certe_remove_pool", 8),
+            add_pool=_cfg_int(flashvid_config, "certe_add_pool", 16),
+            verify_pool=_cfg_int(flashvid_config, "certe_verify_pool", 4),
+            margin=_cfg_float(flashvid_config, "certe_swap_margin", 1e-5),
+            spectral_temperature=_cfg_float(
+                flashvid_config,
+                "certe_spectral_temperature",
+                0.05,
+            ),
+            d_efficiency_floor=_cfg_float(
+                flashvid_config,
+                "certe_d_efficiency_floor",
+                0.995,
+            ),
+            rank_tolerance=_cfg_float(
+                flashvid_config,
+                "certe_rank_tolerance",
+                1e-5,
+            ),
+        )
+        selected = torch.sort(selected).values
+        plan = _build_plan(
+            selected=selected,
+            metric_features=metric_flat,
+            demand_weight=demand_weight,
+            attention=attention,
+            query_score=query_score,
+            temporal_ids=temporal_ids,
+            component_ids=component_ids,
+            fusion_alpha=_cfg_float(flashvid_config, "certv3_fusion_alpha", 0.12),
+            temperature=_cfg_float(flashvid_config, "certv3_assignment_temperature", 0.07),
+        )
+        if mandatory:
+            certificate_indices = torch.tensor(mandatory, dtype=torch.long, device=selected.device)
+            plan.fusion_alpha[torch.isin(selected, certificate_indices)] = 0.0
+        output = apply_certvid_plan(flat_features, plan)
+        candidates = int(candidate_indices.numel())
+        components = int(component_sizes.numel())
+
+    setattr(flashvid_config, "_certvid_plan", plan)
+    flashvid_config.vision_token_length = int(output.shape[0])
+    flashvid_config.visual_token_length = int(output.shape[0])
+    flashvid_config.llm_token_length = None
+    setattr(flashvid_config, "last_adapter_variant", "certvid_e")
+    setattr(flashvid_config, "last_adapter_raw_tokens", float(total_tokens))
+    setattr(flashvid_config, "last_adapter_output_tokens", float(output.shape[0]))
+    diagnostics = {
+        "target_tokens": float(budget),
+        "candidate_tokens": float(candidates),
+        "component_count": float(components),
+        "certificate_count": float(len(mandatory)),
+        "query_seed_count": float(len(query_seeds)),
+        "query_confidence": float(query_confidence),
+        "d_swap_count": float(d_swaps),
+        "e_swap_count": float(e_swaps),
+        "active_design_rank": float(active_rank),
+        "v3_logdet": float(v3_logdet),
+        "lambda_min_before": float(lambda_min_before),
+        "lambda_min": float(lambda_min),
+        "tail_mean": float(tail_mean),
+        "logdet": float(logdet),
+        "d_efficiency": float(d_efficiency),
+    }
+    setattr(flashvid_config, "last_certe_diagnostics", diagnostics)
+    for name, value in diagnostics.items():
+        setattr(flashvid_config, f"last_certe_{name}", value)
+    return output, plan.anchor_indices

@@ -130,7 +130,6 @@ def flashvid_compression(
     # A plan is prefill-local. Clearing it here prevents stale GPU tensors from
     # surviving an interrupted or fallback generation.
     setattr(flashvid_config, "_certvid_plan", None)
-    setattr(flashvid_config, "_kronvid_plan", None)
     if compression_variant == "talon":
         from .talon import talon_compression
 
@@ -202,10 +201,10 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant == "kronvid":
-        from .kronvid import kronvid_compression
+    if compression_variant == "certvid_e":
+        from .certvid_e import certvid_e_compression
 
-        return kronvid_compression(
+        return certvid_e_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
@@ -224,7 +223,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|certvid_v5|kronvid|prismvid"
+            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|certvid_v5|certvid_e|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(

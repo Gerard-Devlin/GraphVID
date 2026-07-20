@@ -45,7 +45,7 @@ CERTV2_TOKEN_SELECTION_METHOD="${CERTV2_TOKEN_SELECTION_METHOD:-attn_div_stable}
 CERTV3_TOKEN_SELECTION_METHOD="${CERTV3_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 CERTV4_TOKEN_SELECTION_METHOD="${CERTV4_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 CERTV5_TOKEN_SELECTION_METHOD="${CERTV5_TOKEN_SELECTION_METHOD:-attn_div_stable}"
-KRON_TOKEN_SELECTION_METHOD="${KRON_TOKEN_SELECTION_METHOD:-attn_div_stable}"
+CERTE_TOKEN_SELECTION_METHOD="${CERTE_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 
 CERT_BUDGET_USES_EXPANSION="${CERT_BUDGET_USES_EXPANSION:-True}"
 CERT_QUERY_ATOMS="${CERT_QUERY_ATOMS:-6}"
@@ -149,35 +149,18 @@ CERTV5_OT_MAX_DISPLACEMENT="${CERTV5_OT_MAX_DISPLACEMENT:-0.12}"
 CERTV5_OT_MIN_COSINE="${CERTV5_OT_MIN_COSINE:-0.98}"
 CERTV5_DEBUG="${CERTV5_DEBUG:-False}"
 
-KRON_BUDGET_MODE="${KRON_BUDGET_MODE:-layer_average}"
-KRON_METRIC_DIM="${KRON_METRIC_DIM:-128}"
-KRON_PROJECTION_SEED="${KRON_PROJECTION_SEED:-17}"
-KRON_POSITION_FREQUENCIES="${KRON_POSITION_FREQUENCIES:-3}"
-KRON_POSITION_WEIGHT="${KRON_POSITION_WEIGHT:-0.10}"
-KRON_QUERY_ATOMS="${KRON_QUERY_ATOMS:-6}"
-KRON_QUERY_AXIS_WEIGHT="${KRON_QUERY_AXIS_WEIGHT:-0.12}"
-KRON_NOVELTY_WEIGHT="${KRON_NOVELTY_WEIGHT:-0.15}"
-KRON_ATTENTION_WEIGHT="${KRON_ATTENTION_WEIGHT:-0.24}"
-KRON_QUERY_WEIGHT="${KRON_QUERY_WEIGHT:-0.16}"
-KRON_COVERAGE_WEIGHT="${KRON_COVERAGE_WEIGHT:-0.28}"
-KRON_TEMPORAL_SEGMENTS="${KRON_TEMPORAL_SEGMENTS:-8}"
-KRON_SEGMENT_FLOOR_RATIO="${KRON_SEGMENT_FLOOR_RATIO:-0.35}"
-KRON_EFFECTIVE_DIM_RIDGE="${KRON_EFFECTIVE_DIM_RIDGE:-0.10}"
-KRON_LEVERAGE_RIDGE="${KRON_LEVERAGE_RIDGE:-0.10}"
-KRON_FRAME_FLOOR="${KRON_FRAME_FLOOR:-True}"
-KRON_SPATIAL_RADIUS="${KRON_SPATIAL_RADIUS:-1}"
-KRON_SPATIAL_TOPK="${KRON_SPATIAL_TOPK:-4}"
-KRON_TEMPORAL_RADIUS="${KRON_TEMPORAL_RADIUS:-1}"
-KRON_TEMPORAL_TOPK="${KRON_TEMPORAL_TOPK:-2}"
-KRON_SEMANTIC_TOPK="${KRON_SEMANTIC_TOPK:-2}"
-KRON_FEATURE_TEMPERATURE="${KRON_FEATURE_TEMPERATURE:-0.20}"
-KRON_POSITION_TEMPERATURE="${KRON_POSITION_TEMPERATURE:-0.50}"
-KRON_HARMONIC_MU="${KRON_HARMONIC_MU:-0.01}"
-KRON_MERGE_MODE="${KRON_MERGE_MODE:-galerkin}"
-KRON_IDENTITY_RHO="${KRON_IDENTITY_RHO:-12.0}"
-KRON_MAX_DISPLACEMENT="${KRON_MAX_DISPLACEMENT:-0.08}"
-KRON_MIN_COSINE="${KRON_MIN_COSINE:-0.995}"
-KRON_DEBUG="${KRON_DEBUG:-False}"
+CERTE_BUDGET_USES_EXPANSION="${CERTE_BUDGET_USES_EXPANSION:-True}"
+CERTE_RIDGE="${CERTE_RIDGE:-0.50}"
+CERTE_BOTTOM_K="${CERTE_BOTTOM_K:-8}"
+CERTE_SWAP_STEPS="${CERTE_SWAP_STEPS:-6}"
+CERTE_REMOVE_POOL="${CERTE_REMOVE_POOL:-8}"
+CERTE_ADD_POOL="${CERTE_ADD_POOL:-16}"
+CERTE_VERIFY_POOL="${CERTE_VERIFY_POOL:-4}"
+CERTE_SWAP_MARGIN="${CERTE_SWAP_MARGIN:-0.00001}"
+CERTE_SPECTRAL_TEMPERATURE="${CERTE_SPECTRAL_TEMPERATURE:-0.05}"
+CERTE_D_EFFICIENCY_FLOOR="${CERTE_D_EFFICIENCY_FLOOR:-0.995}"
+CERTE_RANK_TOLERANCE="${CERTE_RANK_TOLERANCE:-0.00001}"
+CERTE_DEBUG="${CERTE_DEBUG:-False}"
 
 split_csv() {
   local text="$1"
@@ -237,9 +220,9 @@ method_args() {
       printf 'compression_variant=certvid_v5,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv5_budget_mode=%s,certv5_ot_enabled=%s,certv5_ot_topk=%s,certv5_ot_temperature=%s,certv5_ot_steps=%s,certv5_ot_capacity_tau=%s,certv5_ot_prior_shrink=%s,certv5_ot_live_fraction=%s,certv5_ot_cost_slack=%s,certv5_ot_temporal_penalty=%s,certv5_ot_max_displacement=%s,certv5_ot_min_cosine=%s,certv5_debug=%s' \
         "$CERTV5_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTV5_BUDGET_MODE" "$CERTV5_OT_ENABLED" "$CERTV5_OT_TOPK" "$CERTV5_OT_TEMPERATURE" "$CERTV5_OT_STEPS" "$CERTV5_OT_CAPACITY_TAU" "$CERTV5_OT_PRIOR_SHRINK" "$CERTV5_OT_LIVE_FRACTION" "$CERTV5_OT_COST_SLACK" "$CERTV5_OT_TEMPORAL_PENALTY" "$CERTV5_OT_MAX_DISPLACEMENT" "$CERTV5_OT_MIN_COSINE" "$CERTV5_DEBUG"
       ;;
-    kronvid)
-      printf 'compression_variant=kronvid,token_selection_method=%s,kron_budget_mode=%s,kron_metric_dim=%s,kron_projection_seed=%s,kron_position_frequencies=%s,kron_position_weight=%s,kron_query_atoms=%s,kron_query_axis_weight=%s,kron_novelty_weight=%s,kron_attention_weight=%s,kron_query_weight=%s,kron_coverage_weight=%s,kron_temporal_segments=%s,kron_segment_floor_ratio=%s,kron_effective_dim_ridge=%s,kron_leverage_ridge=%s,kron_frame_floor=%s,kron_spatial_radius=%s,kron_spatial_topk=%s,kron_temporal_radius=%s,kron_temporal_topk=%s,kron_semantic_topk=%s,kron_feature_temperature=%s,kron_position_temperature=%s,kron_harmonic_mu=%s,kron_merge_mode=%s,kron_identity_rho=%s,kron_max_displacement=%s,kron_min_cosine=%s,kron_debug=%s' \
-        "$KRON_TOKEN_SELECTION_METHOD" "$KRON_BUDGET_MODE" "$KRON_METRIC_DIM" "$KRON_PROJECTION_SEED" "$KRON_POSITION_FREQUENCIES" "$KRON_POSITION_WEIGHT" "$KRON_QUERY_ATOMS" "$KRON_QUERY_AXIS_WEIGHT" "$KRON_NOVELTY_WEIGHT" "$KRON_ATTENTION_WEIGHT" "$KRON_QUERY_WEIGHT" "$KRON_COVERAGE_WEIGHT" "$KRON_TEMPORAL_SEGMENTS" "$KRON_SEGMENT_FLOOR_RATIO" "$KRON_EFFECTIVE_DIM_RIDGE" "$KRON_LEVERAGE_RIDGE" "$KRON_FRAME_FLOOR" "$KRON_SPATIAL_RADIUS" "$KRON_SPATIAL_TOPK" "$KRON_TEMPORAL_RADIUS" "$KRON_TEMPORAL_TOPK" "$KRON_SEMANTIC_TOPK" "$KRON_FEATURE_TEMPERATURE" "$KRON_POSITION_TEMPERATURE" "$KRON_HARMONIC_MU" "$KRON_MERGE_MODE" "$KRON_IDENTITY_RHO" "$KRON_MAX_DISPLACEMENT" "$KRON_MIN_COSINE" "$KRON_DEBUG"
+    certvid_e)
+      printf 'compression_variant=certvid_e,token_selection_method=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certe_budget_uses_expansion=%s,certe_ridge=%s,certe_bottom_k=%s,certe_swap_steps=%s,certe_remove_pool=%s,certe_add_pool=%s,certe_verify_pool=%s,certe_swap_margin=%s,certe_spectral_temperature=%s,certe_d_efficiency_floor=%s,certe_rank_tolerance=%s,certe_debug=%s' \
+        "$CERTE_TOKEN_SELECTION_METHOD" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTE_BUDGET_USES_EXPANSION" "$CERTE_RIDGE" "$CERTE_BOTTOM_K" "$CERTE_SWAP_STEPS" "$CERTE_REMOVE_POOL" "$CERTE_ADD_POOL" "$CERTE_VERIFY_POOL" "$CERTE_SWAP_MARGIN" "$CERTE_SPECTRAL_TEMPERATURE" "$CERTE_D_EFFICIENCY_FLOOR" "$CERTE_RANK_TOLERANCE" "$CERTE_DEBUG"
       ;;
     *)
       echo "Unsupported LLaVA-OneVision method: $method" >&2

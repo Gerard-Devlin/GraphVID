@@ -166,38 +166,19 @@ class FlashVidConfig:
     certv5_num_hidden_layers: int = field(default=0)
     certv5_inner_hook_enabled: bool = field(default=False)
 
-    # KronVID: spectral graph elimination with harmonic Galerkin projection.
-    kron_budget_mode: str = field(default="layer_average")
-    kron_metric_dim: int = field(default=128)
-    kron_projection_seed: int = field(default=17)
-    kron_position_frequencies: int = field(default=3)
-    kron_position_weight: float = field(default=0.10)
-    kron_query_atoms: int = field(default=6)
-    kron_query_axis_weight: float = field(default=0.12)
-    kron_novelty_weight: float = field(default=0.15)
-    kron_attention_weight: float = field(default=0.24)
-    kron_query_weight: float = field(default=0.16)
-    kron_coverage_weight: float = field(default=0.28)
-    kron_temporal_segments: int = field(default=8)
-    kron_segment_floor_ratio: float = field(default=0.35)
-    kron_effective_dim_ridge: float = field(default=0.10)
-    kron_leverage_ridge: float = field(default=0.10)
-    kron_frame_floor: bool = field(default=True)
-    kron_spatial_radius: int = field(default=1)
-    kron_spatial_topk: int = field(default=4)
-    kron_temporal_radius: int = field(default=1)
-    kron_temporal_topk: int = field(default=2)
-    kron_semantic_topk: int = field(default=2)
-    kron_feature_temperature: float = field(default=0.20)
-    kron_position_temperature: float = field(default=0.50)
-    kron_harmonic_mu: float = field(default=0.01)
-    kron_merge_mode: str = field(default="galerkin")
-    kron_identity_rho: float = field(default=12.0)
-    kron_max_displacement: float = field(default=0.08)
-    kron_min_cosine: float = field(default=0.995)
-    kron_debug: bool = field(default=False)
-    kron_num_hidden_layers: int = field(default=0)
-    kron_inner_hook_enabled: bool = field(default=False)
+    # CertVID-E: V3 evidence design with D-efficient E-optimal exchanges.
+    certe_budget_uses_expansion: bool = field(default=True)
+    certe_ridge: float = field(default=0.50)
+    certe_bottom_k: int = field(default=8)
+    certe_swap_steps: int = field(default=6)
+    certe_remove_pool: int = field(default=8)
+    certe_add_pool: int = field(default=16)
+    certe_verify_pool: int = field(default=4)
+    certe_swap_margin: float = field(default=1e-5)
+    certe_spectral_temperature: float = field(default=0.05)
+    certe_d_efficiency_floor: float = field(default=0.995)
+    certe_rank_tolerance: float = field(default=1e-5)
+    certe_debug: bool = field(default=False)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
@@ -221,7 +202,7 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
-    # "kronvid": ridge-leverage anchors + harmonic Galerkin graph coarsening.
+    # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")
 

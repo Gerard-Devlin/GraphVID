@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "kronvid", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "certvid_e", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "kronvid", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
         return "ours"
     return method
 
@@ -267,10 +267,10 @@ def _build_command(
             args.certv5_pruning_layer,
             args.certv5_llm_retention_ratio,
         ),
-        "kronvid": (
-            args.kron_expansion,
-            args.kron_pruning_layer,
-            args.kron_llm_retention_ratio,
+        "certvid_e": (
+            args.certe_expansion,
+            args.certe_pruning_layer,
+            args.certe_llm_retention_ratio,
         ),
     }
     effective_expansion, effective_pruning_layer, effective_llm_retention = hybrid_overrides.get(
@@ -580,62 +580,28 @@ def _build_command(
                 "--certv5_ot_min_cosine",
                 str(args.certv5_ot_min_cosine),
                 "--certv5_debug" if args.certv5_debug else "--no-certv5_debug",
-                "--kron_budget_mode",
-                str(args.kron_budget_mode),
-                "--kron_metric_dim",
-                str(args.kron_metric_dim),
-                "--kron_projection_seed",
-                str(args.kron_projection_seed),
-                "--kron_position_frequencies",
-                str(args.kron_position_frequencies),
-                "--kron_position_weight",
-                str(args.kron_position_weight),
-                "--kron_query_atoms",
-                str(args.kron_query_atoms),
-                "--kron_query_axis_weight",
-                str(args.kron_query_axis_weight),
-                "--kron_novelty_weight",
-                str(args.kron_novelty_weight),
-                "--kron_attention_weight",
-                str(args.kron_attention_weight),
-                "--kron_query_weight",
-                str(args.kron_query_weight),
-                "--kron_coverage_weight",
-                str(args.kron_coverage_weight),
-                "--kron_temporal_segments",
-                str(args.kron_temporal_segments),
-                "--kron_segment_floor_ratio",
-                str(args.kron_segment_floor_ratio),
-                "--kron_effective_dim_ridge",
-                str(args.kron_effective_dim_ridge),
-                "--kron_leverage_ridge",
-                str(args.kron_leverage_ridge),
-                "--kron_frame_floor" if args.kron_frame_floor else "--no-kron_frame_floor",
-                "--kron_spatial_radius",
-                str(args.kron_spatial_radius),
-                "--kron_spatial_topk",
-                str(args.kron_spatial_topk),
-                "--kron_temporal_radius",
-                str(args.kron_temporal_radius),
-                "--kron_temporal_topk",
-                str(args.kron_temporal_topk),
-                "--kron_semantic_topk",
-                str(args.kron_semantic_topk),
-                "--kron_feature_temperature",
-                str(args.kron_feature_temperature),
-                "--kron_position_temperature",
-                str(args.kron_position_temperature),
-                "--kron_harmonic_mu",
-                str(args.kron_harmonic_mu),
-                "--kron_merge_mode",
-                str(args.kron_merge_mode),
-                "--kron_identity_rho",
-                str(args.kron_identity_rho),
-                "--kron_max_displacement",
-                str(args.kron_max_displacement),
-                "--kron_min_cosine",
-                str(args.kron_min_cosine),
-                "--kron_debug" if args.kron_debug else "--no-kron_debug",
+                "--certe_budget_uses_expansion" if args.certe_budget_uses_expansion else "--no-certe_budget_uses_expansion",
+                "--certe_ridge",
+                str(args.certe_ridge),
+                "--certe_bottom_k",
+                str(args.certe_bottom_k),
+                "--certe_swap_steps",
+                str(args.certe_swap_steps),
+                "--certe_remove_pool",
+                str(args.certe_remove_pool),
+                "--certe_add_pool",
+                str(args.certe_add_pool),
+                "--certe_verify_pool",
+                str(args.certe_verify_pool),
+                "--certe_swap_margin",
+                str(args.certe_swap_margin),
+                "--certe_spectral_temperature",
+                str(args.certe_spectral_temperature),
+                "--certe_d_efficiency_floor",
+                str(args.certe_d_efficiency_floor),
+                "--certe_rank_tolerance",
+                str(args.certe_rank_tolerance),
+                "--certe_debug" if args.certe_debug else "--no-certe_debug",
                 "--prism_budget_uses_expansion" if args.prism_budget_uses_expansion else "--no-prism_budget_uses_expansion",
                 "--prism_metric_dim",
                 str(args.prism_metric_dim),
@@ -773,7 +739,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v4,certvid_v5,kronvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v4,certvid_v5,certvid_e,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -933,38 +899,21 @@ def main() -> None:
     parser.add_argument("--certv5_ot_max_displacement", type=float, default=0.12)
     parser.add_argument("--certv5_ot_min_cosine", type=float, default=0.98)
     parser.add_argument("--certv5_debug", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--kron_expansion", type=float, default=1.25)
-    parser.add_argument("--kron_pruning_layer", type=int, default=28)
-    parser.add_argument("--kron_llm_retention_ratio", type=float, default=0.10)
-    parser.add_argument("--kron_budget_mode", default="layer_average", choices=["layer_average", "outer_only"])
-    parser.add_argument("--kron_metric_dim", type=int, default=128)
-    parser.add_argument("--kron_projection_seed", type=int, default=17)
-    parser.add_argument("--kron_position_frequencies", type=int, default=3)
-    parser.add_argument("--kron_position_weight", type=float, default=0.10)
-    parser.add_argument("--kron_query_atoms", type=int, default=6)
-    parser.add_argument("--kron_query_axis_weight", type=float, default=0.12)
-    parser.add_argument("--kron_novelty_weight", type=float, default=0.15)
-    parser.add_argument("--kron_attention_weight", type=float, default=0.24)
-    parser.add_argument("--kron_query_weight", type=float, default=0.16)
-    parser.add_argument("--kron_coverage_weight", type=float, default=0.28)
-    parser.add_argument("--kron_temporal_segments", type=int, default=8)
-    parser.add_argument("--kron_segment_floor_ratio", type=float, default=0.35)
-    parser.add_argument("--kron_effective_dim_ridge", type=float, default=0.10)
-    parser.add_argument("--kron_leverage_ridge", type=float, default=0.10)
-    parser.add_argument("--kron_frame_floor", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--kron_spatial_radius", type=int, default=1)
-    parser.add_argument("--kron_spatial_topk", type=int, default=4)
-    parser.add_argument("--kron_temporal_radius", type=int, default=1)
-    parser.add_argument("--kron_temporal_topk", type=int, default=2)
-    parser.add_argument("--kron_semantic_topk", type=int, default=2)
-    parser.add_argument("--kron_feature_temperature", type=float, default=0.20)
-    parser.add_argument("--kron_position_temperature", type=float, default=0.50)
-    parser.add_argument("--kron_harmonic_mu", type=float, default=0.01)
-    parser.add_argument("--kron_merge_mode", default="galerkin", choices=["galerkin", "prune"])
-    parser.add_argument("--kron_identity_rho", type=float, default=12.0)
-    parser.add_argument("--kron_max_displacement", type=float, default=0.08)
-    parser.add_argument("--kron_min_cosine", type=float, default=0.995)
-    parser.add_argument("--kron_debug", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--certe_expansion", type=float, default=1.25)
+    parser.add_argument("--certe_pruning_layer", type=int, default=28)
+    parser.add_argument("--certe_llm_retention_ratio", type=float, default=0.10)
+    parser.add_argument("--certe_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certe_ridge", type=float, default=0.50)
+    parser.add_argument("--certe_bottom_k", type=int, default=8)
+    parser.add_argument("--certe_swap_steps", type=int, default=6)
+    parser.add_argument("--certe_remove_pool", type=int, default=8)
+    parser.add_argument("--certe_add_pool", type=int, default=16)
+    parser.add_argument("--certe_verify_pool", type=int, default=4)
+    parser.add_argument("--certe_swap_margin", type=float, default=1e-5)
+    parser.add_argument("--certe_spectral_temperature", type=float, default=0.05)
+    parser.add_argument("--certe_d_efficiency_floor", type=float, default=0.995)
+    parser.add_argument("--certe_rank_tolerance", type=float, default=1e-5)
+    parser.add_argument("--certe_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)
     parser.add_argument("--prism_query_atoms", type=int, default=6)

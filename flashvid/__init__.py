@@ -244,35 +244,18 @@ def flashvid(
     certv5_ot_max_displacement: float = 0.12,
     certv5_ot_min_cosine: float = 0.98,
     certv5_debug: bool = False,
-    kron_budget_mode: str = "layer_average",
-    kron_metric_dim: int = 128,
-    kron_projection_seed: int = 17,
-    kron_position_frequencies: int = 3,
-    kron_position_weight: float = 0.10,
-    kron_query_atoms: int = 6,
-    kron_query_axis_weight: float = 0.12,
-    kron_novelty_weight: float = 0.15,
-    kron_attention_weight: float = 0.24,
-    kron_query_weight: float = 0.16,
-    kron_coverage_weight: float = 0.28,
-    kron_temporal_segments: int = 8,
-    kron_segment_floor_ratio: float = 0.35,
-    kron_effective_dim_ridge: float = 0.10,
-    kron_leverage_ridge: float = 0.10,
-    kron_frame_floor: bool = True,
-    kron_spatial_radius: int = 1,
-    kron_spatial_topk: int = 4,
-    kron_temporal_radius: int = 1,
-    kron_temporal_topk: int = 2,
-    kron_semantic_topk: int = 2,
-    kron_feature_temperature: float = 0.20,
-    kron_position_temperature: float = 0.50,
-    kron_harmonic_mu: float = 0.01,
-    kron_merge_mode: str = "galerkin",
-    kron_identity_rho: float = 12.0,
-    kron_max_displacement: float = 0.08,
-    kron_min_cosine: float = 0.995,
-    kron_debug: bool = False,
+    certe_budget_uses_expansion: bool = True,
+    certe_ridge: float = 0.50,
+    certe_bottom_k: int = 8,
+    certe_swap_steps: int = 6,
+    certe_remove_pool: int = 8,
+    certe_add_pool: int = 16,
+    certe_verify_pool: int = 4,
+    certe_swap_margin: float = 1e-5,
+    certe_spectral_temperature: float = 0.05,
+    certe_d_efficiency_floor: float = 0.995,
+    certe_rank_tolerance: float = 1e-5,
+    certe_debug: bool = False,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -518,7 +501,7 @@ def flashvid(
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
-            "kronvid" performs ridge-leverage anchoring and harmonic Galerkin graph coarsening;
+            "certvid_e" refines the V3 design against its weakest information direction;
             "prismvid" selects an exact multi-level Qwen3 DeepStack visual coreset;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
@@ -643,10 +626,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "kronvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|certvid_v5|kronvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|certvid_v5|certvid_e|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -797,37 +780,18 @@ def flashvid(
         certv5_debug=certv5_debug,
         certv5_num_hidden_layers=_text_layer_count(model),
         certv5_inner_hook_enabled=True,
-        kron_budget_mode=kron_budget_mode,
-        kron_metric_dim=kron_metric_dim,
-        kron_projection_seed=kron_projection_seed,
-        kron_position_frequencies=kron_position_frequencies,
-        kron_position_weight=kron_position_weight,
-        kron_query_atoms=kron_query_atoms,
-        kron_query_axis_weight=kron_query_axis_weight,
-        kron_novelty_weight=kron_novelty_weight,
-        kron_attention_weight=kron_attention_weight,
-        kron_query_weight=kron_query_weight,
-        kron_coverage_weight=kron_coverage_weight,
-        kron_temporal_segments=kron_temporal_segments,
-        kron_segment_floor_ratio=kron_segment_floor_ratio,
-        kron_effective_dim_ridge=kron_effective_dim_ridge,
-        kron_leverage_ridge=kron_leverage_ridge,
-        kron_frame_floor=kron_frame_floor,
-        kron_spatial_radius=kron_spatial_radius,
-        kron_spatial_topk=kron_spatial_topk,
-        kron_temporal_radius=kron_temporal_radius,
-        kron_temporal_topk=kron_temporal_topk,
-        kron_semantic_topk=kron_semantic_topk,
-        kron_feature_temperature=kron_feature_temperature,
-        kron_position_temperature=kron_position_temperature,
-        kron_harmonic_mu=kron_harmonic_mu,
-        kron_merge_mode=kron_merge_mode,
-        kron_identity_rho=kron_identity_rho,
-        kron_max_displacement=kron_max_displacement,
-        kron_min_cosine=kron_min_cosine,
-        kron_debug=kron_debug,
-        kron_num_hidden_layers=_text_layer_count(model),
-        kron_inner_hook_enabled=True,
+        certe_budget_uses_expansion=certe_budget_uses_expansion,
+        certe_ridge=certe_ridge,
+        certe_bottom_k=certe_bottom_k,
+        certe_swap_steps=certe_swap_steps,
+        certe_remove_pool=certe_remove_pool,
+        certe_add_pool=certe_add_pool,
+        certe_verify_pool=certe_verify_pool,
+        certe_swap_margin=certe_swap_margin,
+        certe_spectral_temperature=certe_spectral_temperature,
+        certe_d_efficiency_floor=certe_d_efficiency_floor,
+        certe_rank_tolerance=certe_rank_tolerance,
+        certe_debug=certe_debug,
         prism_budget_uses_expansion=prism_budget_uses_expansion,
         prism_metric_dim=prism_metric_dim,
         prism_query_atoms=prism_query_atoms,
@@ -1048,11 +1012,6 @@ def flashvid(
 
     if variant == "certvid_v5":
         from .certvid_v5 import _resolve_budget
-
-        _resolve_budget(flashvid_config, total_tokens=1)
-
-    if variant == "kronvid":
-        from .kronvid import _resolve_budget
 
         _resolve_budget(flashvid_config, total_tokens=1)
 
