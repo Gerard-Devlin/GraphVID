@@ -553,96 +553,27 @@ def _build_command(
                 "--certv4_debug" if args.certv4_debug else "--no-certv4_debug",
                 "--certv5_budget_mode",
                 str(args.certv5_budget_mode),
-                "--certv5_attention_policy",
-                str(args.certv5_attention_policy),
-                "--certv5_attention_eps",
-                str(args.certv5_attention_eps),
-                "--certv5_certificate_budget_ratio",
-                str(args.certv5_certificate_budget_ratio),
-                "--certv5_query_mode",
-                str(args.certv5_query_mode),
-                "--certv5_spectral_protect_ratio",
-                str(args.certv5_spectral_protect_ratio),
-                "--certv5_query_atoms",
-                str(args.certv5_query_atoms),
-                "--certv5_temporal_bins",
-                str(args.certv5_temporal_bins),
-                "--certv5_coarse_bins",
-                str(args.certv5_coarse_bins),
-                "--certv5_spatial_bins",
-                str(args.certv5_spatial_bins),
-                "--certv5_candidate_multiplier",
-                str(args.certv5_candidate_multiplier),
-                "--certv5_query_weight",
-                str(args.certv5_query_weight),
-                "--certv5_track_threshold",
-                str(args.certv5_track_threshold),
-                "--certv5_spatial_penalty",
-                str(args.certv5_spatial_penalty),
-                "--certv5_metric_dim",
-                str(args.certv5_metric_dim),
-                "--certv5_frame_coverage_ratio",
-                str(args.certv5_frame_coverage_ratio),
-                "--certv5_query_threshold",
-                str(args.certv5_query_threshold),
-                "--certv5_query_per_atom",
-                str(args.certv5_query_per_atom),
-                "--certv5_whitening_strength",
-                str(args.certv5_whitening_strength),
-                "--certv5_quality_floor",
-                str(args.certv5_quality_floor),
-                "--certv5_appearance_weight",
-                str(args.certv5_appearance_weight),
-                "--certv5_temporal_weight",
-                str(args.certv5_temporal_weight),
-                "--certv5_motion_weight",
-                str(args.certv5_motion_weight),
-                "--certv5_event_weight",
-                str(args.certv5_event_weight),
-                "--certv5_spatial_weight",
-                str(args.certv5_spatial_weight),
-                "--certv5_instance_weight",
-                str(args.certv5_instance_weight),
-                "--certv5_query_axis_weight",
-                str(args.certv5_query_axis_weight),
-                "--certv5_spectral_ridge",
-                str(args.certv5_spectral_ridge),
-                "--certv5_spectral_rank_ratio",
-                str(args.certv5_spectral_rank_ratio),
-                "--certv5_tail_fraction",
-                str(args.certv5_tail_fraction),
-                "--certv5_tail_temperature",
-                str(args.certv5_tail_temperature),
-                "--certv5_spectral_refresh",
-                str(args.certv5_spectral_refresh),
-                "--certv5_dual_strength",
-                str(args.certv5_dual_strength),
-                "--certv5_mean_weight",
-                str(args.certv5_mean_weight),
-                "--certv5_motion_sector_threshold",
-                str(args.certv5_motion_sector_threshold),
-                "--certv5_fusion_alpha",
-                str(args.certv5_fusion_alpha),
-                "--certv5_assignment_temperature",
-                str(args.certv5_assignment_temperature),
-                "--certv5_transport_steps",
-                str(args.certv5_transport_steps),
-                "--certv5_transport_balance",
-                str(args.certv5_transport_balance),
-                "--certv5_max_scenes",
-                str(args.certv5_max_scenes),
-                "--certv5_scene_threshold",
-                str(args.certv5_scene_threshold),
-                "--certv5_min_scene_frames",
-                str(args.certv5_min_scene_frames),
-                "--certv5_motion_threshold",
-                str(args.certv5_motion_threshold),
-                "--certv5_motion_confidence_threshold",
-                str(args.certv5_motion_confidence_threshold),
-                "--certv5_motion_fusion_threshold",
-                str(args.certv5_motion_fusion_threshold),
-                "--certv5_router_strength",
-                str(args.certv5_router_strength),
+                "--certv5_ot_enabled" if args.certv5_ot_enabled else "--no-certv5_ot_enabled",
+                "--certv5_ot_topk",
+                str(args.certv5_ot_topk),
+                "--certv5_ot_temperature",
+                str(args.certv5_ot_temperature),
+                "--certv5_ot_steps",
+                str(args.certv5_ot_steps),
+                "--certv5_ot_capacity_tau",
+                str(args.certv5_ot_capacity_tau),
+                "--certv5_ot_prior_shrink",
+                str(args.certv5_ot_prior_shrink),
+                "--certv5_ot_live_fraction",
+                str(args.certv5_ot_live_fraction),
+                "--certv5_ot_cost_slack",
+                str(args.certv5_ot_cost_slack),
+                "--certv5_ot_temporal_penalty",
+                str(args.certv5_ot_temporal_penalty),
+                "--certv5_ot_max_displacement",
+                str(args.certv5_ot_max_displacement),
+                "--certv5_ot_min_cosine",
+                str(args.certv5_ot_min_cosine),
                 "--certv5_debug" if args.certv5_debug else "--no-certv5_debug",
                 "--prism_budget_uses_expansion" if args.prism_budget_uses_expansion else "--no-prism_budget_uses_expansion",
                 "--prism_metric_dim",
@@ -929,51 +860,17 @@ def main() -> None:
     parser.add_argument("--certv5_pruning_layer", type=int, default=28)
     parser.add_argument("--certv5_llm_retention_ratio", type=float, default=0.10)
     parser.add_argument("--certv5_budget_mode", default="layer_average", choices=["layer_average", "outer_only"])
-    parser.add_argument("--certv5_attention_policy", default="validated", choices=["validated", "strict", "off"])
-    parser.add_argument("--certv5_attention_eps", type=float, default=1e-6)
-    parser.add_argument("--certv5_certificate_budget_ratio", type=float, default=0.28)
-    parser.add_argument("--certv5_query_mode", default="certificates_and_spectral", choices=["certificates_only", "spectral_only", "certificates_and_spectral", "off"])
-    parser.add_argument("--certv5_spectral_protect_ratio", type=float, default=0.12)
-    parser.add_argument("--certv5_query_atoms", type=int, default=8)
-    parser.add_argument("--certv5_temporal_bins", type=int, default=12)
-    parser.add_argument("--certv5_coarse_bins", type=int, default=4)
-    parser.add_argument("--certv5_spatial_bins", type=int, default=3)
-    parser.add_argument("--certv5_candidate_multiplier", type=float, default=2.5)
-    parser.add_argument("--certv5_query_weight", type=float, default=0.18)
-    parser.add_argument("--certv5_track_threshold", type=float, default=0.82)
-    parser.add_argument("--certv5_spatial_penalty", type=float, default=0.08)
-    parser.add_argument("--certv5_metric_dim", type=int, default=96)
-    parser.add_argument("--certv5_frame_coverage_ratio", type=float, default=0.75)
-    parser.add_argument("--certv5_query_threshold", type=float, default=0.10)
-    parser.add_argument("--certv5_query_per_atom", type=int, default=1)
-    parser.add_argument("--certv5_whitening_strength", type=float, default=0.50)
-    parser.add_argument("--certv5_quality_floor", type=float, default=0.15)
-    parser.add_argument("--certv5_appearance_weight", type=float, default=0.46)
-    parser.add_argument("--certv5_temporal_weight", type=float, default=0.16)
-    parser.add_argument("--certv5_motion_weight", type=float, default=0.16)
-    parser.add_argument("--certv5_event_weight", type=float, default=0.10)
-    parser.add_argument("--certv5_spatial_weight", type=float, default=0.07)
-    parser.add_argument("--certv5_instance_weight", type=float, default=0.10)
-    parser.add_argument("--certv5_query_axis_weight", type=float, default=0.05)
-    parser.add_argument("--certv5_spectral_ridge", type=float, default=0.05)
-    parser.add_argument("--certv5_spectral_rank_ratio", type=float, default=0.60)
-    parser.add_argument("--certv5_tail_fraction", type=float, default=0.25)
-    parser.add_argument("--certv5_tail_temperature", type=float, default=0.15)
-    parser.add_argument("--certv5_spectral_refresh", type=int, default=4)
-    parser.add_argument("--certv5_dual_strength", type=float, default=0.20)
-    parser.add_argument("--certv5_mean_weight", type=float, default=0.10)
-    parser.add_argument("--certv5_motion_sector_threshold", type=float, default=0.24)
-    parser.add_argument("--certv5_fusion_alpha", type=float, default=0.10)
-    parser.add_argument("--certv5_assignment_temperature", type=float, default=0.07)
-    parser.add_argument("--certv5_transport_steps", type=int, default=4)
-    parser.add_argument("--certv5_transport_balance", type=float, default=0.20)
-    parser.add_argument("--certv5_max_scenes", type=int, default=8)
-    parser.add_argument("--certv5_scene_threshold", type=float, default=0.58)
-    parser.add_argument("--certv5_min_scene_frames", type=int, default=2)
-    parser.add_argument("--certv5_motion_threshold", type=float, default=0.42)
-    parser.add_argument("--certv5_motion_confidence_threshold", type=float, default=0.35)
-    parser.add_argument("--certv5_motion_fusion_threshold", type=float, default=0.45)
-    parser.add_argument("--certv5_router_strength", type=float, default=0.65)
+    parser.add_argument("--certv5_ot_enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv5_ot_topk", type=int, default=4)
+    parser.add_argument("--certv5_ot_temperature", type=float, default=0.07)
+    parser.add_argument("--certv5_ot_steps", type=int, default=6)
+    parser.add_argument("--certv5_ot_capacity_tau", type=float, default=0.10)
+    parser.add_argument("--certv5_ot_prior_shrink", type=float, default=0.10)
+    parser.add_argument("--certv5_ot_live_fraction", type=float, default=0.25)
+    parser.add_argument("--certv5_ot_cost_slack", type=float, default=0.05)
+    parser.add_argument("--certv5_ot_temporal_penalty", type=float, default=0.04)
+    parser.add_argument("--certv5_ot_max_displacement", type=float, default=0.12)
+    parser.add_argument("--certv5_ot_min_cosine", type=float, default=0.98)
     parser.add_argument("--certv5_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)

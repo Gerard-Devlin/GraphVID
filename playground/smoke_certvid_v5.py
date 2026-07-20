@@ -9,261 +9,204 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Unit tests only need the compression modules. Avoid importing model-specific
-# transformers hooks so the smoke can also run in a lightweight CPU env.
+# Compression tests do not need model-specific Transformers hooks.
 package = types.ModuleType("flashvid")
 package.__path__ = [str(REPO_ROOT / "flashvid")]
 sys.modules.setdefault("flashvid", package)
 
 import torch
 
-from flashvid.certvid import apply_certvid_plan
+from flashvid.certvid import CertVidPlan, apply_certvid_plan
 from flashvid.certvid_qwen3 import compress_certvid_deepstack
+from flashvid.certvid_v3 import certvid_v3_compression
 from flashvid.certvid_v5 import (
-    _CERTIFICATE_SHARES,
-    _CertificateRequest,
-    _admit_certificates,
-    _capped_entropic_tail_weights,
+    _recover_residual_plan,
     _resolve_budget,
-    _scene_pyramid,
-    _tail_risk_spectral_selection,
-    _tie_safe_rank_normalize,
-    _validated_attention,
     certvid_v5_compression,
 )
 from flashvid.configuration_flashvid import FlashVidConfig
 from flashvid.utils import flashvid_compression
 
 
-def _config(**overrides) -> FlashVidConfig:
-    values = dict(
-        retention_ratio=0.10,
-        expansion=1.25,
-        pruning_layer=20,
-        llm_retention_ratio=0.30,
-        compression_variant="certvid_v5",
-        certv5_num_hidden_layers=28,
-        certv5_inner_hook_enabled=True,
-        certv5_scene_threshold=0.30,
-        certv5_motion_threshold=0.0,
-        certv5_motion_confidence_threshold=0.0,
-    )
+def _config(**overrides: object) -> FlashVidConfig:
+    values: dict[str, object] = {
+        "retention_ratio": 0.10,
+        "expansion": 1.25,
+        "pruning_layer": 20,
+        "llm_retention_ratio": 0.30,
+        "compression_variant": "certvid_v5",
+        "certv3_budget_uses_expansion": True,
+        "certv5_budget_mode": "layer_average",
+        "certv5_num_hidden_layers": 28,
+        "certv5_inner_hook_enabled": True,
+        "H": 4,
+        "W": 4,
+    }
     values.update(overrides)
-    config = FlashVidConfig(**values)
-    config._certvid_attention_source = "manual_qk"
-    return config
+    return FlashVidConfig(**values)
 
 
-def test_attention_and_budget() -> None:
-    ranks, used, reason = _tie_safe_rank_normalize(torch.tensor([0.0, 0.0, 1.0, 1.0]))
-    assert used and reason == "validated"
-    assert ranks[0] == ranks[1] and ranks[2] == ranks[3]
+def _clone_plan(plan: CertVidPlan) -> CertVidPlan:
+    return CertVidPlan(
+        anchor_indices=plan.anchor_indices.clone(),
+        assignment_indices=plan.assignment_indices.clone(),
+        assignment_weights=plan.assignment_weights.clone(),
+        source_mass=plan.source_mass.clone(),
+        fusion_alpha=plan.fusion_alpha.clone(),
+        raw_token_count=plan.raw_token_count,
+    )
 
-    degenerate, used, reason = _tie_safe_rank_normalize(torch.ones(8))
-    assert not used and reason == "degenerate"
-    assert torch.count_nonzero(degenerate) == 0
 
-    config = _config()
-    normalized, diagnostics = _validated_attention(torch.randn(2, 4), 2, 4, config)
-    assert normalized.shape == (8,)
-    assert diagnostics["used"] and diagnostics["source"] == "manual_qk"
+def _assert_plan_equal(left: CertVidPlan, right: CertVidPlan) -> None:
+    assert left.raw_token_count == right.raw_token_count
+    assert torch.equal(left.anchor_indices, right.anchor_indices)
+    assert torch.equal(left.assignment_indices, right.assignment_indices)
+    assert torch.equal(left.assignment_weights, right.assignment_weights)
+    assert torch.equal(left.source_mass, right.source_mass)
+    assert torch.equal(left.fusion_alpha, right.fusion_alpha)
 
-    fallback_config = _config()
-    fallback_config._certvid_attention_source = "feature_norm"
-    fallback, diagnostics = _validated_attention(torch.randn(2, 4), 2, 4, fallback_config)
-    assert torch.count_nonzero(fallback) == 0
-    assert not diagnostics["used"]
 
-    for invalid in (torch.randn(8), torch.full((2, 4), float("nan"))):
-        try:
-            _validated_attention(invalid, 2, 4, config)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("invalid attention should be rejected")
-
-    budget, diagnostics = _resolve_budget(config, 2880)
+def test_budget_contract() -> None:
+    budget, diagnostics = _resolve_budget(_config(), 2880)
     assert budget == 360
     assert math.isclose(float(diagnostics["average_layer_multiplier"]), 1.0, abs_tol=1e-6)
 
-    qwen_config = _config(
+    qwen = _config(
         pruning_layer=28,
         llm_retention_ratio=0.10,
         certv5_num_hidden_layers=36,
     )
-    qwen_budget, diagnostics = _resolve_budget(qwen_config, 2880)
-    assert qwen_budget == 360
+    budget, diagnostics = _resolve_budget(qwen, 2880)
+    assert budget == 360
     assert math.isclose(float(diagnostics["average_layer_multiplier"]), 1.0, abs_tol=1e-6)
 
-    e130_config = _config(expansion=1.30, llm_retention_ratio=0.1923076923)
-    e130_budget, diagnostics = _resolve_budget(e130_config, 2880)
-    assert e130_budget == 374
+    e1275 = _config(expansion=1.275, llm_retention_ratio=0.2450980392)
+    _, diagnostics = _resolve_budget(e1275, 2880)
     assert math.isclose(float(diagnostics["average_layer_multiplier"]), 1.0, abs_tol=1e-6)
 
-    try:
-        _resolve_budget(_config(expansion=1.30, llm_retention_ratio=0.30), 2880)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("misaligned layer-average budget should be rejected")
+    e130 = _config(expansion=1.30, llm_retention_ratio=0.1923076923)
+    budget, diagnostics = _resolve_budget(e130, 2880)
+    assert budget == 374
+    assert math.isclose(float(diagnostics["average_layer_multiplier"]), 1.0, abs_tol=1e-6)
 
-
-def test_scene_pyramid_and_atomic_certificates() -> None:
-    frame_event = torch.tensor([0.0, 0.1, 0.92, 0.2, 0.88, 0.1, 0.84, 0.0])
-    scene_ids, fine_ids, coarse_ids, diagnostics = _scene_pyramid(
-        frame_event,
-        frame_count=8,
-        max_scenes=4,
-        boundary_threshold=0.50,
-        min_scene_frames=2,
-        fine_bins=8,
-        coarse_bins=4,
+    outer = _config(
+        expansion=1.0,
+        llm_retention_ratio=1.0,
+        certv5_budget_mode="outer_only",
+        certv5_inner_hook_enabled=False,
     )
-    assert diagnostics["boundaries"] == [2, 4, 6]
-    assert int(scene_ids.max()) + 1 == 4
-    assert int(fine_ids.max()) + 1 == 8
-    assert int(coarse_ids.max()) + 1 == 4
+    budget, diagnostics = _resolve_budget(outer, 2880)
+    assert budget == 288 and diagnostics["mode"] == "outer_only"
 
-    requests = [
-        _CertificateRequest("motion", "motion:0", (1, 2), 2.0),
-        _CertificateRequest("track", "track:0", (4, 9), 1.8),
-        _CertificateRequest("scene", "scene:0", (3,), 1.0),
-        _CertificateRequest("frame", "frame:0", (0,), 0.9),
-    ]
-    locked, diagnostics, _ = _admit_certificates(
-        requests,
-        budget=10,
-        budget_ratio=0.50,
-        shares=_CERTIFICATE_SHARES,
+    invalid = (
+        _config(expansion=1.30, llm_retention_ratio=0.30),
+        _config(certv5_inner_hook_enabled=False),
+        _config(certv5_budget_mode="outer_only"),
     )
-    locked_set = set(locked)
-    for pair in ({1, 2}, {4, 9}):
-        assert pair.issubset(locked_set) or pair.isdisjoint(locked_set)
-    assert len(locked) <= 5
-    assert diagnostics["admitted_unique"] == len(locked)
+    for config in invalid:
+        try:
+            _resolve_budget(config, 2880)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid V5 budget contract should be rejected")
 
 
-def test_tail_risk_recovers_weak_directions() -> None:
-    tied_weights = _capped_entropic_tail_weights(
-        torch.ones(4),
-        tail_fraction=0.25,
-        temperature=0.10,
-        ridge=0.05,
-    )
-    assert torch.allclose(tied_weights, torch.full((4,), 0.25))
-    ordered_weights = _capped_entropic_tail_weights(
-        torch.tensor([0.1, 0.2, 1.0, 2.0]),
-        tail_fraction=0.50,
-        temperature=0.10,
-        ridge=0.05,
-    )
-    assert math.isclose(float(ordered_weights.sum()), 1.0, abs_tol=1e-6)
-    assert float(ordered_weights.max()) <= 0.5 + 1e-6
-    assert ordered_weights[0] > ordered_weights[-1]
-
-    design = torch.tensor(
-        [
-            [1.0, 0.0, 0.0],
-            [0.8, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.8, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.8],
-        ]
-    )
-    candidates = torch.arange(6, dtype=torch.long)
-    groups = torch.arange(6, dtype=torch.long)
-    selected, diagnostics, tail_vectors, tail_weights = _tail_risk_spectral_selection(
-        design=design,
-        candidates=candidates,
-        demand_weight=torch.full((6,), 1.0 / 6.0),
-        quality=torch.ones(6),
-        locked=[0],
-        budget=3,
-        fine_temporal_ids=groups,
-        scene_ids=groups,
-        spatial_ids=groups,
-        motion_sectors=groups,
-        query_relevance=torch.empty((0, 6)),
-        atom_weights=torch.empty(0),
-        query_enabled=False,
-        tail_fraction=0.34,
-        tail_temperature=0.10,
-        ridge=0.05,
-        refresh_interval=1,
-        dual_strength=0.0,
-        mean_weight=0.0,
-    )
-    selected_set = set(selected.tolist())
-    assert 0 in selected_set
-    assert selected_set.intersection({2, 3})
-    assert selected_set.intersection({4, 5})
-    assert diagnostics["tail_cvar"] > 0.05
-    assert diagnostics["minimum_eigenvalue"] > 0.05
-    assert tail_vectors.shape == (3, 3)
-    assert tail_weights.shape == (3,)
-    assert math.isclose(float(tail_weights.sum()), 1.0, abs_tol=1e-6)
-
-
-def test_query_off_isolation() -> None:
+def test_ot_disabled_is_exact_v3() -> None:
     torch.manual_seed(31)
-    video = torch.randn(4, 9, 32)
-    attention = torch.randn(4, 9)
-    question = torch.randn(6, 32)
-    without_question, indices_without = certvid_v5_compression(
-        video,
-        attention,
-        _config(certv5_query_mode="off"),
-        None,
-    )
-    with_question, indices_with = certvid_v5_compression(
-        video,
-        attention,
-        _config(certv5_query_mode="off"),
-        question,
-    )
-    assert torch.equal(indices_without, indices_with)
-    assert torch.allclose(without_question, with_question)
+    video = torch.randn(8, 16, 48)
+    attention = torch.rand(8, 16)
+    question = torch.randn(9, 48)
+
+    v3_config = _config(compression_variant="certvid_v3")
+    v3_output, v3_indices = certvid_v3_compression(video, attention, v3_config, question)
+    v3_plan = _clone_plan(v3_config._certvid_plan)
+
+    v5_config = _config(certv5_ot_enabled=False)
+    v5_output, v5_indices = certvid_v5_compression(video, attention, v5_config, question)
+
+    assert torch.equal(v5_indices, v3_indices)
+    assert torch.equal(v5_output, v3_output)
+    _assert_plan_equal(v5_config._certvid_plan, v3_plan)
+    assert v5_config.last_certv5_diagnostics["v3_anchor_match"]
+    assert v5_config.last_certv5_diagnostics["transport"]["fallback_reason"] == "ot_disabled_exact_v3"
+    assert v5_config.last_adapter_variant == "certvid_v5"
 
 
-def test_integration() -> None:
-    torch.manual_seed(23)
+def test_residual_recovery_transport() -> None:
+    video = torch.zeros(2, 4, 32)
+    video[0, 0, :2] = torch.tensor([1.0, 0.0])
+    video[0, 1, :2] = torch.tensor([1.0, 0.02])
+    video[0, 2, :2] = torch.tensor([1.0, 0.01])
+    video[0, 3, :2] = torch.tensor([1.0, 0.03])
+    video[1, 0, :2] = torch.tensor([0.0, 1.0])
+    video[1, 1, :2] = torch.tensor([0.02, 1.0])
+    video[1, 2, :2] = torch.tensor([0.01, 1.0])
+    video[1, 3, :2] = torch.tensor([0.03, 1.0])
+
+    baseline = CertVidPlan(
+        anchor_indices=torch.tensor([0, 1, 4, 5]),
+        assignment_indices=torch.tensor([[0], [1], [0], [1], [2], [3], [2], [3]]),
+        assignment_weights=torch.ones(8, 1),
+        source_mass=torch.ones(8),
+        fusion_alpha=torch.tensor([0.0, 0.10, 0.0, 0.10]),
+        raw_token_count=8,
+    )
+    plan, diagnostics = _recover_residual_plan(
+        video_features=video,
+        baseline=baseline,
+        config=_config(certv5_ot_live_fraction=0.25),
+    )
+
+    assert not diagnostics["fallback"]
+    assert diagnostics["dead_mass_before"] > 0.0
+    assert diagnostics["dead_mass_after"] < diagnostics["dead_mass_before"]
+    assert diagnostics["rerouted_mass"] > 0.0
+    assert diagnostics["row_mass_error"] <= 1e-5
+    assert diagnostics["live_transport_fraction"] <= 0.25
+    assert diagnostics["max_cost_excess"] <= 0.05 + 1e-5
+    assert diagnostics["capacity_kl_after"] <= diagnostics["capacity_kl_before"] + 1e-5
+    assert diagnostics["max_relative_displacement"] <= 0.12 + 1e-5
+    assert diagnostics["min_output_anchor_cosine"] >= 0.98 - 1e-5
+    assert torch.equal(plan.anchor_indices, baseline.anchor_indices)
+    assert torch.allclose(plan.assignment_weights.sum(dim=1), torch.ones(8), atol=1e-6)
+    assert torch.all(plan.fusion_alpha <= baseline.fusion_alpha + 1e-7)
+    assert torch.equal(plan.fusion_alpha[baseline.fusion_alpha == 0.0], torch.zeros(2))
+
+    for anchor_position, source_index in enumerate(baseline.anchor_indices.tolist()):
+        assert int(plan.assignment_indices[source_index, 0]) == anchor_position
+        assert float(plan.assignment_weights[source_index, 0]) == 1.0
+
+
+def test_integration_and_deepstack() -> None:
+    torch.manual_seed(47)
     frame_count, tokens_per_frame, feature_dim = 8, 16, 48
     video = torch.randn(frame_count, tokens_per_frame, feature_dim)
-    # Add a controlled moving feature so directed correspondences are exercised.
-    for frame_idx in range(frame_count):
-        video[frame_idx, (frame_idx * 2) % tokens_per_frame, :8] += 6.0
-    attention = torch.randn(frame_count, tokens_per_frame)
-    question = torch.randn(7, feature_dim)
+    attention = torch.rand(frame_count, tokens_per_frame)
+    question = torch.randn(8, feature_dim)
+
+    v3_config = _config(compression_variant="certvid_v3")
+    _, v3_indices = certvid_v3_compression(video, attention, v3_config, question)
+    v3_plan = _clone_plan(v3_config._certvid_plan)
+
     config = _config()
-
     output, indices = certvid_v5_compression(video, attention, config, question)
-    target = round(frame_count * tokens_per_frame * 0.10 * 1.25)
-    assert output.shape == (target, feature_dim)
-    assert indices.numel() == target
-    assert torch.equal(indices, torch.sort(indices).values)
-    assert torch.unique(indices).numel() == target
-    assert torch.isfinite(output).all()
-
-    diagnostics = config.last_certv5_diagnostics
-    assert diagnostics["motion_pair_count"] > 0
-    assert diagnostics["certificates"]["ratio"] <= 0.28
-    assert diagnostics["scene_pyramid"]["fine_count"] == frame_count
-    assert 0.0 <= diagnostics["router"]["motion_activity"] <= 1.0
-    assert diagnostics["spectral_design"]["objective"] > 0.0
-    assert diagnostics["spectral_design"]["tail_cvar"] > 0.0
-    assert diagnostics["spectral_design"]["iterations"] >= 0
-    assert diagnostics["spectral_weights"]["appearance"] > 0.0
-    assert diagnostics["spectral_weights"]["instance"] > 0.0
-    assert "facility_location" not in diagnostics
-    assert "divide_and_conquer" not in diagnostics
-    assert "d_optimal" not in diagnostics
-    assert "logdet" not in diagnostics
-
     plan = config._certvid_plan
-    expected = apply_certvid_plan(video.reshape(-1, feature_dim), plan)
-    assert torch.allclose(output, expected)
-    assert torch.all((plan.fusion_alpha >= 0.0) & (plan.fusion_alpha <= 0.10 + 1e-6))
+    expected_tokens = round(frame_count * tokens_per_frame * 0.10 * 1.25)
+
+    assert output.shape == (expected_tokens, feature_dim)
+    assert torch.equal(indices, v3_indices)
+    assert torch.equal(indices, torch.sort(indices).values)
+    assert torch.unique(indices).numel() == expected_tokens
+    assert torch.isfinite(output).all()
+    assert torch.allclose(output, apply_certvid_plan(video.reshape(-1, feature_dim), plan))
+    assert torch.all(plan.fusion_alpha <= v3_plan.fusion_alpha + 1e-7)
+    assert torch.equal(
+        plan.fusion_alpha[v3_plan.fusion_alpha == 0.0],
+        torch.zeros_like(plan.fusion_alpha[v3_plan.fusion_alpha == 0.0]),
+    )
+    assert torch.allclose(plan.assignment_weights.sum(dim=1), torch.ones(frame_count * tokens_per_frame))
+    assert config.last_certv5_diagnostics["v3_anchor_match"]
 
     second_config = _config()
     second_output, second_indices = certvid_v5_compression(
@@ -273,25 +216,72 @@ def test_integration() -> None:
         question,
     )
     assert torch.equal(second_indices, indices)
-    assert torch.allclose(second_output, output)
+    assert torch.equal(second_output, output)
 
-    deepstack = [torch.randn(frame_count * tokens_per_frame, feature_dim) for _ in range(3)]
+    deepstack = [
+        torch.randn(frame_count * tokens_per_frame, 40),
+        torch.randn(frame_count * tokens_per_frame, 64),
+    ]
     compressed = compress_certvid_deepstack(deepstack, plan)
-    assert all(features.shape[0] == target for features in compressed)
+    assert [tuple(layer.shape) for layer in compressed] == [
+        (expected_tokens, 40),
+        (expected_tokens, 64),
+    ]
 
-    routed, routed_indices = flashvid_compression(video, attention, config, question)
-    assert routed.shape == output.shape
+    routed_config = _config()
+    routed, routed_indices = flashvid_compression(
+        video,
+        attention,
+        routed_config,
+        question,
+    )
     assert torch.equal(routed_indices, indices)
-    assert config.last_adapter_variant == "certvid_v5"
+    assert torch.equal(routed, output)
+    assert routed_config.last_adapter_variant == "certvid_v5"
+
+
+def test_all_public_rates_preserve_v3_anchors() -> None:
+    torch.manual_seed(67)
+    video = torch.randn(16, 72, 32)
+    attention = torch.rand(16, 72)
+    question = torch.randn(8, 32)
+    for rate in (0.10, 0.15, 0.20, 0.25):
+        v3_config = _config(
+            retention_ratio=rate,
+            compression_variant="certvid_v3",
+            H=8,
+            W=9,
+        )
+        _, v3_indices = certvid_v3_compression(video, attention, v3_config, question)
+        v3_plan = _clone_plan(v3_config._certvid_plan)
+
+        v5_config = _config(retention_ratio=rate, H=8, W=9)
+        output, indices = certvid_v5_compression(video, attention, v5_config, question)
+        plan = v5_config._certvid_plan
+        expected = int(v3_indices.numel())
+        assert output.shape == (expected, video.shape[-1])
+        assert torch.equal(indices, v3_indices)
+        assert torch.all(plan.fusion_alpha <= v3_plan.fusion_alpha + 1e-7)
+        assert torch.equal(
+            plan.fusion_alpha[v3_plan.fusion_alpha == 0.0],
+            torch.zeros_like(plan.fusion_alpha[v3_plan.fusion_alpha == 0.0]),
+        )
+        assert torch.allclose(plan.assignment_weights.sum(dim=1), torch.ones(1152), atol=1e-6)
+        assert torch.isfinite(output).all()
+        transport = v5_config.last_certv5_diagnostics["transport"]
+        assert not transport["fallback"]
+        assert transport["dead_mass_after"] < transport["dead_mass_before"]
+        assert transport["max_cost_excess"] <= 0.05 + 1e-5
+        assert transport["capacity_kl_after"] <= transport["capacity_kl_before"] + 1e-5
 
 
 def main() -> None:
-    test_attention_and_budget()
-    test_scene_pyramid_and_atomic_certificates()
-    test_tail_risk_recovers_weak_directions()
-    test_query_off_isolation()
-    test_integration()
-    print("CertVID V5 smoke tests passed.")
+    test_budget_contract()
+    test_ot_disabled_is_exact_v3()
+    test_residual_recovery_transport()
+    test_integration_and_deepstack()
+    test_all_public_rates_preserve_v3_anchors()
+    print("CertVID V5 V3-anchor residual-recovery smoke passed")
 
 
 if __name__ == "__main__":

@@ -190,51 +190,17 @@ class BenchmarkArgs:
     certv4_assignment_temperature: float = field(default=0.07)
     certv4_debug: bool = field(default=False)
     certv5_budget_mode: str = field(default="layer_average")
-    certv5_attention_policy: str = field(default="validated")
-    certv5_attention_eps: float = field(default=1e-6)
-    certv5_certificate_budget_ratio: float = field(default=0.28)
-    certv5_query_mode: str = field(default="certificates_and_spectral")
-    certv5_spectral_protect_ratio: float = field(default=0.12)
-    certv5_query_atoms: int = field(default=8)
-    certv5_temporal_bins: int = field(default=12)
-    certv5_coarse_bins: int = field(default=4)
-    certv5_spatial_bins: int = field(default=3)
-    certv5_candidate_multiplier: float = field(default=2.5)
-    certv5_query_weight: float = field(default=0.18)
-    certv5_track_threshold: float = field(default=0.82)
-    certv5_spatial_penalty: float = field(default=0.08)
-    certv5_metric_dim: int = field(default=96)
-    certv5_frame_coverage_ratio: float = field(default=0.75)
-    certv5_query_threshold: float = field(default=0.10)
-    certv5_query_per_atom: int = field(default=1)
-    certv5_whitening_strength: float = field(default=0.50)
-    certv5_quality_floor: float = field(default=0.15)
-    certv5_appearance_weight: float = field(default=0.46)
-    certv5_temporal_weight: float = field(default=0.16)
-    certv5_motion_weight: float = field(default=0.16)
-    certv5_event_weight: float = field(default=0.10)
-    certv5_spatial_weight: float = field(default=0.07)
-    certv5_instance_weight: float = field(default=0.10)
-    certv5_query_axis_weight: float = field(default=0.05)
-    certv5_spectral_ridge: float = field(default=0.05)
-    certv5_spectral_rank_ratio: float = field(default=0.60)
-    certv5_tail_fraction: float = field(default=0.25)
-    certv5_tail_temperature: float = field(default=0.15)
-    certv5_spectral_refresh: int = field(default=4)
-    certv5_dual_strength: float = field(default=0.20)
-    certv5_mean_weight: float = field(default=0.10)
-    certv5_motion_sector_threshold: float = field(default=0.24)
-    certv5_fusion_alpha: float = field(default=0.10)
-    certv5_assignment_temperature: float = field(default=0.07)
-    certv5_transport_steps: int = field(default=4)
-    certv5_transport_balance: float = field(default=0.20)
-    certv5_max_scenes: int = field(default=8)
-    certv5_scene_threshold: float = field(default=0.58)
-    certv5_min_scene_frames: int = field(default=2)
-    certv5_motion_threshold: float = field(default=0.42)
-    certv5_motion_confidence_threshold: float = field(default=0.35)
-    certv5_motion_fusion_threshold: float = field(default=0.45)
-    certv5_router_strength: float = field(default=0.65)
+    certv5_ot_enabled: bool = field(default=True)
+    certv5_ot_topk: int = field(default=4)
+    certv5_ot_temperature: float = field(default=0.07)
+    certv5_ot_steps: int = field(default=6)
+    certv5_ot_capacity_tau: float = field(default=0.10)
+    certv5_ot_prior_shrink: float = field(default=0.10)
+    certv5_ot_live_fraction: float = field(default=0.25)
+    certv5_ot_cost_slack: float = field(default=0.05)
+    certv5_ot_temporal_penalty: float = field(default=0.04)
+    certv5_ot_max_displacement: float = field(default=0.12)
+    certv5_ot_min_cosine: float = field(default=0.98)
     certv5_debug: bool = field(default=False)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
@@ -1211,6 +1177,7 @@ def _get_visual_token_metrics(model, raw_visual_tokens: int, use_acceleration: b
 
 def _get_certv4_metrics(model) -> dict[str, float | None]:
     names = (
+        "v3_anchor_match",
         "target_tokens",
         "post_inner_tokens",
         "average_layer_tokens",
@@ -1250,18 +1217,21 @@ def _get_certv5_metrics(model) -> dict[str, float | None]:
         "outer_retention",
         "post_inner_retention",
         "average_layer_multiplier",
-        "certificate_count",
-        "candidate_tokens",
-        "spectral_objective",
-        "tail_cvar",
-        "minimum_eigenvalue",
-        "spectral_iterations",
-        "spectral_protected_count",
-        "attention_used",
-        "scene_count",
-        "motion_activity",
-        "event_activity",
-        "motion_pair_count",
+        "dead_mass_before",
+        "dead_mass_after",
+        "rerouted_mass",
+        "transported_mass",
+        "transport_cost",
+        "max_cost_excess",
+        "v3_capacity_kl",
+        "capacity_kl_before",
+        "capacity_kl_after",
+        "load_cv_before",
+        "load_cv_after",
+        "trust_region_clipped_count",
+        "max_relative_displacement",
+        "min_output_anchor_cosine",
+        "fallback_count",
     )
     output = {f"certv5_{name}": None for name in names}
     if not hasattr(model, "flashvid_config"):
@@ -2527,51 +2497,17 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv4_assignment_temperature=args.certv4_assignment_temperature,
         certv4_debug=args.certv4_debug,
         certv5_budget_mode=args.certv5_budget_mode,
-        certv5_attention_policy=args.certv5_attention_policy,
-        certv5_attention_eps=args.certv5_attention_eps,
-        certv5_certificate_budget_ratio=args.certv5_certificate_budget_ratio,
-        certv5_query_mode=args.certv5_query_mode,
-        certv5_spectral_protect_ratio=args.certv5_spectral_protect_ratio,
-        certv5_query_atoms=args.certv5_query_atoms,
-        certv5_temporal_bins=args.certv5_temporal_bins,
-        certv5_coarse_bins=args.certv5_coarse_bins,
-        certv5_spatial_bins=args.certv5_spatial_bins,
-        certv5_candidate_multiplier=args.certv5_candidate_multiplier,
-        certv5_query_weight=args.certv5_query_weight,
-        certv5_track_threshold=args.certv5_track_threshold,
-        certv5_spatial_penalty=args.certv5_spatial_penalty,
-        certv5_metric_dim=args.certv5_metric_dim,
-        certv5_frame_coverage_ratio=args.certv5_frame_coverage_ratio,
-        certv5_query_threshold=args.certv5_query_threshold,
-        certv5_query_per_atom=args.certv5_query_per_atom,
-        certv5_whitening_strength=args.certv5_whitening_strength,
-        certv5_quality_floor=args.certv5_quality_floor,
-        certv5_appearance_weight=args.certv5_appearance_weight,
-        certv5_temporal_weight=args.certv5_temporal_weight,
-        certv5_motion_weight=args.certv5_motion_weight,
-        certv5_event_weight=args.certv5_event_weight,
-        certv5_spatial_weight=args.certv5_spatial_weight,
-        certv5_instance_weight=args.certv5_instance_weight,
-        certv5_query_axis_weight=args.certv5_query_axis_weight,
-        certv5_spectral_ridge=args.certv5_spectral_ridge,
-        certv5_spectral_rank_ratio=args.certv5_spectral_rank_ratio,
-        certv5_tail_fraction=args.certv5_tail_fraction,
-        certv5_tail_temperature=args.certv5_tail_temperature,
-        certv5_spectral_refresh=args.certv5_spectral_refresh,
-        certv5_dual_strength=args.certv5_dual_strength,
-        certv5_mean_weight=args.certv5_mean_weight,
-        certv5_motion_sector_threshold=args.certv5_motion_sector_threshold,
-        certv5_fusion_alpha=args.certv5_fusion_alpha,
-        certv5_assignment_temperature=args.certv5_assignment_temperature,
-        certv5_transport_steps=args.certv5_transport_steps,
-        certv5_transport_balance=args.certv5_transport_balance,
-        certv5_max_scenes=args.certv5_max_scenes,
-        certv5_scene_threshold=args.certv5_scene_threshold,
-        certv5_min_scene_frames=args.certv5_min_scene_frames,
-        certv5_motion_threshold=args.certv5_motion_threshold,
-        certv5_motion_confidence_threshold=args.certv5_motion_confidence_threshold,
-        certv5_motion_fusion_threshold=args.certv5_motion_fusion_threshold,
-        certv5_router_strength=args.certv5_router_strength,
+        certv5_ot_enabled=args.certv5_ot_enabled,
+        certv5_ot_topk=args.certv5_ot_topk,
+        certv5_ot_temperature=args.certv5_ot_temperature,
+        certv5_ot_steps=args.certv5_ot_steps,
+        certv5_ot_capacity_tau=args.certv5_ot_capacity_tau,
+        certv5_ot_prior_shrink=args.certv5_ot_prior_shrink,
+        certv5_ot_live_fraction=args.certv5_ot_live_fraction,
+        certv5_ot_cost_slack=args.certv5_ot_cost_slack,
+        certv5_ot_temporal_penalty=args.certv5_ot_temporal_penalty,
+        certv5_ot_max_displacement=args.certv5_ot_max_displacement,
+        certv5_ot_min_cosine=args.certv5_ot_min_cosine,
         certv5_debug=args.certv5_debug,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
