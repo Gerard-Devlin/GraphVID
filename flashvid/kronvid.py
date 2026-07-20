@@ -47,6 +47,8 @@ class KronSegmentPlan:
     node_weights: torch.Tensor
     system_cholesky: Optional[torch.Tensor]
     identity_rho: float
+    max_relative_displacement: float
+    min_anchor_cosine: float
     pure_pruning: bool
 
 
@@ -144,24 +146,105 @@ def _fixed_projection(
     output_dim: int,
     seed: int,
 ) -> torch.Tensor:
-    flat = features.float()
-    centered = flat - flat.mean(dim=0, keepdim=True)
-    output_dim = max(8, min(int(output_dim), int(centered.shape[1])))
+    flat = torch.nan_to_num(features.float(), nan=0.0, posinf=0.0, neginf=0.0)
+    # Per-token normalization avoids making one video's global mean an implicit
+    # and unstable part of the metric while retaining fixed random projection.
+    normalized = F.layer_norm(flat, (flat.shape[-1],))
+    normalized = F.normalize(normalized, p=2, dim=-1, eps=1e-6)
+    output_dim = max(8, min(int(output_dim), int(normalized.shape[1])))
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
     projection = torch.randn(
-        (centered.shape[1], output_dim),
+        (normalized.shape[1], output_dim),
         generator=generator,
         dtype=torch.float32,
         device="cpu",
     ) / math.sqrt(float(output_dim))
-    projected = centered @ projection.to(centered.device)
+    projected = normalized @ projection.to(normalized.device)
     return F.normalize(
         torch.nan_to_num(projected, nan=0.0, posinf=0.0, neginf=0.0),
         p=2,
         dim=-1,
         eps=1e-6,
     )
+
+
+def _safe_unit_scale(values: torch.Tensor) -> torch.Tensor:
+    values = torch.nan_to_num(values.float(), nan=0.0, posinf=0.0, neginf=0.0)
+    if values.numel() == 0:
+        return values
+    lower = values.amin()
+    upper = values.amax()
+    if float((upper - lower).item()) <= 1e-8:
+        return torch.zeros_like(values)
+    return ((values - lower) / (upper - lower)).clamp_(0.0, 1.0)
+
+
+def _validated_attention(
+    cls_attention: torch.Tensor,
+    total_tokens: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, bool]:
+    if cls_attention is None or cls_attention.numel() != total_tokens:
+        return torch.zeros(total_tokens, dtype=torch.float32, device=device), False
+    raw = cls_attention.detach().to(device=device, dtype=torch.float32).reshape(-1)
+    if not bool(torch.isfinite(raw).all()):
+        return torch.zeros(total_tokens, dtype=torch.float32, device=device), False
+    if float((raw.amax() - raw.amin()).item()) <= 1e-6:
+        return torch.zeros_like(raw), False
+    return _safe_unit_scale(raw), True
+
+
+def _question_metric_axes(
+    question_features: Optional[torch.Tensor],
+    visual_metric: torch.Tensor,
+    config: FlashVidConfig,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    max_atoms = max(0, _cfg_int(config, "kron_query_atoms", 6))
+    if question_features is None or question_features.numel() == 0 or max_atoms == 0:
+        return (
+            visual_metric.new_empty((visual_metric.shape[0], 0)),
+            visual_metric.new_zeros(visual_metric.shape[0]),
+            0,
+        )
+    question = question_features.reshape(-1, question_features.shape[-1])
+    projected = _fixed_projection(
+        question,
+        _cfg_int(config, "kron_metric_dim", 128),
+        _cfg_int(config, "kron_projection_seed", 17),
+    ).to(visual_metric.device)
+    if projected.shape[1] != visual_metric.shape[1] or projected.shape[0] == 0:
+        return (
+            visual_metric.new_empty((visual_metric.shape[0], 0)),
+            visual_metric.new_zeros(visual_metric.shape[0]),
+            0,
+        )
+
+    atom_count = min(max_atoms, int(projected.shape[0]))
+    center = F.normalize(projected.mean(dim=0), p=2, dim=0, eps=1e-6)
+    selected = [int(torch.argmax(projected @ center).item())]
+    min_distance = 1.0 - projected @ projected[selected[0]]
+    for _ in range(1, atom_count):
+        min_distance[selected] = -1.0
+        next_index = int(torch.argmax(min_distance).item())
+        if float(min_distance[next_index].item()) <= 1e-4:
+            break
+        selected.append(next_index)
+        min_distance = torch.minimum(
+            min_distance,
+            1.0 - projected @ projected[next_index],
+        )
+    atoms = projected[
+        torch.tensor(selected, dtype=torch.long, device=projected.device)
+    ]
+    raw_relevance = visual_metric @ atoms.transpose(0, 1)
+    axes = torch.stack(
+        [_safe_unit_scale(raw_relevance[:, column]) for column in range(raw_relevance.shape[1])],
+        dim=1,
+    )
+    query_score = axes.topk(k=min(2, axes.shape[1]), dim=1).values.mean(dim=1)
+    axes = F.normalize(axes, p=2, dim=1, eps=1e-6)
+    return axes, query_score, int(atoms.shape[0])
 
 
 def _token_coordinates(
@@ -200,30 +283,41 @@ def _augmented_features(
     video_features: torch.Tensor,
     coordinates: torch.Tensor,
     config: FlashVidConfig,
-) -> torch.Tensor:
+    question_features: Optional[torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
     visual = _fixed_projection(
         video_features.reshape(-1, video_features.shape[-1]),
-        _cfg_int(config, "kron_metric_dim", 64),
+        _cfg_int(config, "kron_metric_dim", 128),
         _cfg_int(config, "kron_projection_seed", 17),
     )
     position = _position_fourier(
         coordinates,
         _cfg_int(config, "kron_position_frequencies", 3),
     )
-    position_weight = min(0.75, max(0.0, _cfg_float(config, "kron_position_weight", 0.20)))
-    visual_weight = max(1e-6, 1.0 - position_weight)
-    return F.normalize(
-        torch.cat(
-            [
-                visual * math.sqrt(visual_weight),
-                position * math.sqrt(max(position_weight, 1e-6)),
-            ],
-            dim=1,
-        ),
+    query_axes, query_score, query_atom_count = _question_metric_axes(
+        question_features,
+        visual,
+        config,
+    )
+    position_weight = min(0.75, max(0.0, _cfg_float(config, "kron_position_weight", 0.10)))
+    query_axis_weight = min(
+        0.35,
+        max(0.0, _cfg_float(config, "kron_query_axis_weight", 0.12)),
+    ) if query_axes.numel() > 0 else 0.0
+    visual_weight = max(1e-6, 1.0 - position_weight - query_axis_weight)
+    parts = [
+        visual * math.sqrt(visual_weight),
+        position * math.sqrt(max(position_weight, 1e-6)),
+    ]
+    if query_axes.numel() > 0 and query_axis_weight > 0.0:
+        parts.append(query_axes * math.sqrt(query_axis_weight))
+    augmented = F.normalize(
+        torch.cat(parts, dim=1),
         p=2,
         dim=-1,
         eps=1e-6,
     )
+    return augmented, visual, query_score, query_atom_count
 
 
 def _segment_ranges(frame_count: int, segment_count: int) -> list[tuple[int, int]]:
@@ -323,12 +417,72 @@ def _ridge_leverage_scores(features: torch.Tensor, relative_ridge: float) -> tor
     return torch.nan_to_num((features.float() * solution).sum(dim=1), nan=0.0).clamp_min_(0.0)
 
 
+def _temporal_novelty(
+    visual_metric: torch.Tensor,
+    frame_ids: torch.Tensor,
+) -> torch.Tensor:
+    novelty = torch.zeros(
+        visual_metric.shape[0],
+        dtype=torch.float32,
+        device=visual_metric.device,
+    )
+    frames = torch.unique(frame_ids, sorted=True)
+    for left_frame, right_frame in zip(frames[:-1].tolist(), frames[1:].tolist()):
+        left = torch.where(frame_ids == int(left_frame))[0]
+        right = torch.where(frame_ids == int(right_frame))[0]
+        if left.numel() == 0 or left.numel() != right.numel():
+            continue
+        change = (1.0 - (visual_metric[left] * visual_metric[right]).sum(dim=1)).clamp_min_(0.0)
+        novelty[left] = torch.maximum(novelty[left], change)
+        novelty[right] = torch.maximum(novelty[right], change)
+    return _safe_unit_scale(novelty)
+
+
 def _select_anchors(
     leverage: torch.Tensor,
+    metric_features: torch.Tensor,
     frame_ids: torch.Tensor,
+    attention: torch.Tensor,
+    query_score: torch.Tensor,
     budget: int,
     frame_floor: bool,
-) -> torch.Tensor:
+    novelty_weight: float,
+    attention_weight: float,
+    query_weight: float,
+    coverage_weight: float,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    if budget <= 0:
+        return leverage.new_empty((0,), dtype=torch.long), {
+            "selected_leverage": 0.0,
+            "selected_novelty": 0.0,
+            "selected_attention": 0.0,
+            "selected_query": 0.0,
+            "selected_pairwise_similarity": 0.0,
+        }
+    normalized_metric = F.normalize(metric_features.float(), p=2, dim=1, eps=1e-6)
+    leverage_score = _safe_unit_scale(leverage).sqrt()
+    novelty = _temporal_novelty(normalized_metric, frame_ids)
+    attention = _safe_unit_scale(attention)
+    query_score = _safe_unit_scale(query_score)
+    novelty_weight = min(0.35, max(0.0, float(novelty_weight)))
+    attention_weight = min(0.40, max(0.0, float(attention_weight)))
+    query_weight = min(0.30, max(0.0, float(query_weight)))
+    weight_sum = novelty_weight + attention_weight + query_weight
+    if weight_sum > 0.70:
+        scale = 0.70 / weight_sum
+        novelty_weight *= scale
+        attention_weight *= scale
+        query_weight *= scale
+        weight_sum = 0.70
+    leverage_weight = 1.0 - weight_sum
+    boundary_score = (
+        leverage_weight * leverage_score
+        + novelty_weight * novelty
+        + attention_weight * attention
+        + query_weight * query_score
+    )
+    coverage_weight = min(0.60, max(0.0, float(coverage_weight)))
+
     selected: list[int] = []
     selected_set: set[int] = set()
     unique_frames = torch.unique(frame_ids, sorted=True)
@@ -342,23 +496,72 @@ def _select_anchors(
             members = torch.where(frame_ids == int(frame_id))[0]
             if members.numel() == 0:
                 continue
-            ranked = torch.argsort(leverage[members], descending=True, stable=True)
+            ranked = torch.argsort(boundary_score[members], descending=True, stable=True)
             token = int(members[ranked[0]].item())
             selected.append(token)
             selected_set.add(token)
             if len(selected) >= budget:
                 break
 
-    ranked = torch.argsort(leverage, descending=True, stable=True)
-    for token in ranked.tolist():
-        token = int(token)
-        if token in selected_set:
-            continue
+    selected_mask = torch.zeros(
+        leverage.shape[0],
+        dtype=torch.bool,
+        device=leverage.device,
+    )
+    if selected:
+        selected_mask[
+            torch.tensor(selected, dtype=torch.long, device=leverage.device)
+        ] = True
+        selected_tensor = torch.where(selected_mask)[0]
+        max_similarity = (
+            normalized_metric @ normalized_metric[selected_tensor].transpose(0, 1)
+        ).amax(dim=1)
+    else:
+        max_similarity = torch.full_like(leverage_score, -1.0)
+
+    while len(selected) < budget:
+        conditional_coverage = ((1.0 - max_similarity) * 0.5).clamp_(0.0, 1.0)
+        priority = (
+            (1.0 - coverage_weight) * boundary_score
+            + coverage_weight * conditional_coverage
+        )
+        priority[selected_mask] = -torch.inf
+        token = int(torch.argmax(priority).item())
+        if selected_mask[token]:
+            break
         selected.append(token)
         selected_set.add(token)
-        if len(selected) >= budget:
-            break
-    return torch.tensor(sorted(selected), dtype=torch.long, device=leverage.device)
+        selected_mask[token] = True
+        similarity = normalized_metric @ normalized_metric[token]
+        max_similarity = torch.maximum(max_similarity, similarity)
+
+    if len(selected) != budget:
+        raise RuntimeError(f"KronVID selected {len(selected)} anchors, expected {budget}")
+    selected_tensor = torch.tensor(
+        sorted(selected),
+        dtype=torch.long,
+        device=leverage.device,
+    )
+    selected_metric = normalized_metric[selected_tensor]
+    if selected_metric.shape[0] > 1:
+        pairwise = selected_metric @ selected_metric.transpose(0, 1)
+        upper = torch.triu_indices(
+            pairwise.shape[0],
+            pairwise.shape[1],
+            offset=1,
+            device=pairwise.device,
+        )
+        mean_pairwise = float(pairwise[upper[0], upper[1]].mean().item())
+    else:
+        mean_pairwise = 0.0
+    diagnostics = {
+        "selected_leverage": float(leverage_score[selected_tensor].mean().item()),
+        "selected_novelty": float(novelty[selected_tensor].mean().item()),
+        "selected_attention": float(attention[selected_tensor].mean().item()),
+        "selected_query": float(query_score[selected_tensor].mean().item()),
+        "selected_pairwise_similarity": mean_pairwise,
+    }
+    return selected_tensor, diagnostics
 
 
 def _offer_edges(
@@ -628,7 +831,15 @@ def _build_segment_plan(
     if merge_mode not in {"galerkin", "prune"}:
         raise ValueError(f"unsupported kron_merge_mode={merge_mode!r}")
     pure_pruning = merge_mode == "prune"
-    identity_rho = max(0.0, _cfg_float(config, "kron_identity_rho", 4.0))
+    identity_rho = max(0.0, _cfg_float(config, "kron_identity_rho", 12.0))
+    max_relative_displacement = min(
+        0.50,
+        max(0.0, _cfg_float(config, "kron_max_displacement", 0.08)),
+    )
+    min_anchor_cosine = min(
+        1.0,
+        max(-1.0, _cfg_float(config, "kron_min_cosine", 0.995)),
+    )
     node_weights = degree / degree.sum().clamp_min(1e-8) * float(anchor_indices.numel())
     system_cholesky: Optional[torch.Tensor] = None
     galerkin_fallback = False
@@ -652,6 +863,8 @@ def _build_segment_plan(
         node_weights=node_weights,
         system_cholesky=system_cholesky,
         identity_rho=identity_rho,
+        max_relative_displacement=max_relative_displacement,
+        min_anchor_cosine=min_anchor_cosine,
         pure_pruning=pure_pruning,
     )
     diagnostics = {
@@ -662,6 +875,35 @@ def _build_segment_plan(
         "galerkin_fallback": float(galerkin_fallback),
     }
     return plan, diagnostics
+
+
+def _anchor_trust_region(
+    compressed: torch.Tensor,
+    anchors: torch.Tensor,
+    max_relative_displacement: float,
+    min_anchor_cosine: float,
+) -> torch.Tensor:
+    if max_relative_displacement <= 0.0:
+        return anchors
+    delta = compressed.float() - anchors.float()
+    anchor_norm = anchors.float().norm(dim=1, keepdim=True).clamp_min(1e-6)
+    delta_norm = delta.norm(dim=1, keepdim=True).clamp_min(1e-8)
+    cap = anchor_norm * float(max_relative_displacement)
+    delta = delta * torch.minimum(torch.ones_like(delta_norm), cap / delta_norm)
+    scale = torch.ones(
+        (anchors.shape[0], 1),
+        dtype=torch.float32,
+        device=anchors.device,
+    )
+    candidate = anchors.float() + delta
+    for _ in range(8):
+        cosine = F.cosine_similarity(candidate, anchors.float(), dim=1, eps=1e-6)
+        invalid = cosine < float(min_anchor_cosine)
+        if not bool(invalid.any()):
+            break
+        scale[invalid] *= 0.5
+        candidate = anchors.float() + delta * scale
+    return candidate
 
 
 def apply_kronvid_plan(flat_features: torch.Tensor, plan: KronVidPlan) -> torch.Tensor:
@@ -694,6 +936,12 @@ def apply_kronvid_plan(flat_features: torch.Tensor, plan: KronVidPlan) -> torch.
                 rhs,
                 segment.system_cholesky.to(flat_features.device, torch.float32),
             )
+            compressed = _anchor_trust_region(
+                compressed,
+                anchors,
+                segment.max_relative_displacement,
+                segment.min_anchor_cosine,
+            )
         output[output_positions] = compressed
     return torch.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0).to(flat_features.dtype)
 
@@ -718,7 +966,6 @@ def kronvid_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    del cls_attention, question_features
     if video_features.ndim != 3:
         raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
     frame_count, tokens_per_frame, _ = video_features.shape
@@ -738,6 +985,8 @@ def kronvid_compression(
             node_weights=torch.ones(total_tokens, dtype=torch.float32, device=video_features.device),
             system_cholesky=None,
             identity_rho=0.0,
+            max_relative_displacement=0.0,
+            min_anchor_cosine=1.0,
             pure_pruning=True,
         )
         plan = KronVidPlan(indices, (segment,), total_tokens)
@@ -760,7 +1009,17 @@ def kronvid_compression(
             width,
             video_features.device,
         )
-        augmented = _augmented_features(video_features, coordinates, flashvid_config)
+        augmented, visual_metric, query_score, query_atom_count = _augmented_features(
+            video_features,
+            coordinates,
+            flashvid_config,
+            question_features,
+        )
+        attention, attention_valid = _validated_attention(
+            cls_attention,
+            total_tokens,
+            video_features.device,
+        )
         requested_segments = _cfg_int(flashvid_config, "kron_temporal_segments", 8)
         ranges = _segment_ranges(frame_count, min(requested_segments, budget))
         segment_sources: list[torch.Tensor] = []
@@ -786,18 +1045,27 @@ def kronvid_compression(
         )
 
         segment_anchors: list[torch.Tensor] = []
+        selection_diagnostics: list[dict[str, float]] = []
         for source_indices, segment_budget in zip(segment_sources, allocations):
             leverage = _ridge_leverage_scores(
                 augmented[source_indices],
                 _cfg_float(flashvid_config, "kron_leverage_ridge", 0.10),
             )
-            local_selected = _select_anchors(
+            local_selected, local_diagnostics = _select_anchors(
                 leverage,
+                visual_metric[source_indices],
                 frame_ids[source_indices],
+                attention[source_indices],
+                query_score[source_indices],
                 segment_budget,
                 bool(getattr(flashvid_config, "kron_frame_floor", True)),
+                _cfg_float(flashvid_config, "kron_novelty_weight", 0.15),
+                _cfg_float(flashvid_config, "kron_attention_weight", 0.24),
+                _cfg_float(flashvid_config, "kron_query_weight", 0.16),
+                _cfg_float(flashvid_config, "kron_coverage_weight", 0.28),
             )
             segment_anchors.append(source_indices[local_selected])
+            selection_diagnostics.append(local_diagnostics)
         anchor_indices = torch.sort(torch.cat(segment_anchors, dim=0)).values
         if int(anchor_indices.numel()) != budget or int(torch.unique(anchor_indices).numel()) != budget:
             raise RuntimeError("KronVID anchor selection violated the exact unique-token budget")
@@ -852,6 +1120,30 @@ def kronvid_compression(
             "galerkin_fallback_count": float(galerkin_fallbacks),
             "mean_anchor_cosine": float(cosine.mean().item()),
             "max_relative_displacement": float(displacement.max().item()),
+            "attention_valid": float(attention_valid),
+            "query_atom_count": float(query_atom_count),
+            "selected_leverage": float(
+                sum(item["selected_leverage"] for item in selection_diagnostics)
+                / max(1, len(selection_diagnostics))
+            ),
+            "selected_novelty": float(
+                sum(item["selected_novelty"] for item in selection_diagnostics)
+                / max(1, len(selection_diagnostics))
+            ),
+            "selected_attention": float(
+                sum(item["selected_attention"] for item in selection_diagnostics)
+                / max(1, len(selection_diagnostics))
+            ),
+            "selected_query": float(
+                sum(item["selected_query"] for item in selection_diagnostics)
+                / max(1, len(selection_diagnostics))
+            ),
+            "selected_pairwise_similarity": float(
+                sum(
+                    item["selected_pairwise_similarity"]
+                    for item in selection_diagnostics
+                ) / max(1, len(selection_diagnostics))
+            ),
         }
 
     setattr(flashvid_config, "_kronvid_plan", plan)

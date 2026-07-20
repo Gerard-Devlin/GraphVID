@@ -590,6 +590,18 @@ def _build_command(
                 str(args.kron_position_frequencies),
                 "--kron_position_weight",
                 str(args.kron_position_weight),
+                "--kron_query_atoms",
+                str(args.kron_query_atoms),
+                "--kron_query_axis_weight",
+                str(args.kron_query_axis_weight),
+                "--kron_novelty_weight",
+                str(args.kron_novelty_weight),
+                "--kron_attention_weight",
+                str(args.kron_attention_weight),
+                "--kron_query_weight",
+                str(args.kron_query_weight),
+                "--kron_coverage_weight",
+                str(args.kron_coverage_weight),
                 "--kron_temporal_segments",
                 str(args.kron_temporal_segments),
                 "--kron_segment_floor_ratio",
@@ -619,6 +631,10 @@ def _build_command(
                 str(args.kron_merge_mode),
                 "--kron_identity_rho",
                 str(args.kron_identity_rho),
+                "--kron_max_displacement",
+                str(args.kron_max_displacement),
+                "--kron_min_cosine",
+                str(args.kron_min_cosine),
                 "--kron_debug" if args.kron_debug else "--no-kron_debug",
                 "--prism_budget_uses_expansion" if args.prism_budget_uses_expansion else "--no-prism_budget_uses_expansion",
                 "--prism_metric_dim",
@@ -921,10 +937,16 @@ def main() -> None:
     parser.add_argument("--kron_pruning_layer", type=int, default=28)
     parser.add_argument("--kron_llm_retention_ratio", type=float, default=0.10)
     parser.add_argument("--kron_budget_mode", default="layer_average", choices=["layer_average", "outer_only"])
-    parser.add_argument("--kron_metric_dim", type=int, default=64)
+    parser.add_argument("--kron_metric_dim", type=int, default=128)
     parser.add_argument("--kron_projection_seed", type=int, default=17)
     parser.add_argument("--kron_position_frequencies", type=int, default=3)
-    parser.add_argument("--kron_position_weight", type=float, default=0.20)
+    parser.add_argument("--kron_position_weight", type=float, default=0.10)
+    parser.add_argument("--kron_query_atoms", type=int, default=6)
+    parser.add_argument("--kron_query_axis_weight", type=float, default=0.12)
+    parser.add_argument("--kron_novelty_weight", type=float, default=0.15)
+    parser.add_argument("--kron_attention_weight", type=float, default=0.24)
+    parser.add_argument("--kron_query_weight", type=float, default=0.16)
+    parser.add_argument("--kron_coverage_weight", type=float, default=0.28)
     parser.add_argument("--kron_temporal_segments", type=int, default=8)
     parser.add_argument("--kron_segment_floor_ratio", type=float, default=0.35)
     parser.add_argument("--kron_effective_dim_ridge", type=float, default=0.10)
@@ -939,7 +961,9 @@ def main() -> None:
     parser.add_argument("--kron_position_temperature", type=float, default=0.50)
     parser.add_argument("--kron_harmonic_mu", type=float, default=0.01)
     parser.add_argument("--kron_merge_mode", default="galerkin", choices=["galerkin", "prune"])
-    parser.add_argument("--kron_identity_rho", type=float, default=4.0)
+    parser.add_argument("--kron_identity_rho", type=float, default=12.0)
+    parser.add_argument("--kron_max_displacement", type=float, default=0.08)
+    parser.add_argument("--kron_min_cosine", type=float, default=0.995)
     parser.add_argument("--kron_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)

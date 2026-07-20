@@ -111,9 +111,9 @@ def _test_end_to_end() -> None:
     config_b = _outer_config()
     output_b, indices_b = kronvid_compression(
         features,
-        attention_b,
+        attention_a,
         config_b,
-        question_b,
+        question_a,
     )
 
     assert output_a.shape == (12, 24)
@@ -124,6 +124,14 @@ def _test_end_to_end() -> None:
     assert bool(torch.isfinite(output_a).all())
     torch.testing.assert_close(indices_a, indices_b, atol=0, rtol=0)
     torch.testing.assert_close(output_a, output_b, atol=0, rtol=0)
+    anchors_a = features.reshape(48, 24)[indices_a]
+    relative_displacement = (
+        (output_a.float() - anchors_a.float()).norm(dim=1)
+        / anchors_a.float().norm(dim=1).clamp_min(1e-6)
+    )
+    cosine = torch.nn.functional.cosine_similarity(output_a.float(), anchors_a.float(), dim=1)
+    assert float(relative_displacement.max().item()) <= 0.0801
+    assert float(cosine.min().item()) >= 0.995 - 1e-5
     for segment in config_a._kronvid_plan.segments:
         reduced = segment.reduced_laplacian
         assert bool(torch.isfinite(reduced).all())
@@ -147,6 +155,17 @@ def _test_end_to_end() -> None:
     assert config_a.last_kron_target_tokens == 12.0
     assert config_a.last_kron_segment_count == 3.0
     assert config_a.last_kron_graph_edges > 0.0
+    assert config_a.last_kron_attention_valid == 1.0
+    assert config_a.last_kron_query_atom_count > 0.0
+
+    constant_attention_config = _outer_config()
+    kronvid_compression(
+        features,
+        torch.ones_like(attention_a),
+        constant_attention_config,
+        question_b,
+    )
+    assert constant_attention_config.last_kron_attention_valid == 0.0
 
 
 def main() -> None:

@@ -203,10 +203,16 @@ class BenchmarkArgs:
     certv5_ot_min_cosine: float = field(default=0.98)
     certv5_debug: bool = field(default=False)
     kron_budget_mode: str = field(default="layer_average")
-    kron_metric_dim: int = field(default=64)
+    kron_metric_dim: int = field(default=128)
     kron_projection_seed: int = field(default=17)
     kron_position_frequencies: int = field(default=3)
-    kron_position_weight: float = field(default=0.20)
+    kron_position_weight: float = field(default=0.10)
+    kron_query_atoms: int = field(default=6)
+    kron_query_axis_weight: float = field(default=0.12)
+    kron_novelty_weight: float = field(default=0.15)
+    kron_attention_weight: float = field(default=0.24)
+    kron_query_weight: float = field(default=0.16)
+    kron_coverage_weight: float = field(default=0.28)
     kron_temporal_segments: int = field(default=8)
     kron_segment_floor_ratio: float = field(default=0.35)
     kron_effective_dim_ridge: float = field(default=0.10)
@@ -221,7 +227,9 @@ class BenchmarkArgs:
     kron_position_temperature: float = field(default=0.50)
     kron_harmonic_mu: float = field(default=0.01)
     kron_merge_mode: str = field(default="galerkin")
-    kron_identity_rho: float = field(default=4.0)
+    kron_identity_rho: float = field(default=12.0)
+    kron_max_displacement: float = field(default=0.08)
+    kron_min_cosine: float = field(default=0.995)
     kron_debug: bool = field(default=False)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
@@ -1287,6 +1295,13 @@ def _get_kronvid_metrics(model) -> dict[str, float | None]:
         "galerkin_fallback_count",
         "mean_anchor_cosine",
         "max_relative_displacement",
+        "attention_valid",
+        "query_atom_count",
+        "selected_leverage",
+        "selected_novelty",
+        "selected_attention",
+        "selected_query",
+        "selected_pairwise_similarity",
     )
     output = {f"kron_{name}": None for name in names}
     if not hasattr(model, "flashvid_config"):
@@ -2575,6 +2590,12 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         kron_projection_seed=args.kron_projection_seed,
         kron_position_frequencies=args.kron_position_frequencies,
         kron_position_weight=args.kron_position_weight,
+        kron_query_atoms=args.kron_query_atoms,
+        kron_query_axis_weight=args.kron_query_axis_weight,
+        kron_novelty_weight=args.kron_novelty_weight,
+        kron_attention_weight=args.kron_attention_weight,
+        kron_query_weight=args.kron_query_weight,
+        kron_coverage_weight=args.kron_coverage_weight,
         kron_temporal_segments=args.kron_temporal_segments,
         kron_segment_floor_ratio=args.kron_segment_floor_ratio,
         kron_effective_dim_ridge=args.kron_effective_dim_ridge,
@@ -2590,6 +2611,8 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         kron_harmonic_mu=args.kron_harmonic_mu,
         kron_merge_mode=args.kron_merge_mode,
         kron_identity_rho=args.kron_identity_rho,
+        kron_max_displacement=args.kron_max_displacement,
+        kron_min_cosine=args.kron_min_cosine,
         kron_debug=args.kron_debug,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
