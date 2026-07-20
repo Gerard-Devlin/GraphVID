@@ -202,6 +202,27 @@ class BenchmarkArgs:
     certv5_ot_max_displacement: float = field(default=0.12)
     certv5_ot_min_cosine: float = field(default=0.98)
     certv5_debug: bool = field(default=False)
+    kron_budget_mode: str = field(default="layer_average")
+    kron_metric_dim: int = field(default=64)
+    kron_projection_seed: int = field(default=17)
+    kron_position_frequencies: int = field(default=3)
+    kron_position_weight: float = field(default=0.20)
+    kron_temporal_segments: int = field(default=8)
+    kron_segment_floor_ratio: float = field(default=0.35)
+    kron_effective_dim_ridge: float = field(default=0.10)
+    kron_leverage_ridge: float = field(default=0.10)
+    kron_frame_floor: bool = field(default=True)
+    kron_spatial_radius: int = field(default=1)
+    kron_spatial_topk: int = field(default=4)
+    kron_temporal_radius: int = field(default=1)
+    kron_temporal_topk: int = field(default=2)
+    kron_semantic_topk: int = field(default=2)
+    kron_feature_temperature: float = field(default=0.20)
+    kron_position_temperature: float = field(default=0.50)
+    kron_harmonic_mu: float = field(default=0.01)
+    kron_merge_mode: str = field(default="galerkin")
+    kron_identity_rho: float = field(default=4.0)
+    kron_debug: bool = field(default=False)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
     prism_query_atoms: int = field(default=6)
@@ -1246,6 +1267,40 @@ def _get_certv5_metrics(model) -> dict[str, float | None]:
     return output
 
 
+def _get_kronvid_metrics(model) -> dict[str, float | None]:
+    names = (
+        "target_tokens",
+        "post_inner_tokens",
+        "average_layer_tokens",
+        "nominal_retention",
+        "outer_retention",
+        "post_inner_retention",
+        "average_layer_multiplier",
+        "segment_count",
+        "effective_dimension_sum",
+        "segment_budget_min",
+        "segment_budget_max",
+        "graph_edges",
+        "mean_segment_degree",
+        "reduced_laplacian_trace",
+        "harmonic_fallback_count",
+        "galerkin_fallback_count",
+        "mean_anchor_cosine",
+        "max_relative_displacement",
+    )
+    output = {f"kron_{name}": None for name in names}
+    if not hasattr(model, "flashvid_config"):
+        return output
+    config = getattr(model, "flashvid_config")
+    if str(getattr(config, "compression_variant", "")).strip().lower() != "kronvid":
+        return output
+    for name in names:
+        value = getattr(config, f"last_kron_{name}", None)
+        if value is not None:
+            output[f"kron_{name}"] = float(value)
+    return output
+
+
 def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     if not hasattr(model, "flashvid_config"):
         return {
@@ -1566,6 +1621,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     talon_core_grid_w = float(np.mean(talon_core_grid_w_per_run)) if talon_core_grid_w_per_run else None
     certv4_metrics = _get_certv4_metrics(model)
     certv5_metrics = _get_certv5_metrics(model)
+    kronvid_metrics = _get_kronvid_metrics(model)
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1581,6 +1637,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         "vision_compressed_visual_tokens": vision_compressed_visual_tokens,
         **certv4_metrics,
         **certv5_metrics,
+        **kronvid_metrics,
         "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
         "talon_complexity_score": talon_complexity_score,
         "talon_target_budget": talon_target_budget,
@@ -2110,9 +2167,13 @@ def _add_duration_breakdown(
 
 
 def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, float]:
-    # Keep the legacy LLaVA baselines outer-only. CertVID V4/V5 explicitly
+    # Keep the legacy LLaVA baselines outer-only. Budget-validated methods
     # validate and exercise the aligned hybrid budget through the installed hook.
-    if backend == "llava" and str(args.compression_variant).strip().lower() not in {"certvid_v4", "certvid_v5"}:
+    if backend == "llava" and str(args.compression_variant).strip().lower() not in {
+        "certvid_v4",
+        "certvid_v5",
+        "kronvid",
+    }:
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
 
@@ -2509,6 +2570,27 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv5_ot_max_displacement=args.certv5_ot_max_displacement,
         certv5_ot_min_cosine=args.certv5_ot_min_cosine,
         certv5_debug=args.certv5_debug,
+        kron_budget_mode=args.kron_budget_mode,
+        kron_metric_dim=args.kron_metric_dim,
+        kron_projection_seed=args.kron_projection_seed,
+        kron_position_frequencies=args.kron_position_frequencies,
+        kron_position_weight=args.kron_position_weight,
+        kron_temporal_segments=args.kron_temporal_segments,
+        kron_segment_floor_ratio=args.kron_segment_floor_ratio,
+        kron_effective_dim_ridge=args.kron_effective_dim_ridge,
+        kron_leverage_ridge=args.kron_leverage_ridge,
+        kron_frame_floor=args.kron_frame_floor,
+        kron_spatial_radius=args.kron_spatial_radius,
+        kron_spatial_topk=args.kron_spatial_topk,
+        kron_temporal_radius=args.kron_temporal_radius,
+        kron_temporal_topk=args.kron_temporal_topk,
+        kron_semantic_topk=args.kron_semantic_topk,
+        kron_feature_temperature=args.kron_feature_temperature,
+        kron_position_temperature=args.kron_position_temperature,
+        kron_harmonic_mu=args.kron_harmonic_mu,
+        kron_merge_mode=args.kron_merge_mode,
+        kron_identity_rho=args.kron_identity_rho,
+        kron_debug=args.kron_debug,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
         prism_query_atoms=args.prism_query_atoms,
@@ -2971,7 +3053,7 @@ def run(args: BenchmarkArgs):
     _print_header(args, backend)
     if backend == "llava":
         variant = str(args.compression_variant).strip().lower()
-        if args.run_ours and variant in {"certvid_v4", "certvid_v5"}:
+        if args.run_ours and variant in {"certvid_v4", "certvid_v5", "kronvid"}:
             print(
                 "[info] LLaVA backend: validated hybrid outer/inner pruning is enabled "
                 f"for {variant}."
@@ -3091,6 +3173,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v4-active][ours]"
         elif variant_name == "certvid_v5":
             ours_prefix = "[certvid-v5-active][ours]"
+        elif variant_name == "kronvid":
+            ours_prefix = "[kronvid-active][ours]"
         elif variant_name == "prismvid":
             ours_prefix = "[prismvid-active][ours]"
         else:

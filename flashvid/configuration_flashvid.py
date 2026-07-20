@@ -166,6 +166,31 @@ class FlashVidConfig:
     certv5_num_hidden_layers: int = field(default=0)
     certv5_inner_hook_enabled: bool = field(default=False)
 
+    # KronVID: spectral graph elimination with harmonic Galerkin projection.
+    kron_budget_mode: str = field(default="layer_average")
+    kron_metric_dim: int = field(default=64)
+    kron_projection_seed: int = field(default=17)
+    kron_position_frequencies: int = field(default=3)
+    kron_position_weight: float = field(default=0.20)
+    kron_temporal_segments: int = field(default=8)
+    kron_segment_floor_ratio: float = field(default=0.35)
+    kron_effective_dim_ridge: float = field(default=0.10)
+    kron_leverage_ridge: float = field(default=0.10)
+    kron_frame_floor: bool = field(default=True)
+    kron_spatial_radius: int = field(default=1)
+    kron_spatial_topk: int = field(default=4)
+    kron_temporal_radius: int = field(default=1)
+    kron_temporal_topk: int = field(default=2)
+    kron_semantic_topk: int = field(default=2)
+    kron_feature_temperature: float = field(default=0.20)
+    kron_position_temperature: float = field(default=0.50)
+    kron_harmonic_mu: float = field(default=0.01)
+    kron_merge_mode: str = field(default="galerkin")
+    kron_identity_rho: float = field(default=4.0)
+    kron_debug: bool = field(default=False)
+    kron_num_hidden_layers: int = field(default=0)
+    kron_inner_hook_enabled: bool = field(default=False)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -188,6 +213,7 @@ class FlashVidConfig:
     # Experimental compression variant.
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
+    # "kronvid": ridge-leverage anchors + harmonic Galerkin graph coarsening.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")
 

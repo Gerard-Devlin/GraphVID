@@ -290,6 +290,48 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.certv5_ot_min_cosine),
             "--certv5_debug",
             _str_bool(args.certv5_debug),
+            "--kron_budget_mode",
+            str(args.kron_budget_mode),
+            "--kron_metric_dim",
+            str(args.kron_metric_dim),
+            "--kron_projection_seed",
+            str(args.kron_projection_seed),
+            "--kron_position_frequencies",
+            str(args.kron_position_frequencies),
+            "--kron_position_weight",
+            str(args.kron_position_weight),
+            "--kron_temporal_segments",
+            str(args.kron_temporal_segments),
+            "--kron_segment_floor_ratio",
+            str(args.kron_segment_floor_ratio),
+            "--kron_effective_dim_ridge",
+            str(args.kron_effective_dim_ridge),
+            "--kron_leverage_ridge",
+            str(args.kron_leverage_ridge),
+            "--kron_frame_floor",
+            _str_bool(args.kron_frame_floor),
+            "--kron_spatial_radius",
+            str(args.kron_spatial_radius),
+            "--kron_spatial_topk",
+            str(args.kron_spatial_topk),
+            "--kron_temporal_radius",
+            str(args.kron_temporal_radius),
+            "--kron_temporal_topk",
+            str(args.kron_temporal_topk),
+            "--kron_semantic_topk",
+            str(args.kron_semantic_topk),
+            "--kron_feature_temperature",
+            str(args.kron_feature_temperature),
+            "--kron_position_temperature",
+            str(args.kron_position_temperature),
+            "--kron_harmonic_mu",
+            str(args.kron_harmonic_mu),
+            "--kron_merge_mode",
+            str(args.kron_merge_mode),
+            "--kron_identity_rho",
+            str(args.kron_identity_rho),
+            "--kron_debug",
+            _str_bool(args.kron_debug),
             "--prism_budget_uses_expansion",
             _str_bool(args.prism_budget_uses_expansion),
             "--prism_metric_dim",
@@ -838,7 +880,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "prismvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "kronvid", "prismvid"])
     parser.add_argument("--pruning_layer", type=int, default=20)
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
@@ -944,6 +986,27 @@ def main() -> None:
     parser.add_argument("--certv5_ot_max_displacement", type=float, default=0.12)
     parser.add_argument("--certv5_ot_min_cosine", type=float, default=0.98)
     parser.add_argument("--certv5_debug", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--kron_budget_mode", default="layer_average", choices=["layer_average", "outer_only"])
+    parser.add_argument("--kron_metric_dim", type=int, default=64)
+    parser.add_argument("--kron_projection_seed", type=int, default=17)
+    parser.add_argument("--kron_position_frequencies", type=int, default=3)
+    parser.add_argument("--kron_position_weight", type=float, default=0.20)
+    parser.add_argument("--kron_temporal_segments", type=int, default=8)
+    parser.add_argument("--kron_segment_floor_ratio", type=float, default=0.35)
+    parser.add_argument("--kron_effective_dim_ridge", type=float, default=0.10)
+    parser.add_argument("--kron_leverage_ridge", type=float, default=0.10)
+    parser.add_argument("--kron_frame_floor", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--kron_spatial_radius", type=int, default=1)
+    parser.add_argument("--kron_spatial_topk", type=int, default=4)
+    parser.add_argument("--kron_temporal_radius", type=int, default=1)
+    parser.add_argument("--kron_temporal_topk", type=int, default=2)
+    parser.add_argument("--kron_semantic_topk", type=int, default=2)
+    parser.add_argument("--kron_feature_temperature", type=float, default=0.20)
+    parser.add_argument("--kron_position_temperature", type=float, default=0.50)
+    parser.add_argument("--kron_harmonic_mu", type=float, default=0.01)
+    parser.add_argument("--kron_merge_mode", default="galerkin", choices=["galerkin", "prune"])
+    parser.add_argument("--kron_identity_rho", type=float, default=4.0)
+    parser.add_argument("--kron_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)
     parser.add_argument("--prism_query_atoms", type=int, default=6)
