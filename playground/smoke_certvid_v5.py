@@ -23,6 +23,7 @@ from flashvid.certvid_v5 import (
     _CERTIFICATE_SHARES,
     _CertificateRequest,
     _admit_certificates,
+    _capped_entropic_tail_weights,
     _resolve_budget,
     _scene_pyramid,
     _tail_risk_spectral_selection,
@@ -143,6 +144,23 @@ def test_scene_pyramid_and_atomic_certificates() -> None:
 
 
 def test_tail_risk_recovers_weak_directions() -> None:
+    tied_weights = _capped_entropic_tail_weights(
+        torch.ones(4),
+        tail_fraction=0.25,
+        temperature=0.10,
+        ridge=0.05,
+    )
+    assert torch.allclose(tied_weights, torch.full((4,), 0.25))
+    ordered_weights = _capped_entropic_tail_weights(
+        torch.tensor([0.1, 0.2, 1.0, 2.0]),
+        tail_fraction=0.50,
+        temperature=0.10,
+        ridge=0.05,
+    )
+    assert math.isclose(float(ordered_weights.sum()), 1.0, abs_tol=1e-6)
+    assert float(ordered_weights.max()) <= 0.5 + 1e-6
+    assert ordered_weights[0] > ordered_weights[-1]
+
     design = torch.tensor(
         [
             [1.0, 0.0, 0.0],
@@ -155,7 +173,7 @@ def test_tail_risk_recovers_weak_directions() -> None:
     )
     candidates = torch.arange(6, dtype=torch.long)
     groups = torch.arange(6, dtype=torch.long)
-    selected, diagnostics, tail_vectors = _tail_risk_spectral_selection(
+    selected, diagnostics, tail_vectors, tail_weights = _tail_risk_spectral_selection(
         design=design,
         candidates=candidates,
         demand_weight=torch.full((6,), 1.0 / 6.0),
@@ -169,7 +187,7 @@ def test_tail_risk_recovers_weak_directions() -> None:
         query_relevance=torch.empty((0, 6)),
         atom_weights=torch.empty(0),
         query_enabled=False,
-        tail_fraction=1.0,
+        tail_fraction=0.34,
         tail_temperature=0.10,
         ridge=0.05,
         refresh_interval=1,
@@ -183,6 +201,8 @@ def test_tail_risk_recovers_weak_directions() -> None:
     assert diagnostics["tail_cvar"] > 0.05
     assert diagnostics["minimum_eigenvalue"] > 0.05
     assert tail_vectors.shape == (3, 3)
+    assert tail_weights.shape == (3,)
+    assert math.isclose(float(tail_weights.sum()), 1.0, abs_tol=1e-6)
 
 
 def test_query_off_isolation() -> None:

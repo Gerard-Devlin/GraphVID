@@ -1041,7 +1041,15 @@ def _spectral_evidence_features(
     )
     retained_values = eigenvalues[-retained_dimension:]
     retained_vectors = eigenvectors[:, -retained_dimension:]
-    whitened = (design @ retained_vectors) * retained_values.clamp_min(ridge_value).rsqrt().unsqueeze(0)
+    # Partial whitening preserves target anisotropy. Full inverse-square-root
+    # whitening made tiny, noisy covariance directions as important as stable
+    # semantic evidence regardless of the configured whitening strength.
+    target_whitening = min(1.0, max(0.0, float(whitening_strength)))
+    target_scales = torch.pow(
+        retained_values.clamp_min(ridge_value),
+        -0.5 * target_whitening,
+    )
+    whitened = (design @ retained_vectors) * target_scales.unsqueeze(0)
 
     # Clamp only extreme leverage outliers. They otherwise dominate every
     # weak-direction update even when they are projection artifacts.
@@ -1054,9 +1062,58 @@ def _spectral_evidence_features(
         "original_dimension": float(original_dimension),
         "target_min_eigenvalue": float(retained_values.min().item()),
         "target_max_eigenvalue": float(retained_values.max().item()),
+        "target_whitening_strength": float(target_whitening),
         "ridge": float(ridge_value),
         "leverage_cap": float(cap.item()),
     }
+
+
+def _capped_entropic_tail_weights(
+    eigenvalues: torch.Tensor,
+    tail_fraction: float,
+    temperature: float,
+    ridge: float,
+) -> torch.Tensor:
+    """Return a rotation-safe, entropy-regularized lower-tail risk measure.
+
+    The density cap is the discrete CVaR constraint ``w_i <= 1/(alpha*d)``.
+    Equal eigenvalues therefore receive equal mass, avoiding the arbitrary
+    eigenvector basis selected by ``eigh`` inside a degenerate nullspace.
+    """
+    values = eigenvalues.float().reshape(-1)
+    dimension = int(values.numel())
+    if dimension <= 0:
+        raise ValueError("spectral tail requires at least one eigenvalue")
+    fraction = min(1.0, max(1.0 / dimension, float(tail_fraction)))
+    cap = 1.0 / (fraction * dimension)
+    temperature = max(1e-4, float(temperature))
+    scale = values.mean().abs().clamp_min(max(1e-6, float(ridge)))
+    logits = -(values - values.min()) / (temperature * scale)
+    raw = torch.exp(logits - logits.max()).clamp_min(torch.finfo(torch.float32).tiny)
+
+    weights = torch.zeros_like(raw)
+    active = torch.ones(dimension, dtype=torch.bool, device=values.device)
+    remaining = 1.0
+    for _ in range(dimension):
+        active_count = int(active.sum().item())
+        if active_count == 0:
+            break
+        proposal = raw[active] / raw[active].sum().clamp_min(1e-12) * remaining
+        saturated = proposal > cap + 1e-7
+        if not bool(saturated.any()):
+            weights[active] = proposal
+            remaining = 0.0
+            break
+        active_positions = torch.where(active)[0]
+        saturated_positions = active_positions[saturated]
+        weights[saturated_positions] = cap
+        active[saturated_positions] = False
+        remaining = max(0.0, remaining - cap * int(saturated_positions.numel()))
+
+    if remaining > 1e-6 and bool(active.any()):
+        weights[active] += remaining / float(active.sum())
+    weights = weights / weights.sum().clamp_min(1e-12)
+    return weights
 
 
 def _tail_risk_spectral_selection(
@@ -1080,8 +1137,8 @@ def _tail_risk_spectral_selection(
     refresh_interval: int,
     dual_strength: float,
     mean_weight: float,
-) -> tuple[torch.Tensor, dict[str, object], torch.Tensor]:
-    """Greedily raise the CVaR of the weakest evidence eigen-directions."""
+) -> tuple[torch.Tensor, dict[str, object], torch.Tensor, torch.Tensor]:
+    """Greedily raise a capped entropic CVaR of weak evidence directions."""
     candidate_tokens = [int(token) for token in candidates.detach().cpu().tolist()]
     token_to_position = {token: position for position, token in enumerate(candidate_tokens)}
     candidate_design = design[candidates].float()
@@ -1142,8 +1199,8 @@ def _tail_risk_spectral_selection(
     refresh_interval = max(1, int(refresh_interval))
     dual_strength = max(0.0, float(dual_strength))
     mean_weight = max(0.0, float(mean_weight))
-    tail_vectors = torch.eye(dimension, device=candidates.device)[:, :tail_count]
-    tail_weights = torch.full((tail_count,), 1.0 / tail_count, device=candidates.device)
+    tail_vectors = torch.eye(dimension, device=candidates.device)
+    tail_weights = torch.full((dimension,), 1.0 / dimension, device=candidates.device)
     eigenvalues = torch.full((dimension,), ridge, device=candidates.device)
     refreshes = 0
     iterations = 0
@@ -1161,12 +1218,12 @@ def _tail_risk_spectral_selection(
             eigenvalues, eigenvectors = torch.linalg.eigh(
                 0.5 * (information + information.transpose(0, 1))
             )
-            tail_values = eigenvalues[:tail_count]
-            tail_vectors = eigenvectors[:, :tail_count]
-            scale = tail_values.mean().abs().clamp_min(ridge)
-            tail_weights = torch.softmax(
-                -(tail_values - tail_values.min()) / (tail_temperature * scale),
-                dim=0,
+            tail_vectors = eigenvectors
+            tail_weights = _capped_entropic_tail_weights(
+                eigenvalues,
+                tail_fraction,
+                tail_temperature,
+                ridge,
             )
             refreshes += 1
 
@@ -1204,7 +1261,9 @@ def _tail_risk_spectral_selection(
             spectral_gain
             + mean_weight * mean_gain
             + dual_strength * dual_bonus
-            + 0.02 * quality[tokens]
+            # Spectral coverage is a complement to discriminative evidence,
+            # not a license to replace it with low-energy covariance noise.
+            + 0.20 * quality[tokens]
             + tie_break[available]
         )
         add(int(available[int(torch.argmax(score))]))
@@ -1223,6 +1282,12 @@ def _tail_risk_spectral_selection(
         0.5 * (information + information.transpose(0, 1))
     )
     tail_values = eigenvalues[:tail_count]
+    tail_weights = _capped_entropic_tail_weights(
+        eigenvalues,
+        tail_fraction,
+        tail_temperature,
+        ridge,
+    )
     diagnostics: dict[str, object] = {
         "objective": float(tail_values.mean().item()),
         "tail_cvar": float(tail_values.mean().item()),
@@ -1230,6 +1295,10 @@ def _tail_risk_spectral_selection(
         "median_eigenvalue": float(eigenvalues.median().item()),
         "maximum_eigenvalue": float(eigenvalues.max().item()),
         "tail_count": tail_count,
+        "tail_weight_cap": float(1.0 / (tail_fraction * dimension)),
+        "tail_effective_rank": float(
+            torch.exp(-torch.sum(tail_weights * torch.log(tail_weights.clamp_min(1e-12)))).item()
+        ),
         "iterations": iterations,
         "refreshes": refreshes,
         "locked": len(locked),
@@ -1243,13 +1312,14 @@ def _tail_risk_spectral_selection(
             else 0,
         },
     }
-    return selected, diagnostics, eigenvectors[:, :tail_count]
+    return selected, diagnostics, eigenvectors, tail_weights
 
 
 def _spectral_protected_tokens(
     selected: torch.Tensor,
     design: torch.Tensor,
     tail_vectors: torch.Tensor,
+    tail_weights: torch.Tensor,
     ratio: float,
 ) -> set[int]:
     count = min(
@@ -1258,7 +1328,8 @@ def _spectral_protected_tokens(
     )
     if count <= 0 or tail_vectors.numel() == 0:
         return set()
-    energy = (design[selected] @ tail_vectors).square().sum(dim=1)
+    projection = design[selected] @ tail_vectors
+    energy = (projection.square() * tail_weights.unsqueeze(0)).sum(dim=1)
     protected = torch.argsort(energy, descending=True, stable=True)[:count]
     return {int(selected[position]) for position in protected}
 
@@ -1720,7 +1791,7 @@ def certvid_v5_compression(
             motion_confidence,
             _cfg_float(flashvid_config, "certv5_motion_sector_threshold", 0.24),
         )
-        selected, selector_diagnostics, tail_vectors = _tail_risk_spectral_selection(
+        selected, selector_diagnostics, tail_vectors, tail_weights = _tail_risk_spectral_selection(
             design=spectral_design,
             candidates=candidates,
             demand_weight=demand_weight,
@@ -1746,6 +1817,7 @@ def certvid_v5_compression(
             selected=selected,
             design=spectral_design,
             tail_vectors=tail_vectors,
+            tail_weights=tail_weights,
             ratio=_cfg_float(flashvid_config, "certv5_spectral_protect_ratio", 0.12),
         )
         protected_tokens = set(locked) | spectral_protected
