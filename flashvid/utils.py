@@ -130,6 +130,10 @@ def flashvid_compression(
     # A plan is prefill-local. Clearing it here prevents stale GPU tensors from
     # surviving an interrupted or fallback generation.
     setattr(flashvid_config, "_certvid_plan", None)
+    if compression_variant == "faithvid":
+        from .faithvid_attention import clear_faithvid_runtime
+
+        clear_faithvid_runtime(flashvid_config)
     if compression_variant == "talon":
         from .talon import talon_compression
 
@@ -228,6 +232,15 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
+    if compression_variant == "faithvid":
+        from .faithvid import faithvid_compression
+
+        return faithvid_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
     if compression_variant == "prismvid":
         from .prismvid import prismvid_compression
 
@@ -241,7 +254,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_v4|certvid_v5|certvid_e|prismvid"
+            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -846,6 +859,20 @@ def fastv_prune(
     keep_indices = keep_indices[keep_indices < seq_length]
     if keep_indices.numel() == 0:
         keep_indices = torch.arange(seq_length, device=device)
+
+    if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
+        from .faithvid_attention import update_faithvid_after_inner_prune
+
+        faith_hidden_states = update_faithvid_after_inner_prune(
+            flashvid_config,
+            keep_indices,
+            visual_start=int(visual_token_start_index),
+            visual_length=int(visual_token_length),
+            hidden_states=hidden_states,
+            visual_global_indices=visual_global_indices,
+        )
+        if faith_hidden_states is not None:
+            hidden_states = faith_hidden_states
 
     # Filter
     hidden_states = hidden_states[:, keep_indices]

@@ -19,6 +19,7 @@ from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 from .utils import fastv_prune
 from .configuration_flashvid import FlashVidConfig
+from .faithvid_attention import faithvid_attention_forward
 
 
 def Qwen2Model_forward(
@@ -183,21 +184,37 @@ def Qwen2Attention_forward(
         cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
         key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-    attention_interface: Callable = eager_attention_forward
-    if self.config._attn_implementation != "eager":
-        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
-
-    attn_output, attn_weights = attention_interface(
+    dropout = 0.0 if not self.training else self.attention_dropout
+    faith_output = faithvid_attention_forward(
         self,
         query_states,
         key_states,
         value_states,
         attention_mask,
-        dropout=0.0 if not self.training else self.attention_dropout,
+        cache_position=cache_position,
         scaling=self.scaling,
-        sliding_window=self.sliding_window,  # main diff with Llama
-        **kwargs,
+        dropout=dropout,
+        output_attentions=bool(kwargs.get("output_attentions", False)),
+        sliding_window=self.sliding_window,
     )
+    if faith_output is not None:
+        attn_output, attn_weights = faith_output
+    else:
+        attention_interface: Callable = eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,  # main diff with Llama
+            **kwargs,
+        )
 
     if kwargs.get("output_attentions", False) and attn_weights is None:
         # Calculate attention weights manually if not provided

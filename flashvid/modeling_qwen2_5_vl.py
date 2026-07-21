@@ -25,6 +25,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     repeat_kv,
 )
 from .configuration_flashvid import FlashVidConfig
+from .faithvid_attention import faithvid_attention_forward
 from .utils import (
     extract_question_features,
     fastv_prune,
@@ -344,22 +345,38 @@ def Qwen2_5_VLAttention_forward(
         cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
         key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-    attention_interface: Callable = eager_attention_forward
-    if self.config._attn_implementation != "eager":
-        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
-
-    attn_output, attn_weights = attention_interface(
+    dropout = 0.0 if not self.training else self.attention_dropout
+    faith_output = faithvid_attention_forward(
         self,
         query_states,
         key_states,
         value_states,
         attention_mask,
-        dropout=0.0 if not self.training else self.attention_dropout,
+        cache_position=cache_position,
         scaling=self.scaling,
+        dropout=dropout,
+        output_attentions=bool(output_attentions),
         sliding_window=self.sliding_window,
-        position_ids=position_ids,  # pass positions for FA2
-        **kwargs,
     )
+    if faith_output is not None:
+        attn_output, attn_weights = faith_output
+    else:
+        attention_interface: Callable = eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,
+            position_ids=position_ids,  # pass positions for FA2
+            **kwargs,
+        )
 
     attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
     attn_output = self.o_proj(attn_output)
@@ -485,6 +502,7 @@ def Qwen2_5_VLModel_forward(
     if position_ids.shape[-1] > 1 and pixel_values_videos is not None:
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
+        setattr(flashvid_config, "_certvid_attention_source", "manual_qk")
         spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
         flashvid_config.H = int(video_grid_thw[0][1].item() // spatial_merge)
         flashvid_config.W = int(video_grid_thw[0][2].item() // spatial_merge)
@@ -509,6 +527,18 @@ def Qwen2_5_VLModel_forward(
         visual_start_index = torch.where(input_ids[0] == self.config.video_token_id)[0][0].item()
         visual_length = n_video_tokens
         visual_end_index = visual_start_index + visual_length
+        visual_token_indexes = torch.where(input_ids[0] == self.config.video_token_id)[0]
+        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
+            from .faithvid import apply_faithvid_position_centroids
+
+            position_ids = apply_faithvid_position_centroids(
+                flashvid_config,
+                position_ids,
+                visual_token_indexes,
+            )
+            # Qwen2.5 has no DeepStack consumer, so the GPU-heavy plan is no
+            # longer needed after position centroids have been materialized.
+            flashvid_config._certvid_plan = None
         # Update FlashVid config.
         flashvid_config.visual_token_start_index = visual_start_index
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])

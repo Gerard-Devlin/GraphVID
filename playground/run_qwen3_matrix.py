@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         return "ours"
     return method
 
@@ -637,6 +637,31 @@ def _build_command(
                 "--certe_rank_tolerance",
                 str(args.certe_rank_tolerance),
                 "--certe_debug" if args.certe_debug else "--no-certe_debug",
+                "--faith_budget_uses_expansion" if args.faith_budget_uses_expansion else "--no-faith_budget_uses_expansion",
+                "--faith_mass_strength",
+                str(args.faith_mass_strength),
+                "--faith_variance_strength",
+                str(args.faith_variance_strength),
+                "--faith_merge_alpha",
+                str(args.faith_merge_alpha),
+                "--faith_temporal_radius",
+                str(args.faith_temporal_radius),
+                "--faith_spatial_radius",
+                str(args.faith_spatial_radius),
+                "--faith_component_bonus",
+                str(args.faith_component_bonus),
+                "--faith_temporal_penalty",
+                str(args.faith_temporal_penalty),
+                "--faith_spatial_penalty",
+                str(args.faith_spatial_penalty),
+                "--faith_assignment_topk",
+                str(args.faith_assignment_topk),
+                "--faith_assignment_temperature",
+                str(args.faith_assignment_temperature),
+                "--faith_max_log_bias",
+                str(args.faith_max_log_bias),
+                "--faith_attention_strict" if args.faith_attention_strict else "--no-faith_attention_strict",
+                "--faith_debug" if args.faith_debug else "--no-faith_debug",
                 "--prism_budget_uses_expansion" if args.prism_budget_uses_expansion else "--no-prism_budget_uses_expansion",
                 "--prism_metric_dim",
                 str(args.prism_metric_dim),
@@ -774,7 +799,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_hr,certvid_v4,certvid_v5,certvid_e,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_hr,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -968,6 +993,20 @@ def main() -> None:
     parser.add_argument("--certe_d_efficiency_floor", type=float, default=0.995)
     parser.add_argument("--certe_rank_tolerance", type=float, default=1e-5)
     parser.add_argument("--certe_debug", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--faith_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--faith_mass_strength", type=float, default=1.0)
+    parser.add_argument("--faith_variance_strength", type=float, default=0.50)
+    parser.add_argument("--faith_merge_alpha", type=float, default=1.0)
+    parser.add_argument("--faith_temporal_radius", type=int, default=1)
+    parser.add_argument("--faith_spatial_radius", type=float, default=0.75)
+    parser.add_argument("--faith_component_bonus", type=float, default=0.08)
+    parser.add_argument("--faith_temporal_penalty", type=float, default=0.04)
+    parser.add_argument("--faith_spatial_penalty", type=float, default=0.04)
+    parser.add_argument("--faith_assignment_topk", type=int, default=2)
+    parser.add_argument("--faith_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--faith_max_log_bias", type=float, default=20.0)
+    parser.add_argument("--faith_attention_strict", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--faith_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)
     parser.add_argument("--prism_query_atoms", type=int, default=6)

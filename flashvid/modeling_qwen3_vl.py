@@ -27,6 +27,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 
 from .configuration_flashvid import FlashVidConfig
+from .faithvid_attention import faithvid_attention_forward
 from .utils import (
     extract_question_features,
     fastv_prune,
@@ -541,13 +542,21 @@ def Qwen3VLModel_forward(
         compression_variant = str(
             getattr(flashvid_config, "compression_variant", "flashvid")
         ).strip().lower()
-        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e"}:
+        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "faithvid"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
             certvid_plan = getattr(flashvid_config, "_certvid_plan", None)
             if certvid_plan is None:
                 raise RuntimeError(
                     f"{compression_variant} compression did not publish its DeepStack aggregation plan"
+                )
+            if compression_variant == "faithvid":
+                from .faithvid import apply_faithvid_position_centroids
+
+                position_ids = apply_faithvid_position_centroids(
+                    flashvid_config,
+                    position_ids,
+                    visual_token_indexes,
                 )
             try:
                 compressed_deepstack_video = compress_certvid_deepstack(
@@ -747,6 +756,7 @@ def Qwen3VLTextModel_forward(
         "certvid_v4",
         "certvid_v5",
         "certvid_e",
+        "faithvid",
     }
     enable_inner_pruning = is_prefill and (
         not is_certvid
@@ -962,20 +972,35 @@ def Qwen3VLTextAttention_forward(
         cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
         key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-    attention_interface: Callable = eager_attention_forward
-    if self.config._attn_implementation != "eager":
-        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
-
-    attn_output, attn_weights = attention_interface(
+    dropout = 0.0 if not self.training else self.attention_dropout
+    faith_output = faithvid_attention_forward(
         self,
         query_states,
         key_states,
         value_states,
         attention_mask,
-        dropout=0.0 if not self.training else self.attention_dropout,
+        cache_position=cache_position,
         scaling=self.scaling,
-        **kwargs,
+        dropout=dropout,
+        output_attentions=bool(kwargs.get("output_attentions", False)),
     )
+    if faith_output is not None:
+        attn_output, attn_weights = faith_output
+    else:
+        attention_interface: Callable = eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=dropout,
+            scaling=self.scaling,
+            **kwargs,
+        )
 
     if kwargs.get("output_attentions", False) and attn_weights is None:
         # * Calculate attention weights manually if not provided

@@ -203,6 +203,22 @@ class FlashVidConfig:
     certe_rank_tolerance: float = field(default=1e-5)
     certe_debug: bool = field(default=False)
 
+    # FaithVID: functionally faithful merging with mass-corrected attention.
+    faith_budget_uses_expansion: bool = field(default=True)
+    faith_mass_strength: float = field(default=1.0)
+    faith_variance_strength: float = field(default=0.50)
+    faith_merge_alpha: float = field(default=1.0)
+    faith_temporal_radius: int = field(default=1)
+    faith_spatial_radius: float = field(default=0.75)
+    faith_component_bonus: float = field(default=0.08)
+    faith_temporal_penalty: float = field(default=0.04)
+    faith_spatial_penalty: float = field(default=0.04)
+    faith_assignment_topk: int = field(default=2)
+    faith_assignment_temperature: float = field(default=0.07)
+    faith_max_log_bias: float = field(default=20.0)
+    faith_attention_strict: bool = field(default=True)
+    faith_debug: bool = field(default=False)
+
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)
     segment_threshold: float = field(default=0.9)
@@ -226,6 +242,7 @@ class FlashVidConfig:
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
+    # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")
 

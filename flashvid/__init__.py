@@ -275,6 +275,20 @@ def flashvid(
     certe_d_efficiency_floor: float = 0.995,
     certe_rank_tolerance: float = 1e-5,
     certe_debug: bool = False,
+    faith_budget_uses_expansion: bool = True,
+    faith_mass_strength: float = 1.0,
+    faith_variance_strength: float = 0.50,
+    faith_merge_alpha: float = 1.0,
+    faith_temporal_radius: int = 1,
+    faith_spatial_radius: float = 0.75,
+    faith_component_bonus: float = 0.08,
+    faith_temporal_penalty: float = 0.04,
+    faith_spatial_penalty: float = 0.04,
+    faith_assignment_topk: int = 2,
+    faith_assignment_temperature: float = 0.07,
+    faith_max_log_bias: float = 20.0,
+    faith_attention_strict: bool = True,
+    faith_debug: bool = False,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     question_aware_reweighting: bool = False,
@@ -523,6 +537,7 @@ def flashvid(
             "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
+            "faithvid" preserves merged-token attention mass and constrains RoPE phase dispersion;
             "prismvid" selects an exact multi-level Qwen3 DeepStack visual coreset;
             "talon" enables transport-aligned low-rank + sparse innovation compression.
         question_aware_reweighting (bool, optional): Enable question-guided token reweighting.
@@ -647,10 +662,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_v4|certvid_v5|certvid_e|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -832,6 +847,20 @@ def flashvid(
         certe_d_efficiency_floor=certe_d_efficiency_floor,
         certe_rank_tolerance=certe_rank_tolerance,
         certe_debug=certe_debug,
+        faith_budget_uses_expansion=faith_budget_uses_expansion,
+        faith_mass_strength=faith_mass_strength,
+        faith_variance_strength=faith_variance_strength,
+        faith_merge_alpha=faith_merge_alpha,
+        faith_temporal_radius=faith_temporal_radius,
+        faith_spatial_radius=faith_spatial_radius,
+        faith_component_bonus=faith_component_bonus,
+        faith_temporal_penalty=faith_temporal_penalty,
+        faith_spatial_penalty=faith_spatial_penalty,
+        faith_assignment_topk=faith_assignment_topk,
+        faith_assignment_temperature=faith_assignment_temperature,
+        faith_max_log_bias=faith_max_log_bias,
+        faith_attention_strict=faith_attention_strict,
+        faith_debug=faith_debug,
         prism_budget_uses_expansion=prism_budget_uses_expansion,
         prism_metric_dim=prism_metric_dim,
         prism_query_atoms=prism_query_atoms,
@@ -1061,5 +1090,8 @@ def flashvid(
     setattr(model.config, "flashvid_bypass_active", False)
     if type(model) in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration):
         setattr(model.model.language_model, "flashvid_config", flashvid_config)
+    for module in model.modules():
+        if isinstance(module, (Qwen2Attention, Qwen2_5_VLAttention, Qwen3VLTextAttention)):
+            setattr(module, "flashvid_config", flashvid_config)
 
     return model

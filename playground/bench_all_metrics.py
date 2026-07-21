@@ -233,6 +233,20 @@ class BenchmarkArgs:
     certe_d_efficiency_floor: float = field(default=0.995)
     certe_rank_tolerance: float = field(default=1e-5)
     certe_debug: bool = field(default=False)
+    faith_budget_uses_expansion: bool = field(default=True)
+    faith_mass_strength: float = field(default=1.0)
+    faith_variance_strength: float = field(default=0.50)
+    faith_merge_alpha: float = field(default=1.0)
+    faith_temporal_radius: int = field(default=1)
+    faith_spatial_radius: float = field(default=0.75)
+    faith_component_bonus: float = field(default=0.08)
+    faith_temporal_penalty: float = field(default=0.04)
+    faith_spatial_penalty: float = field(default=0.04)
+    faith_assignment_topk: int = field(default=2)
+    faith_assignment_temperature: float = field(default=0.07)
+    faith_max_log_bias: float = field(default=20.0)
+    faith_attention_strict: bool = field(default=True)
+    faith_debug: bool = field(default=False)
     prism_budget_uses_expansion: bool = field(default=True)
     prism_metric_dim: int = field(default=256)
     prism_query_atoms: int = field(default=6)
@@ -1358,6 +1372,36 @@ def _get_certe_metrics(model) -> dict[str, float | None]:
     return output
 
 
+def _get_faithvid_metrics(model) -> dict[str, float | None]:
+    names = (
+        "raw_tokens",
+        "output_tokens",
+        "mass_sum",
+        "mass_conservation_error",
+        "mean_group_mass",
+        "max_group_mass",
+        "mean_log_mass",
+        "mean_group_variance",
+        "mean_phase_radius",
+        "phase_fallback_sources",
+        "faithfulness_bound",
+        "attention_mass",
+        "inner_mass_error",
+        "position_mean_shift",
+    )
+    output = {f"faithvid_{name}": None for name in names}
+    if not hasattr(model, "flashvid_config"):
+        return output
+    config = getattr(model, "flashvid_config")
+    if str(getattr(config, "compression_variant", "")).strip().lower() != "faithvid":
+        return output
+    for name in names:
+        value = getattr(config, f"last_faithvid_{name}", None)
+        if value is not None:
+            output[f"faithvid_{name}"] = float(value)
+    return output
+
+
 def _get_talon_debug_metrics(model) -> dict[str, float | None]:
     if not hasattr(model, "flashvid_config"):
         return {
@@ -1687,6 +1731,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
     certv4_metrics = _get_certv4_metrics(model)
     certv5_metrics = _get_certv5_metrics(model)
     certe_metrics = _get_certe_metrics(model)
+    faithvid_metrics = _get_faithvid_metrics(model)
     tps = None
     if latency_ms and latency_ms > 0 and generated_tokens is not None:
         tps = float(generated_tokens / (latency_ms / 1000.0))
@@ -1703,6 +1748,7 @@ def _run_benchmark_once(model_bundle, args: BenchmarkArgs, prepared_inputs, use_
         **certv4_metrics,
         **certv5_metrics,
         **certe_metrics,
+        **faithvid_metrics,
         "talon_target_tokens_per_frame": talon_target_tokens_per_frame,
         "talon_complexity_score": talon_complexity_score,
         "talon_target_budget": talon_target_budget,
@@ -2238,6 +2284,7 @@ def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, f
         "certvid_v4",
         "certvid_v5",
         "certvid_e",
+        "faithvid",
     }:
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
@@ -2666,6 +2713,20 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certe_d_efficiency_floor=args.certe_d_efficiency_floor,
         certe_rank_tolerance=args.certe_rank_tolerance,
         certe_debug=args.certe_debug,
+        faith_budget_uses_expansion=args.faith_budget_uses_expansion,
+        faith_mass_strength=args.faith_mass_strength,
+        faith_variance_strength=args.faith_variance_strength,
+        faith_merge_alpha=args.faith_merge_alpha,
+        faith_temporal_radius=args.faith_temporal_radius,
+        faith_spatial_radius=args.faith_spatial_radius,
+        faith_component_bonus=args.faith_component_bonus,
+        faith_temporal_penalty=args.faith_temporal_penalty,
+        faith_spatial_penalty=args.faith_spatial_penalty,
+        faith_assignment_topk=args.faith_assignment_topk,
+        faith_assignment_temperature=args.faith_assignment_temperature,
+        faith_max_log_bias=args.faith_max_log_bias,
+        faith_attention_strict=args.faith_attention_strict,
+        faith_debug=args.faith_debug,
         prism_budget_uses_expansion=args.prism_budget_uses_expansion,
         prism_metric_dim=args.prism_metric_dim,
         prism_query_atoms=args.prism_query_atoms,
@@ -3128,7 +3189,7 @@ def run(args: BenchmarkArgs):
     _print_header(args, backend)
     if backend == "llava":
         variant = str(args.compression_variant).strip().lower()
-        if args.run_ours and variant in {"certvid_v4", "certvid_v5", "certvid_e"}:
+        if args.run_ours and variant in {"certvid_v4", "certvid_v5", "certvid_e", "faithvid"}:
             print(
                 "[info] LLaVA backend: validated hybrid outer/inner pruning is enabled "
                 f"for {variant}."
@@ -3254,6 +3315,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v5-active][ours]"
         elif variant_name == "certvid_e":
             ours_prefix = "[certvid-e-active][ours]"
+        elif variant_name == "faithvid":
+            ours_prefix = "[faithvid-active][ours]"
         elif variant_name == "prismvid":
             ours_prefix = "[prismvid-active][ours]"
         else:

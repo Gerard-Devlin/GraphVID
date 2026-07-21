@@ -350,6 +350,34 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.certe_rank_tolerance),
             "--certe_debug",
             _str_bool(args.certe_debug),
+            "--faith_budget_uses_expansion",
+            _str_bool(args.faith_budget_uses_expansion),
+            "--faith_mass_strength",
+            str(args.faith_mass_strength),
+            "--faith_variance_strength",
+            str(args.faith_variance_strength),
+            "--faith_merge_alpha",
+            str(args.faith_merge_alpha),
+            "--faith_temporal_radius",
+            str(args.faith_temporal_radius),
+            "--faith_spatial_radius",
+            str(args.faith_spatial_radius),
+            "--faith_component_bonus",
+            str(args.faith_component_bonus),
+            "--faith_temporal_penalty",
+            str(args.faith_temporal_penalty),
+            "--faith_spatial_penalty",
+            str(args.faith_spatial_penalty),
+            "--faith_assignment_topk",
+            str(args.faith_assignment_topk),
+            "--faith_assignment_temperature",
+            str(args.faith_assignment_temperature),
+            "--faith_max_log_bias",
+            str(args.faith_max_log_bias),
+            "--faith_attention_strict",
+            _str_bool(args.faith_attention_strict),
+            "--faith_debug",
+            _str_bool(args.faith_debug),
             "--prism_budget_uses_expansion",
             _str_bool(args.prism_budget_uses_expansion),
             "--prism_metric_dim",
@@ -898,7 +926,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"])
     parser.add_argument("--pruning_layer", type=int, default=20)
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
@@ -1035,6 +1063,20 @@ def main() -> None:
     parser.add_argument("--certe_d_efficiency_floor", type=float, default=0.995)
     parser.add_argument("--certe_rank_tolerance", type=float, default=1e-5)
     parser.add_argument("--certe_debug", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--faith_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--faith_mass_strength", type=float, default=1.0)
+    parser.add_argument("--faith_variance_strength", type=float, default=0.50)
+    parser.add_argument("--faith_merge_alpha", type=float, default=1.0)
+    parser.add_argument("--faith_temporal_radius", type=int, default=1)
+    parser.add_argument("--faith_spatial_radius", type=float, default=0.75)
+    parser.add_argument("--faith_component_bonus", type=float, default=0.08)
+    parser.add_argument("--faith_temporal_penalty", type=float, default=0.04)
+    parser.add_argument("--faith_spatial_penalty", type=float, default=0.04)
+    parser.add_argument("--faith_assignment_topk", type=int, default=2)
+    parser.add_argument("--faith_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--faith_max_log_bias", type=float, default=20.0)
+    parser.add_argument("--faith_attention_strict", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--faith_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_budget_uses_expansion", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prism_metric_dim", type=int, default=256)
     parser.add_argument("--prism_query_atoms", type=int, default=6)
