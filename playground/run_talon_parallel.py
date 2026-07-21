@@ -210,6 +210,14 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             str(args.certv3_fusion_alpha),
             "--certv3_assignment_temperature",
             str(args.certv3_assignment_temperature),
+            "--certv6_scene_temporal" if args.certv6_scene_temporal else "--no-certv6_scene_temporal",
+            "--certv6_gate_enabled" if args.certv6_gate_enabled else "--no-certv6_gate_enabled",
+            "--certv6_continuity_low",
+            str(args.certv6_continuity_low),
+            "--certv6_continuity_high",
+            str(args.certv6_continuity_high),
+            "--certv6_query_per_atom_max",
+            str(args.certv6_query_per_atom_max),
             "--certhr_horizon_gap_seconds",
             str(args.certhr_horizon_gap_seconds),
             "--certhr_chunk_max_seconds",
@@ -890,7 +898,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"])
     parser.add_argument("--pruning_layer", type=int, default=20)
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
@@ -956,6 +964,11 @@ def main() -> None:
     parser.add_argument("--certv3_swap_margin", type=float, default=1e-4)
     parser.add_argument("--certv3_fusion_alpha", type=float, default=0.12)
     parser.add_argument("--certv3_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--certv6_scene_temporal", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv6_gate_enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv6_continuity_low", type=float, default=0.55)
+    parser.add_argument("--certv6_continuity_high", type=float, default=0.80)
+    parser.add_argument("--certv6_query_per_atom_max", type=int, default=3)
     parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
     parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)
     parser.add_argument("--certhr_chunk_max_units", type=int, default=4)

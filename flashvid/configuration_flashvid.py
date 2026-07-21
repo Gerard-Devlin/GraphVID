@@ -118,6 +118,13 @@ class FlashVidConfig:
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
 
+    # CertVID V6: V3 design with scene-aware temporal structure and gating.
+    certv6_scene_temporal: bool = field(default=True)
+    certv6_gate_enabled: bool = field(default=True)
+    certv6_continuity_low: float = field(default=0.55)
+    certv6_continuity_high: float = field(default=0.80)
+    certv6_query_per_atom_max: int = field(default=3)
+
     # CertVID-HR: V3-preserving long-horizon evidence repair.
     certhr_horizon_gap_seconds: float = field(default=4.0)
     certhr_chunk_max_seconds: float = field(default=60.0)

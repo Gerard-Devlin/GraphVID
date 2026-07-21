@@ -204,6 +204,11 @@ def flashvid(
     certv3_swap_margin: float = 1e-4,
     certv3_fusion_alpha: float = 0.12,
     certv3_assignment_temperature: float = 0.07,
+    certv6_scene_temporal: bool = True,
+    certv6_gate_enabled: bool = True,
+    certv6_continuity_low: float = 0.55,
+    certv6_continuity_high: float = 0.80,
+    certv6_query_per_atom_max: int = 3,
     certhr_horizon_gap_seconds: float = 4.0,
     certhr_chunk_max_seconds: float = 60.0,
     certhr_chunk_max_units: int = 4,
@@ -514,6 +519,7 @@ def flashvid(
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
+            "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
@@ -641,10 +647,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_hr|certvid_v4|certvid_v5|certvid_e|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_v4|certvid_v5|certvid_e|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -751,6 +757,11 @@ def flashvid(
         certv3_swap_margin=certv3_swap_margin,
         certv3_fusion_alpha=certv3_fusion_alpha,
         certv3_assignment_temperature=certv3_assignment_temperature,
+        certv6_scene_temporal=certv6_scene_temporal,
+        certv6_gate_enabled=certv6_gate_enabled,
+        certv6_continuity_low=certv6_continuity_low,
+        certv6_continuity_high=certv6_continuity_high,
+        certv6_query_per_atom_max=certv6_query_per_atom_max,
         certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=certhr_chunk_max_seconds,
         certhr_chunk_max_units=certhr_chunk_max_units,

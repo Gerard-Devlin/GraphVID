@@ -162,6 +162,11 @@ class BenchmarkArgs:
     certv3_swap_margin: float = field(default=1e-4)
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
+    certv6_scene_temporal: bool = field(default=True)
+    certv6_gate_enabled: bool = field(default=True)
+    certv6_continuity_low: float = field(default=0.55)
+    certv6_continuity_high: float = field(default=0.80)
+    certv6_query_per_atom_max: int = field(default=3)
     certhr_horizon_gap_seconds: float = field(default=4.0)
     certhr_chunk_max_seconds: float = field(default=60.0)
     certhr_chunk_max_units: int = field(default=4)
@@ -2590,6 +2595,11 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv3_swap_margin=args.certv3_swap_margin,
         certv3_fusion_alpha=args.certv3_fusion_alpha,
         certv3_assignment_temperature=args.certv3_assignment_temperature,
+        certv6_scene_temporal=args.certv6_scene_temporal,
+        certv6_gate_enabled=args.certv6_gate_enabled,
+        certv6_continuity_low=args.certv6_continuity_low,
+        certv6_continuity_high=args.certv6_continuity_high,
+        certv6_query_per_atom_max=args.certv6_query_per_atom_max,
         certhr_horizon_gap_seconds=args.certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=args.certhr_chunk_max_seconds,
         certhr_chunk_max_units=args.certhr_chunk_max_units,
@@ -3234,6 +3244,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v2-active][ours]"
         elif variant_name == "certvid_v3":
             ours_prefix = "[certvid-v3-active][ours]"
+        elif variant_name == "certvid_v6":
+            ours_prefix = "[certvid-v6-active][ours]"
         elif variant_name == "certvid_hr":
             ours_prefix = "[certvid-hr-active][ours]"
         elif variant_name == "certvid_v4":

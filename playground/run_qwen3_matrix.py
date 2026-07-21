@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
         return "ours"
     return method
 
@@ -503,6 +503,14 @@ def _build_command(
                 str(args.certv3_fusion_alpha),
                 "--certv3_assignment_temperature",
                 str(args.certv3_assignment_temperature),
+                "--certv6_scene_temporal" if args.certv6_scene_temporal else "--no-certv6_scene_temporal",
+                "--certv6_gate_enabled" if args.certv6_gate_enabled else "--no-certv6_gate_enabled",
+                "--certv6_continuity_low",
+                str(args.certv6_continuity_low),
+                "--certv6_continuity_high",
+                str(args.certv6_continuity_high),
+                "--certv6_query_per_atom_max",
+                str(args.certv6_query_per_atom_max),
                 "--certhr_horizon_gap_seconds",
                 str(args.certhr_horizon_gap_seconds),
                 "--certhr_chunk_max_seconds",
@@ -766,7 +774,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_hr,certvid_v4,certvid_v5,certvid_e,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_hr,certvid_v4,certvid_v5,certvid_e,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -880,6 +888,11 @@ def main() -> None:
     parser.add_argument("--certv3_swap_margin", type=float, default=1e-4)
     parser.add_argument("--certv3_fusion_alpha", type=float, default=0.12)
     parser.add_argument("--certv3_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--certv6_scene_temporal", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv6_gate_enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certv6_continuity_low", type=float, default=0.55)
+    parser.add_argument("--certv6_continuity_high", type=float, default=0.80)
+    parser.add_argument("--certv6_query_per_atom_max", type=int, default=3)
     parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
     parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)
     parser.add_argument("--certhr_chunk_max_units", type=int, default=4)
