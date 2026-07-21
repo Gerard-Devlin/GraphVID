@@ -304,6 +304,28 @@ def _v3_analysis(
     )
 
 
+def _analysis_from_sink(sink: Dict[str, Any]) -> _V3Analysis:
+    """Build the HR view over intermediates captured by the exact V3 pass."""
+
+    required = {
+        "metric_flat",
+        "design",
+        "demand_weight",
+        "attention",
+        "query_score",
+        "query_relevance",
+        "query_confidence",
+        "component_ids",
+        "frame_ids",
+        "temporal_ids",
+        "ridge",
+    }
+    missing = sorted(required.difference(sink))
+    if missing:
+        raise RuntimeError(f"CertVID-HR missing captured V3 tensors: {missing}")
+    return _V3Analysis(**{name: sink[name] for name in required})
+
+
 def _information_state(
     design: torch.Tensor,
     selected: torch.Tensor,
@@ -326,10 +348,15 @@ def _post_removal_coverage(
     selected: torch.Tensor,
     token_chunk_ids: torch.Tensor,
     chunk_count: int,
-) -> Dict[int, float]:
+) -> torch.Tensor:
     """Compute every single-anchor removal score with one matrix per chunk."""
 
-    scores: Dict[int, float] = {}
+    scores = torch.full(
+        (metric_flat.shape[0],),
+        float("-inf"),
+        dtype=torch.float32,
+        device=metric_flat.device,
+    )
     selected_chunks = token_chunk_ids.index_select(0, selected)
     for chunk in range(chunk_count):
         members = torch.nonzero(token_chunk_ids == chunk, as_tuple=False).reshape(-1)
@@ -341,10 +368,213 @@ def _post_removal_coverage(
         winners = top.indices[:, 0]
         best = top.values[:, 0]
         second = top.values[:, 1]
-        for position, token in enumerate(anchors.tolist()):
-            post = torch.where(winners == position, second, best).mean()
-            scores[int(token)] = float(post.item())
+        positions = torch.arange(anchors.numel(), device=anchors.device)
+        post = torch.where(
+            winners.unsqueeze(1) == positions.unsqueeze(0),
+            second.unsqueeze(1),
+            best.unsqueeze(1),
+        ).mean(dim=0)
+        scores.index_copy_(0, anchors, post)
     return scores
+
+
+def _missing_query_requirements(
+    requirements: List[Tuple[int, int, float]],
+    query_relevance: torch.Tensor,
+    selected: torch.Tensor,
+    token_chunk_ids: torch.Tensor,
+) -> List[Tuple[int, int, float]]:
+    return [
+        requirement
+        for requirement in requirements
+        if not _requirement_covered(requirement, query_relevance, selected, token_chunk_ids)
+    ]
+
+
+def _query_critical_tokens(
+    requirements: List[Tuple[int, int, float]],
+    query_relevance: torch.Tensor,
+    selected: torch.Tensor,
+    selected_chunks: torch.Tensor,
+) -> Set[int]:
+    """Return anchors whose removal would break a currently met query certificate."""
+
+    critical: Set[int] = set()
+    for atom, chunk, threshold in requirements:
+        anchors = selected[selected_chunks == chunk]
+        if anchors.numel() == 0:
+            continue
+        qualified = anchors[query_relevance[atom].index_select(0, anchors) >= float(threshold)]
+        if qualified.numel() == 1:
+            critical.add(int(qualified[0].item()))
+    return critical
+
+
+def _addition_pool(
+    analysis: _V3Analysis,
+    selected: torch.Tensor,
+    members: torch.Tensor,
+    current_similarity: torch.Tensor,
+    current_coverage: torch.Tensor,
+    target_requirement: Optional[Tuple[int, int, float]],
+    pool_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Score every addition with one batched similarity matrix."""
+
+    candidates = members[~torch.isin(members, selected)]
+    if candidates.numel() == 0:
+        empty_float = torch.empty(0, dtype=torch.float32, device=members.device)
+        return candidates, empty_float, empty_float, empty_float
+
+    member_features = analysis.metric_flat.index_select(0, members)
+    candidate_features = analysis.metric_flat.index_select(0, candidates)
+    candidate_similarity = member_features @ candidate_features.T
+    post_coverage = torch.maximum(current_similarity.unsqueeze(1), candidate_similarity).mean(dim=0)
+    coverage_gain = post_coverage - current_coverage
+    query_gain = torch.zeros_like(coverage_gain)
+    if target_requirement is not None:
+        atom, _, threshold = target_requirement
+        query_gain = (
+            analysis.query_relevance[atom].index_select(0, candidates) - float(threshold)
+        ).clamp_min(0.0)
+    gain = coverage_gain + 0.5 * query_gain
+
+    # candidates inherit ascending global indices from members; stable sorting
+    # therefore preserves the original gain-then-index tie break.
+    order = torch.argsort(gain, descending=True, stable=True)[: max(1, int(pool_size))]
+    return (
+        candidates.index_select(0, order),
+        gain.index_select(0, order),
+        coverage_gain.index_select(0, order),
+        query_gain.index_select(0, order),
+    )
+
+
+def _removal_pool(
+    analysis: _V3Analysis,
+    selected: torch.Tensor,
+    selected_chunks: torch.Tensor,
+    protected: Set[int],
+    requirements: List[Tuple[int, int, float]],
+    token_chunk_ids: torch.Tensor,
+    target_chunk: int,
+    coverage_target: float,
+    deficit_threshold: float,
+    information_inverse: torch.Tensor,
+    pool_size: int,
+    chunk_count: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Filter and rank removable anchors without per-anchor GPU syncs."""
+
+    post_coverage = _post_removal_coverage(
+        analysis.metric_flat,
+        selected,
+        token_chunk_ids,
+        chunk_count,
+    ).index_select(0, selected)
+    chunk_sizes = torch.bincount(selected_chunks, minlength=chunk_count)
+    eligible = selected_chunks != int(target_chunk)
+    eligible &= chunk_sizes.index_select(0, selected_chunks) > 1
+    eligible &= post_coverage >= float(coverage_target - deficit_threshold)
+
+    locked = set(protected)
+    locked.update(
+        _query_critical_tokens(
+            requirements,
+            analysis.query_relevance,
+            selected,
+            selected_chunks,
+        )
+    )
+    if locked:
+        locked_tensor = torch.tensor(sorted(locked), dtype=torch.long, device=selected.device)
+        eligible &= ~torch.isin(selected, locked_tensor)
+
+    rows = analysis.design.index_select(0, selected).float()
+    leverage = torch.sum((rows @ information_inverse) * rows, dim=1)
+    denominator = 1.0 - leverage
+    eligible &= denominator > 1e-6
+    positions = torch.nonzero(eligible, as_tuple=False).reshape(-1)
+    if positions.numel() == 0:
+        return selected.new_empty(0), rows.new_empty(0)
+
+    tokens = selected.index_select(0, positions)
+    losses = -torch.log(denominator.index_select(0, positions))
+    # selected is globally sorted, so stable loss sorting retains token order.
+    order = torch.argsort(losses, descending=False, stable=True)[: max(1, int(pool_size))]
+    return tokens.index_select(0, order), losses.index_select(0, order)
+
+
+def _best_swap(
+    analysis: _V3Analysis,
+    additions: torch.Tensor,
+    gains: torch.Tensor,
+    coverage_gains: torch.Tensor,
+    query_gains: torch.Tensor,
+    removals: torch.Tensor,
+    information_inverse: torch.Tensor,
+    current_logdet: float,
+    baseline_logdet: float,
+    d_floor: float,
+    *,
+    require_positive_gain: bool,
+) -> Optional[Tuple[int, int, float, float, float]]:
+    """Evaluate the Cartesian swap pool in one tensor operation."""
+
+    if additions.numel() == 0 or removals.numel() == 0:
+        return None
+    add_rows = analysis.design.index_select(0, additions).float()
+    remove_rows = analysis.design.index_select(0, removals).float()
+    inverse_remove = remove_rows @ information_inverse
+    remove_denominator = 1.0 - torch.sum(inverse_remove * remove_rows, dim=1)
+    valid_remove = remove_denominator > 1e-6
+
+    base_add = torch.sum((add_rows @ information_inverse) * add_rows, dim=1)
+    cross = add_rows @ inverse_remove.T
+    leverage_without = (
+        base_add.unsqueeze(1)
+        + cross.square() / remove_denominator.clamp_min(1e-6).unsqueeze(0)
+    )
+    candidate_logdet = (
+        float(current_logdet)
+        + torch.log(remove_denominator.clamp_min(1e-6)).unsqueeze(0)
+        + torch.log1p(leverage_without.clamp_min(0.0))
+    )
+    design_dim = max(1, analysis.design.shape[1])
+    d_efficiency = torch.exp((candidate_logdet - float(baseline_logdet)) / design_dim)
+    valid = valid_remove.unsqueeze(0) & (d_efficiency + 1e-12 >= float(d_floor))
+    if require_positive_gain:
+        valid &= gains.unsqueeze(1) > 1e-8
+    valid_pairs = torch.nonzero(valid, as_tuple=False)
+    if valid_pairs.numel() == 0:
+        return None
+
+    # One host transfer replaces hundreds of scalar .item() synchronizations.
+    pair_rows = valid_pairs[:, 0]
+    pair_cols = valid_pairs[:, 1]
+    gain_values = gains.index_select(0, pair_rows).detach().cpu().tolist()
+    logdet_values = candidate_logdet[pair_rows, pair_cols].detach().cpu().tolist()
+    add_values = additions.index_select(0, pair_rows).detach().cpu().tolist()
+    remove_values = removals.index_select(0, pair_cols).detach().cpu().tolist()
+    efficiency_values = d_efficiency[pair_rows, pair_cols].detach().cpu().tolist()
+
+    best_position = max(
+        range(len(gain_values)),
+        key=lambda index: (
+            float(gain_values[index]),
+            float(logdet_values[index]),
+            -int(add_values[index]),
+            -int(remove_values[index]),
+        ),
+    )
+    add_position = int(pair_rows[best_position].item())
+    return (
+        int(add_values[best_position]),
+        int(remove_values[best_position]),
+        float(coverage_gains[add_position].item()),
+        float(query_gains[add_position].item()),
+        float(efficiency_values[best_position]),
+    )
 
 
 def _requirement_covered(
@@ -371,7 +601,6 @@ def _repair_selection(
     """Apply deterministic, D-efficient swaps to unresolved horizon chunks."""
 
     selected = original_selected.clone()
-    selected_set = {int(value) for value in selected.tolist()}
     chunk_count = int(token_chunk_ids.max().item()) + 1
     max_swap_ratio = min(1.0, max(0.0, float(getattr(config, "certhr_max_swap_ratio", 0.05))))
     max_swaps = int(math.ceil(max_swap_ratio * selected.numel()))
@@ -381,7 +610,20 @@ def _repair_selection(
     remove_pool = max(1, int(getattr(config, "certhr_remove_pool", 24)))
     d_floor = float(getattr(config, "certhr_d_efficiency_floor", 0.995))
     query_threshold = float(getattr(config, "certv3_query_threshold", 0.10))
-    _, _, baseline_logdet = _information_state(analysis.design, original_selected, analysis.ridge)
+    _, baseline_inverse, baseline_logdet = _information_state(
+        analysis.design,
+        original_selected,
+        analysis.ridge,
+    )
+    requirements, _ = _query_requirements(
+        analysis.query_relevance,
+        analysis.query_confidence,
+        token_chunk_ids,
+        selected,
+        confidence_threshold=query_threshold,
+        peak_quantile=float(getattr(config, "certhr_query_peak_quantile", 0.90)),
+        peak_floor=float(getattr(config, "certhr_query_peak_floor", 0.75)),
+    )
     swaps: List[Dict[str, Any]] = []
 
     for _ in range(max_swaps):
@@ -392,14 +634,11 @@ def _repair_selection(
             for chunk in range(chunk_count)
             if coverage_target - float(coverage[chunk].item()) > deficit_threshold
         ]
-        requirements, missing = _query_requirements(
+        missing = _missing_query_requirements(
+            requirements,
             analysis.query_relevance,
-            analysis.query_confidence,
-            token_chunk_ids,
             selected,
-            confidence_threshold=query_threshold,
-            peak_quantile=float(getattr(config, "certhr_query_peak_quantile", 0.90)),
-            peak_floor=float(getattr(config, "certhr_query_peak_floor", 0.75)),
+            token_chunk_ids,
         )
         if not segment_deficits and not missing:
             break
@@ -419,103 +658,64 @@ def _repair_selection(
             if existing.numel()
             else torch.zeros(members.numel(), device=analysis.metric_flat.device)
         )
-        additions: List[Tuple[float, int, float, float]] = []
-        for token_tensor in members:
-            token = int(token_tensor.item())
-            if token in selected_set:
-                continue
-            candidate_similarity = analysis.metric_flat.index_select(0, members) @ analysis.metric_flat[token]
-            post_coverage = float(torch.maximum(current_similarity, candidate_similarity).mean().item())
-            coverage_gain = post_coverage - float(coverage[target_chunk].item())
-            query_gain = 0.0
-            if target_requirement is not None:
-                atom, _, threshold = target_requirement
-                query_gain = max(0.0, float(analysis.query_relevance[atom, token].item()) - float(threshold))
-            gain = coverage_gain + 0.5 * query_gain
-            additions.append((gain, token, coverage_gain, query_gain))
-        additions.sort(key=lambda item: (-item[0], item[1]))
-        additions = additions[:add_pool]
-        if not additions:
+        additions, gains, coverage_gains, query_gains = _addition_pool(
+            analysis,
+            selected,
+            members,
+            current_similarity,
+            coverage[target_chunk],
+            target_requirement,
+            add_pool,
+        )
+        if additions.numel() == 0:
             break
 
-        _, information_inverse, current_logdet = _information_state(analysis.design, selected, analysis.ridge)
+        if not swaps:
+            information_inverse = baseline_inverse
+            current_logdet = baseline_logdet
+        else:
+            _, information_inverse, current_logdet = _information_state(
+                analysis.design,
+                selected,
+                analysis.ridge,
+            )
         selected_chunks = token_chunk_ids.index_select(0, selected)
-        post_removal_coverage = _post_removal_coverage(
-            analysis.metric_flat,
+        removals, _ = _removal_pool(
+            analysis,
             selected,
+            selected_chunks,
+            protected,
+            requirements,
             token_chunk_ids,
+            target_chunk,
+            coverage_target,
+            deficit_threshold,
+            information_inverse,
+            remove_pool,
             chunk_count,
         )
-        removals: List[Tuple[float, int]] = []
-        for token_tensor, source_chunk_tensor in zip(selected, selected_chunks):
-            token = int(token_tensor.item())
-            source_chunk = int(source_chunk_tensor.item())
-            if token in protected or source_chunk == target_chunk:
-                continue
-            source_selected = selected[selected_chunks == source_chunk]
-            if source_selected.numel() <= 1:
-                continue
-            candidate_selected = selected[selected != token]
-            post_coverage = post_removal_coverage.get(token, 0.0)
-            if coverage_target - post_coverage > deficit_threshold:
-                continue
-            if any(
-                requirement[1] == source_chunk
-                and _requirement_covered(requirement, analysis.query_relevance, selected, token_chunk_ids)
-                and not _requirement_covered(requirement, analysis.query_relevance, candidate_selected, token_chunk_ids)
-                for requirement in requirements
-            ):
-                continue
-            row = analysis.design[token].float()
-            leverage = float((row @ information_inverse @ row).item())
-            denominator = 1.0 - leverage
-            if denominator <= 1e-6:
-                continue
-            removal_loss = -math.log(denominator)
-            removals.append((removal_loss, token))
-        removals.sort(key=lambda item: (item[0], item[1]))
-        removals = removals[:remove_pool]
-        if not removals:
+        if removals.numel() == 0:
             break
 
-        best: Optional[Tuple[Tuple[float, float, int, int], int, int, float, float, float]] = None
-        design_dim = max(1, analysis.design.shape[1])
-        for gain, add_token, coverage_gain, query_gain in additions:
-            add_row = analysis.design[add_token].float()
-            for _, remove_token in removals:
-                remove_row = analysis.design[remove_token].float()
-                inv_remove = information_inverse @ remove_row
-                denominator = 1.0 - float((remove_row @ inv_remove).item())
-                if denominator <= 1e-6:
-                    continue
-                inverse_without = information_inverse + torch.outer(inv_remove, inv_remove) / denominator
-                add_gain = math.log1p(max(0.0, float((add_row @ inverse_without @ add_row).item())))
-                candidate_logdet = current_logdet + math.log(denominator) + add_gain
-                d_efficiency = math.exp((candidate_logdet - baseline_logdet) / design_dim)
-                if d_efficiency + 1e-12 < d_floor:
-                    continue
-                repair_gain = gain
-                if repair_gain <= 1e-8 and target_requirement is None:
-                    continue
-                key = (repair_gain, candidate_logdet, -add_token, -remove_token)
-                candidate = (
-                    key,
-                    add_token,
-                    remove_token,
-                    coverage_gain,
-                    query_gain,
-                    d_efficiency,
-                )
-                if best is None or candidate[0] > best[0]:
-                    best = candidate
+        best = _best_swap(
+            analysis,
+            additions,
+            gains,
+            coverage_gains,
+            query_gains,
+            removals,
+            information_inverse,
+            current_logdet,
+            baseline_logdet,
+            d_floor,
+            require_positive_gain=target_requirement is None,
+        )
         if best is None:
             break
 
-        _, add_token, remove_token, coverage_gain, query_gain, d_efficiency = best
+        add_token, remove_token, coverage_gain, query_gain, d_efficiency = best
         selected[selected == remove_token] = add_token
         selected = torch.sort(selected).values
-        selected_set.remove(remove_token)
-        selected_set.add(add_token)
         swaps.append(
             {
                 "added": add_token,
@@ -534,14 +734,11 @@ def _repair_selection(
         for chunk in range(chunk_count)
         if final_target - float(final_coverage[chunk].item()) > deficit_threshold
     ]
-    _, final_missing = _query_requirements(
+    final_missing = _missing_query_requirements(
+        requirements,
         analysis.query_relevance,
-        analysis.query_confidence,
-        token_chunk_ids,
         selected,
-        confidence_threshold=query_threshold,
-        peak_quantile=float(getattr(config, "certhr_query_peak_quantile", 0.90)),
-        peak_floor=float(getattr(config, "certhr_query_peak_floor", 0.75)),
+        token_chunk_ids,
     )
     _, _, final_logdet = _information_state(analysis.design, selected, analysis.ridge)
     final_d_efficiency = math.exp(
@@ -614,13 +811,6 @@ def certvid_hr_compression(
     """Run V3 exactly, then repair only verified long-horizon evidence deficits."""
 
     config = flashvid_config
-    v3_output, v3_indices = certvid_v3_compression(
-        video_features=video_features,
-        cls_attention=cls_attention,
-        flashvid_config=config,
-        question_features=question_features,
-    )
-    v3_plan = getattr(config, "_certvid_plan", None)
     diagnostics: Dict[str, Any] = {
         "timestamp_source": str(getattr(config, "_certvid_frame_times_source", "missing")),
         "fallback_reason": None,
@@ -628,15 +818,33 @@ def certvid_hr_compression(
         "modified_ratio": 0.0,
         "d_efficiency": 1.0,
     }
-    if v3_plan is None or v3_indices.numel() == 0:
-        return _fallback(config, diagnostics, "missing_v3_plan", v3_output, v3_indices)
-
     raw_frame_times = getattr(config, "_certvid_frame_times_sec", None)
     frame_times, timestamp_error = _normalize_frame_times(
         raw_frame_times,
         video_features.shape[0],
         device=video_features.device,
     )
+    gaps = frame_times[1:] - frame_times[:-1] if frame_times is not None else None
+    max_gap = float(gaps.max().item()) if gaps is not None and gaps.numel() else 0.0
+    diagnostics["max_timestamp_gap"] = max_gap
+    horizon_threshold = float(getattr(config, "certhr_horizon_gap_seconds", 4.0))
+
+    # Capture V3 intermediates only when HR can actually enter its repair path.
+    # This removes the former second full analysis pass without retaining any
+    # tensors on the persistent model configuration.
+    analysis_sink: Optional[Dict[str, Any]] = (
+        {} if frame_times is not None and max_gap > horizon_threshold else None
+    )
+    v3_output, v3_indices = certvid_v3_compression(
+        video_features=video_features,
+        cls_attention=cls_attention,
+        flashvid_config=config,
+        question_features=question_features,
+        analysis_sink=analysis_sink,
+    )
+    v3_plan = getattr(config, "_certvid_plan", None)
+    if v3_plan is None or v3_indices.numel() == 0:
+        return _fallback(config, diagnostics, "missing_v3_plan", v3_output, v3_indices)
     if frame_times is None:
         return _fallback(config, diagnostics, timestamp_error or "invalid_timestamps", v3_output, v3_indices)
     raw_timestamp_count = int(torch.as_tensor(raw_frame_times).numel())
@@ -645,14 +853,14 @@ def certvid_hr_compression(
     diagnostics["timestamp_mapping"] = (
         "direct" if raw_timestamp_count == int(video_features.shape[0]) else "contiguous_group_mean"
     )
-    gaps = frame_times[1:] - frame_times[:-1]
-    max_gap = float(gaps.max().item()) if gaps.numel() else 0.0
-    diagnostics["max_timestamp_gap"] = max_gap
-    if max_gap <= float(getattr(config, "certhr_horizon_gap_seconds", 4.0)):
+    if max_gap <= horizon_threshold:
         return _fallback(config, diagnostics, "short_horizon", v3_output, v3_indices)
+    if analysis_sink is not None and bool(analysis_sink.get("identity", False)):
+        return _fallback(config, diagnostics, "identity_budget", v3_output, v3_indices)
 
     try:
-        analysis = _v3_analysis(video_features, cls_attention, question_features, config)
+        analysis = _analysis_from_sink(analysis_sink or {})
+        diagnostics["analysis_source"] = "v3_capture"
         metric_frames = analysis.metric_flat.reshape(video_features.shape[0], video_features.shape[1], -1)
         frame_chunk_ids, semantic_gap, semantic_threshold = _build_horizon_chunks(
             metric_frames,

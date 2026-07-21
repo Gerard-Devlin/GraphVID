@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Any, MutableMapping, Optional
 
 import torch
 import torch.nn.functional as F
@@ -426,8 +426,12 @@ def certvid_v3_compression(
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
+    *,
+    analysis_sink: Optional[MutableMapping[str, Any]] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Select a certified D-optimal visual evidence coreset under one budget."""
+    if analysis_sink is not None:
+        analysis_sink.clear()
     if video_features.ndim != 3:
         raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
     frame_count, tokens_per_frame, _ = video_features.shape
@@ -446,6 +450,8 @@ def certvid_v3_compression(
         query_confidence = 0.0
         swaps = 0
         logdet = 0.0
+        if analysis_sink is not None:
+            analysis_sink["identity"] = True
     else:
         metric_dim = max(32, _cfg_int(flashvid_config, "certv3_metric_dim", 96))
         metric_flat = _metric_features(video_features, metric_dim)
@@ -617,6 +623,25 @@ def certvid_v3_compression(
         output = apply_certvid_plan(flat_features, plan)
         candidates = int(candidate_indices.numel())
         components = int(component_sizes.numel())
+        if analysis_sink is not None:
+            # CertVID-HR consumes these tensors immediately and never stores
+            # them on the persistent model config. Existing V3 callers keep
+            # the exact same path because analysis_sink defaults to None.
+            analysis_sink.update(
+                {
+                    "metric_flat": metric_flat,
+                    "design": design,
+                    "demand_weight": demand_weight,
+                    "attention": attention,
+                    "query_score": query_score,
+                    "query_relevance": query_relevance,
+                    "query_confidence": float(query_confidence),
+                    "component_ids": component_ids,
+                    "frame_ids": frame_ids,
+                    "temporal_ids": temporal_ids,
+                    "ridge": float(ridge),
+                }
+            )
 
     setattr(flashvid_config, "_certvid_plan", plan)
     flashvid_config.vision_token_length = int(output.shape[0])

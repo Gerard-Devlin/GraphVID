@@ -9,9 +9,11 @@ import torch.nn.functional as F
 
 from flashvid.certvid_hr import (
     _V3Analysis,
+    _analysis_from_sink,
     _normalize_frame_times,
     _query_requirements,
     _repair_selection,
+    _v3_analysis,
     certvid_hr_compression,
 )
 from flashvid.certvid_qwen3 import compress_certvid_deepstack
@@ -76,6 +78,57 @@ def _timestamp_tests() -> None:
     assert mapped is None and error == "nonmonotonic_timestamps"
     mapped, error = _normalize_frame_times([0.0, float("nan")], 2, device=torch.device("cpu"))
     assert mapped is None and error == "nonfinite_timestamps"
+
+
+def _analysis_capture_test() -> None:
+    torch.manual_seed(23)
+    video = torch.randn(6, 16, 64)
+    attention = torch.randn(6, 16)
+    question = torch.randn(9, 64)
+
+    baseline_config = FlashVidConfig(retention_ratio=0.25, expansion=1.0, H=4, W=4)
+    baseline_output, baseline_indices = certvid_v3_compression(
+        video,
+        attention,
+        baseline_config,
+        question,
+    )
+
+    captured: dict[str, object] = {}
+    capture_config = FlashVidConfig(retention_ratio=0.25, expansion=1.0, H=4, W=4)
+    capture_output, capture_indices = certvid_v3_compression(
+        video,
+        attention,
+        capture_config,
+        question,
+        analysis_sink=captured,
+    )
+    assert torch.equal(capture_output, baseline_output)
+    assert torch.equal(capture_indices, baseline_indices)
+    assert _same_plan(capture_config._certvid_plan, baseline_config._certvid_plan)
+
+    captured_analysis = _analysis_from_sink(captured)
+    rebuilt_analysis = _v3_analysis(video, attention, question, capture_config)
+    tensor_fields = (
+        "metric_flat",
+        "design",
+        "demand_weight",
+        "attention",
+        "query_score",
+        "query_relevance",
+        "component_ids",
+        "frame_ids",
+        "temporal_ids",
+    )
+    for field in tensor_fields:
+        torch.testing.assert_close(
+            getattr(captured_analysis, field),
+            getattr(rebuilt_analysis, field),
+            rtol=0.0,
+            atol=0.0,
+        )
+    assert captured_analysis.query_confidence == rebuilt_analysis.query_confidence
+    assert captured_analysis.ridge == rebuilt_analysis.ridge
 
 
 def _long_horizon_fallback_test() -> None:
@@ -187,6 +240,7 @@ def _repair_test() -> None:
 def main() -> None:
     _fallback_tests()
     _timestamp_tests()
+    _analysis_capture_test()
     _long_horizon_fallback_test()
     _query_deficit_test()
     _repair_test()
