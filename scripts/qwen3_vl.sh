@@ -180,6 +180,22 @@ CERTV3_SWAP_MARGIN="${CERTV3_SWAP_MARGIN:-0.0001}"
 CERTV3_FUSION_ALPHA="${CERTV3_FUSION_ALPHA:-0.12}"
 CERTV3_ASSIGNMENT_TEMPERATURE="${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}"
 
+CERTHR_TOKEN_SELECTION_METHOD="${CERTHR_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
+CERTHR_HORIZON_GAP_SECONDS="${CERTHR_HORIZON_GAP_SECONDS:-4.0}"
+CERTHR_CHUNK_MAX_SECONDS="${CERTHR_CHUNK_MAX_SECONDS:-60.0}"
+CERTHR_CHUNK_MAX_UNITS="${CERTHR_CHUNK_MAX_UNITS:-4}"
+CERTHR_SEMANTIC_QUANTILE="${CERTHR_SEMANTIC_QUANTILE:-0.85}"
+CERTHR_SEMANTIC_FLOOR="${CERTHR_SEMANTIC_FLOOR:-0.10}"
+CERTHR_COVERAGE_FLOOR="${CERTHR_COVERAGE_FLOOR:-0.70}"
+CERTHR_DEFICIT_THRESHOLD="${CERTHR_DEFICIT_THRESHOLD:-0.05}"
+CERTHR_QUERY_PEAK_QUANTILE="${CERTHR_QUERY_PEAK_QUANTILE:-0.90}"
+CERTHR_QUERY_PEAK_FLOOR="${CERTHR_QUERY_PEAK_FLOOR:-0.75}"
+CERTHR_MAX_SWAP_RATIO="${CERTHR_MAX_SWAP_RATIO:-0.05}"
+CERTHR_D_EFFICIENCY_FLOOR="${CERTHR_D_EFFICIENCY_FLOOR:-0.995}"
+CERTHR_ADD_POOL="${CERTHR_ADD_POOL:-32}"
+CERTHR_REMOVE_POOL="${CERTHR_REMOVE_POOL:-24}"
+CERTHR_DEBUG="${CERTHR_DEBUG:-False}"
+
 CERTV4_TOKEN_SELECTION_METHOD="${CERTV4_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
 CERTV4_EXPANSION="${CERTV4_EXPANSION:-$EXPANSION}"
 CERTV4_PRUNING_LAYER="${CERTV4_PRUNING_LAYER:-28}"
@@ -373,6 +389,10 @@ method_flash_args() {
     certvid_v3)
       printf 'compression_variant=certvid_v3,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
         "$CERTV3_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
+      ;;
+    certvid_hr)
+      printf 'compression_variant=certvid_hr,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certhr_horizon_gap_seconds=%s,certhr_chunk_max_seconds=%s,certhr_chunk_max_units=%s,certhr_semantic_quantile=%s,certhr_semantic_floor=%s,certhr_coverage_floor=%s,certhr_deficit_threshold=%s,certhr_query_peak_quantile=%s,certhr_query_peak_floor=%s,certhr_max_swap_ratio=%s,certhr_d_efficiency_floor=%s,certhr_add_pool=%s,certhr_remove_pool=%s,certhr_debug=%s' \
+        "$CERTHR_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTHR_HORIZON_GAP_SECONDS" "$CERTHR_CHUNK_MAX_SECONDS" "$CERTHR_CHUNK_MAX_UNITS" "$CERTHR_SEMANTIC_QUANTILE" "$CERTHR_SEMANTIC_FLOOR" "$CERTHR_COVERAGE_FLOOR" "$CERTHR_DEFICIT_THRESHOLD" "$CERTHR_QUERY_PEAK_QUANTILE" "$CERTHR_QUERY_PEAK_FLOOR" "$CERTHR_MAX_SWAP_RATIO" "$CERTHR_D_EFFICIENCY_FLOOR" "$CERTHR_ADD_POOL" "$CERTHR_REMOVE_POOL" "$CERTHR_DEBUG"
       ;;
     certvid_v4)
       printf 'compression_variant=certvid_v4,token_selection_method=%s,certv4_budget_mode=%s,certv4_attention_policy=%s,certv4_attention_eps=%s,certv4_certificate_budget_ratio=%s,certv4_query_mode=%s,certv4_design_protect_ratio=%s,certv4_query_atoms=%s,certv4_temporal_bins=%s,certv4_spatial_bins=%s,certv4_candidate_multiplier=%s,certv4_track_threshold=%s,certv4_spatial_penalty=%s,certv4_metric_dim=%s,certv4_frame_coverage_ratio=%s,certv4_cell_coverage_ratio=%s,certv4_query_threshold=%s,certv4_query_per_atom=%s,certv4_structural_weight=%s,certv4_whitening_strength=%s,certv4_quality_floor=%s,certv4_ridge=%s,certv4_swap_steps=%s,certv4_swap_pool=%s,certv4_swap_margin=%s,certv4_fusion_alpha=%s,certv4_assignment_temperature=%s,certv4_debug=%s' \

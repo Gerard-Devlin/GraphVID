@@ -58,6 +58,34 @@ else:
     best_fit_attn_implementation = "eager"
 
 
+def _flashvid_runtime_config(model):
+    candidates = [model, getattr(model, "model", None)]
+    nested = getattr(getattr(model, "model", None), "language_model", None)
+    candidates.append(nested)
+    for candidate in candidates:
+        config = getattr(candidate, "flashvid_config", None) if candidate is not None else None
+        if config is not None:
+            return config
+    return None
+
+
+def _publish_certhr_timing(model, timing):
+    config = _flashvid_runtime_config(model)
+    if config is None:
+        return None
+    config._certvid_frame_times_sec = None
+    config._certvid_frame_times_source = "missing"
+    if str(getattr(config, "compression_variant", "")).strip().lower() == "certvid_hr" and timing is not None:
+        config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
+    return config
+
+
+def _clear_certhr_timing(config) -> None:
+    if config is not None:
+        config._certvid_frame_times_sec = None
+        config._certvid_frame_times_source = "missing"
+
+
 @register_model("llava_onevision")
 class Llava_OneVision(lmms):
     """
@@ -155,6 +183,21 @@ class Llava_OneVision(lmms):
         certv3_swap_margin: float = 1e-4,
         certv3_fusion_alpha: float = 0.12,
         certv3_assignment_temperature: float = 0.07,
+        # CertVID-HR parameters
+        certhr_horizon_gap_seconds: float = 4.0,
+        certhr_chunk_max_seconds: float = 60.0,
+        certhr_chunk_max_units: int = 4,
+        certhr_semantic_quantile: float = 0.85,
+        certhr_semantic_floor: float = 0.10,
+        certhr_coverage_floor: float = 0.70,
+        certhr_deficit_threshold: float = 0.05,
+        certhr_query_peak_quantile: float = 0.90,
+        certhr_query_peak_floor: float = 0.75,
+        certhr_max_swap_ratio: float = 0.05,
+        certhr_d_efficiency_floor: float = 0.995,
+        certhr_add_pool: int = 32,
+        certhr_remove_pool: int = 24,
+        certhr_debug: bool = False,
         # CertVID V4 parameters
         certv4_budget_mode: str = "layer_average",
         certv4_attention_policy: str = "validated",
@@ -348,6 +391,20 @@ class Llava_OneVision(lmms):
                 certv3_swap_margin=certv3_swap_margin,
                 certv3_fusion_alpha=certv3_fusion_alpha,
                 certv3_assignment_temperature=certv3_assignment_temperature,
+                certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
+                certhr_chunk_max_seconds=certhr_chunk_max_seconds,
+                certhr_chunk_max_units=certhr_chunk_max_units,
+                certhr_semantic_quantile=certhr_semantic_quantile,
+                certhr_semantic_floor=certhr_semantic_floor,
+                certhr_coverage_floor=certhr_coverage_floor,
+                certhr_deficit_threshold=certhr_deficit_threshold,
+                certhr_query_peak_quantile=certhr_query_peak_quantile,
+                certhr_query_peak_floor=certhr_query_peak_floor,
+                certhr_max_swap_ratio=certhr_max_swap_ratio,
+                certhr_d_efficiency_floor=certhr_d_efficiency_floor,
+                certhr_add_pool=certhr_add_pool,
+                certhr_remove_pool=certhr_remove_pool,
+                certhr_debug=certhr_debug,
                 certv4_budget_mode=certv4_budget_mode,
                 certv4_attention_policy=certv4_attention_policy,
                 certv4_attention_eps=certv4_attention_eps,
@@ -653,6 +710,7 @@ class Llava_OneVision(lmms):
         return new_list
 
     def load_video(self, video_path, max_frames_num):
+        self._pending_certhr_timing = None
         if type(video_path) == str:
             vr = VideoReader(video_path, ctx=cpu(0))
         else:
@@ -660,6 +718,15 @@ class Llava_OneVision(lmms):
         total_frame_num = len(vr)
         uniform_sampled_frames = np.linspace(0, total_frame_num - 1, max_frames_num, dtype=int)
         frame_idx = uniform_sampled_frames.tolist()
+        try:
+            fps = float(vr.get_avg_fps())
+            if np.isfinite(fps) and fps > 0.0:
+                self._pending_certhr_timing = (
+                    (uniform_sampled_frames.astype(np.float64) / fps).tolist(),
+                    "llava_decord_indices_fps",
+                )
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            self._pending_certhr_timing = None
         spare_frames = vr.get_batch(frame_idx).asnumpy()
         return spare_frames  # (frames, height, width, channels)
 
@@ -710,6 +777,7 @@ class Llava_OneVision(lmms):
             question_input = []
             # import ipdb; ipdb.set_trace()
             for visual, context in zip(batched_visuals, batched_contexts):
+                self._pending_certhr_timing = None
                 if origin_image_aspect_ratio is not None and self._config.image_aspect_ratio != origin_image_aspect_ratio:
                     self._config.image_aspect_ratio = origin_image_aspect_ratio
                     eval_logger.info(f"Resetting image aspect ratio to {origin_image_aspect_ratio}")
@@ -836,6 +904,10 @@ class Llava_OneVision(lmms):
                 gen_kwargs.pop("temperature", None)
                 gen_kwargs.pop("top_p", None)
                 gen_kwargs.pop("top_k", None)
+            runtime_config = _publish_certhr_timing(
+                self.model,
+                getattr(self, "_pending_certhr_timing", None),
+            )
             try:
                 with torch.inference_mode():
                     cont = self.model.generate(
@@ -851,6 +923,9 @@ class Llava_OneVision(lmms):
                 text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
             except Exception as e:
                 raise e
+            finally:
+                _clear_certhr_timing(runtime_config)
+                self._pending_certhr_timing = None
 
             text_outputs = [response.strip() for response in text_outputs]
             res.extend(text_outputs)
@@ -940,6 +1015,7 @@ class Llava_OneVision(lmms):
                         break
 
                 for visual, context in zip(batched_visuals, batched_contexts):
+                    self._pending_certhr_timing = None
                     if origin_image_aspect_ratio is not None and self._config.image_aspect_ratio != origin_image_aspect_ratio:
                         self._config.image_aspect_ratio = origin_image_aspect_ratio
                         eval_logger.info(f"Resetting image aspect ratio to {origin_image_aspect_ratio}")
@@ -1074,6 +1150,10 @@ class Llava_OneVision(lmms):
                 if not gen_kwargs.get("do_sample", False):
                     gen_kwargs.pop("temperature", None)
                     gen_kwargs.pop("top_p", None)
+                runtime_config = _publish_certhr_timing(
+                    self.model,
+                    getattr(self, "_pending_certhr_timing", None),
+                )
                 try:
                     with torch.inference_mode():
                         cont = self.model.generate(
@@ -1089,6 +1169,9 @@ class Llava_OneVision(lmms):
                     text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
                 except Exception as e:
                     raise e
+                finally:
+                    _clear_certhr_timing(runtime_config)
+                    self._pending_certhr_timing = None
 
                 text_outputs = [response.strip() for response in text_outputs]
                 batched_round_res.append(text_outputs)

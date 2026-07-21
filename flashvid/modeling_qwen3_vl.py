@@ -541,7 +541,7 @@ def Qwen3VLModel_forward(
         compression_variant = str(
             getattr(flashvid_config, "compression_variant", "flashvid")
         ).strip().lower()
-        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "certvid_e"}:
+        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
             certvid_plan = getattr(flashvid_config, "_certvid_plan", None)
@@ -742,6 +742,7 @@ def Qwen3VLTextModel_forward(
         "certvid",
         "certvid_v2",
         "certvid_v3",
+        "certvid_hr",
         "certvid_v4",
         "certvid_v5",
         "certvid_e",

@@ -204,6 +204,20 @@ def flashvid(
     certv3_swap_margin: float = 1e-4,
     certv3_fusion_alpha: float = 0.12,
     certv3_assignment_temperature: float = 0.07,
+    certhr_horizon_gap_seconds: float = 4.0,
+    certhr_chunk_max_seconds: float = 60.0,
+    certhr_chunk_max_units: int = 4,
+    certhr_semantic_quantile: float = 0.85,
+    certhr_semantic_floor: float = 0.10,
+    certhr_coverage_floor: float = 0.70,
+    certhr_deficit_threshold: float = 0.05,
+    certhr_query_peak_quantile: float = 0.90,
+    certhr_query_peak_floor: float = 0.75,
+    certhr_max_swap_ratio: float = 0.05,
+    certhr_d_efficiency_floor: float = 0.995,
+    certhr_add_pool: int = 32,
+    certhr_remove_pool: int = 24,
+    certhr_debug: bool = False,
     certv4_budget_mode: str = "layer_average",
     certv4_attention_policy: str = "validated",
     certv4_attention_eps: float = 1e-6,
@@ -500,6 +514,7 @@ def flashvid(
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
+            "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
             "prismvid" selects an exact multi-level Qwen3 DeepStack visual coreset;
@@ -626,10 +641,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_hr", "certvid_v4", "certvid_v5", "certvid_e", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v4|certvid_v5|certvid_e|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_hr|certvid_v4|certvid_v5|certvid_e|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -736,6 +751,20 @@ def flashvid(
         certv3_swap_margin=certv3_swap_margin,
         certv3_fusion_alpha=certv3_fusion_alpha,
         certv3_assignment_temperature=certv3_assignment_temperature,
+        certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
+        certhr_chunk_max_seconds=certhr_chunk_max_seconds,
+        certhr_chunk_max_units=certhr_chunk_max_units,
+        certhr_semantic_quantile=certhr_semantic_quantile,
+        certhr_semantic_floor=certhr_semantic_floor,
+        certhr_coverage_floor=certhr_coverage_floor,
+        certhr_deficit_threshold=certhr_deficit_threshold,
+        certhr_query_peak_quantile=certhr_query_peak_quantile,
+        certhr_query_peak_floor=certhr_query_peak_floor,
+        certhr_max_swap_ratio=certhr_max_swap_ratio,
+        certhr_d_efficiency_floor=certhr_d_efficiency_floor,
+        certhr_add_pool=certhr_add_pool,
+        certhr_remove_pool=certhr_remove_pool,
+        certhr_debug=certhr_debug,
         certv4_budget_mode=certv4_budget_mode,
         certv4_attention_policy=certv4_attention_policy,
         certv4_attention_eps=certv4_attention_eps,

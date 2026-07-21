@@ -94,6 +94,58 @@ def _release_video_file_cache(paths: List[str]) -> None:
             pass
 
 
+def _metadata_value(metadata, name):
+    if isinstance(metadata, dict):
+        return metadata.get(name)
+    return getattr(metadata, name, None)
+
+
+def _qwen_frame_timing(video_metadata):
+    if video_metadata is None or len(video_metadata) != 1:
+        return None
+    metadata = video_metadata[0]
+    frame_indices = _metadata_value(metadata, "frames_indices")
+    fps = _metadata_value(metadata, "fps")
+    if frame_indices is None or fps is None:
+        return None
+    try:
+        indices = torch.as_tensor(frame_indices, dtype=torch.float64).reshape(-1)
+        fps_value = float(torch.as_tensor(fps).reshape(-1)[0].item())
+    except (TypeError, ValueError, RuntimeError, IndexError):
+        return None
+    if indices.numel() == 0 or fps_value <= 0.0 or not torch.isfinite(indices).all():
+        return None
+    return indices.div(fps_value).tolist(), "qwen3_video_metadata"
+
+
+def _flashvid_runtime_config(model):
+    candidates = [model, getattr(model, "model", None)]
+    nested = getattr(getattr(model, "model", None), "language_model", None)
+    candidates.append(nested)
+    for candidate in candidates:
+        config = getattr(candidate, "flashvid_config", None) if candidate is not None else None
+        if config is not None:
+            return config
+    return None
+
+
+def _publish_certhr_timing(model, timing):
+    config = _flashvid_runtime_config(model)
+    if config is None:
+        return None
+    config._certvid_frame_times_sec = None
+    config._certvid_frame_times_source = "missing"
+    if str(getattr(config, "compression_variant", "")).strip().lower() == "certvid_hr" and timing is not None:
+        config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
+    return config
+
+
+def _clear_certhr_timing(config) -> None:
+    if config is not None:
+        config._certvid_frame_times_sec = None
+        config._certvid_frame_times_source = "missing"
+
+
 def _install_qwen3_baseline_adapter_patch() -> None:
     repo_root = Path(__file__).resolve().parents[4]
     if str(repo_root) not in sys.path:
@@ -265,6 +317,20 @@ class Qwen3_VL(lmms):
         certv3_swap_margin: float = 1e-4,
         certv3_fusion_alpha: float = 0.12,
         certv3_assignment_temperature: float = 0.07,
+        certhr_horizon_gap_seconds: float = 4.0,
+        certhr_chunk_max_seconds: float = 60.0,
+        certhr_chunk_max_units: int = 4,
+        certhr_semantic_quantile: float = 0.85,
+        certhr_semantic_floor: float = 0.10,
+        certhr_coverage_floor: float = 0.70,
+        certhr_deficit_threshold: float = 0.05,
+        certhr_query_peak_quantile: float = 0.90,
+        certhr_query_peak_floor: float = 0.75,
+        certhr_max_swap_ratio: float = 0.05,
+        certhr_d_efficiency_floor: float = 0.995,
+        certhr_add_pool: int = 32,
+        certhr_remove_pool: int = 24,
+        certhr_debug: bool = False,
         certv4_budget_mode: str = "layer_average",
         certv4_attention_policy: str = "validated",
         certv4_attention_eps: float = 1e-6,
@@ -539,6 +605,20 @@ class Qwen3_VL(lmms):
                 certv3_swap_margin=certv3_swap_margin,
                 certv3_fusion_alpha=certv3_fusion_alpha,
                 certv3_assignment_temperature=certv3_assignment_temperature,
+                certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
+                certhr_chunk_max_seconds=certhr_chunk_max_seconds,
+                certhr_chunk_max_units=certhr_chunk_max_units,
+                certhr_semantic_quantile=certhr_semantic_quantile,
+                certhr_semantic_floor=certhr_semantic_floor,
+                certhr_coverage_floor=certhr_coverage_floor,
+                certhr_deficit_threshold=certhr_deficit_threshold,
+                certhr_query_peak_quantile=certhr_query_peak_quantile,
+                certhr_query_peak_floor=certhr_query_peak_floor,
+                certhr_max_swap_ratio=certhr_max_swap_ratio,
+                certhr_d_efficiency_floor=certhr_d_efficiency_floor,
+                certhr_add_pool=certhr_add_pool,
+                certhr_remove_pool=certhr_remove_pool,
+                certhr_debug=certhr_debug,
                 certv4_budget_mode=certv4_budget_mode,
                 certv4_attention_policy=certv4_attention_policy,
                 certv4_attention_eps=certv4_attention_eps,
@@ -895,7 +975,8 @@ class Qwen3_VL(lmms):
         else:
             inputs = inputs.to(self.device)
 
-        return inputs, contexts, gen_kwargs, until, video_paths_to_release
+        frame_timing = _qwen_frame_timing(video_metadata)
+        return inputs, contexts, gen_kwargs, until, video_paths_to_release, frame_timing
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
@@ -934,22 +1015,26 @@ class Qwen3_VL(lmms):
                 f"requests={len(requests)} chunks={len(chunks)} batch_size={self.batch_size}"
             )
         for chunk in chunks:
-            inputs, contexts, gen_kwargs, until, video_paths_to_release = self._preprocess_chunk(chunk)
+            inputs, contexts, gen_kwargs, until, video_paths_to_release, frame_timing = self._preprocess_chunk(chunk)
 
             current_gen_kwargs = self._build_current_gen_kwargs(gen_kwargs)
             pad_token_id = self.tokenizer.pad_token_id
 
-            cont = self.model.generate(
-                **inputs,
-                eos_token_id=self.tokenizer.eos_token_id,
-                pad_token_id=pad_token_id,
-                do_sample=current_gen_kwargs["do_sample"],
-                temperature=current_gen_kwargs["temperature"],
-                top_p=current_gen_kwargs["top_p"],
-                num_beams=current_gen_kwargs["num_beams"],
-                max_new_tokens=current_gen_kwargs["max_new_tokens"],
-                use_cache=self.use_cache,
-            )
+            runtime_config = _publish_certhr_timing(self.model, frame_timing)
+            try:
+                cont = self.model.generate(
+                    **inputs,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    pad_token_id=pad_token_id,
+                    do_sample=current_gen_kwargs["do_sample"],
+                    temperature=current_gen_kwargs["temperature"],
+                    top_p=current_gen_kwargs["top_p"],
+                    num_beams=current_gen_kwargs["num_beams"],
+                    max_new_tokens=current_gen_kwargs["max_new_tokens"],
+                    use_cache=self.use_cache,
+                )
+            finally:
+                _clear_certhr_timing(runtime_config)
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
             answers = self.processor.batch_decode(

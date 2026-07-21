@@ -118,6 +118,22 @@ class FlashVidConfig:
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
 
+    # CertVID-HR: V3-preserving long-horizon evidence repair.
+    certhr_horizon_gap_seconds: float = field(default=4.0)
+    certhr_chunk_max_seconds: float = field(default=60.0)
+    certhr_chunk_max_units: int = field(default=4)
+    certhr_semantic_quantile: float = field(default=0.85)
+    certhr_semantic_floor: float = field(default=0.10)
+    certhr_coverage_floor: float = field(default=0.70)
+    certhr_deficit_threshold: float = field(default=0.05)
+    certhr_query_peak_quantile: float = field(default=0.90)
+    certhr_query_peak_floor: float = field(default=0.75)
+    certhr_max_swap_ratio: float = field(default=0.05)
+    certhr_d_efficiency_floor: float = field(default=0.995)
+    certhr_add_pool: int = field(default=32)
+    certhr_remove_pool: int = field(default=24)
+    certhr_debug: bool = field(default=False)
+
     # CertVID V4: verifiable budget-constrained D-optimal evidence design.
     certv4_budget_mode: str = field(default="layer_average")
     certv4_attention_policy: str = field(default="validated")
