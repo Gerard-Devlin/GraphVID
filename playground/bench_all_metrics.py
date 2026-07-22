@@ -3309,6 +3309,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v6-active][ours]"
         elif variant_name == "certvid_hr":
             ours_prefix = "[certvid-hr-active][ours]"
+        elif variant_name == "certvid_sb":
+            ours_prefix = "[certvid-sb-active][ours]"
         elif variant_name == "certvid_v4":
             ours_prefix = "[certvid-v4-active][ours]"
         elif variant_name == "certvid_v5":
