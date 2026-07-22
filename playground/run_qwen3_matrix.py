@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         return "ours"
     return method
 
@@ -511,6 +511,28 @@ def _build_command(
                 str(args.certv6_continuity_high),
                 "--certv6_query_per_atom_max",
                 str(args.certv6_query_per_atom_max),
+                "--certv7_min_duration_seconds", str(args.certv7_min_duration_seconds),
+                "--certv7_min_path_residual", str(args.certv7_min_path_residual),
+                "--certv7_max_skip_units", str(args.certv7_max_skip_units),
+                "--certv7_transition_ridge", str(args.certv7_transition_ridge),
+                "--certv7_match_similarity", str(args.certv7_match_similarity),
+                "--certv7_match_spatial_radius", str(args.certv7_match_spatial_radius),
+                "--certv7_node_weight", str(args.certv7_node_weight),
+                "--certv7_local_edge_weight", str(args.certv7_local_edge_weight),
+                "--certv7_skip_edge_weight", str(args.certv7_skip_edge_weight),
+                "--certv7_query_edge_weight", str(args.certv7_query_edge_weight),
+                "--certv7_query_peaks_per_atom", str(args.certv7_query_peaks_per_atom),
+                "--certv7_query_min_frame_gap", str(args.certv7_query_min_frame_gap),
+                "--certv7_max_swap_ratio", str(args.certv7_max_swap_ratio),
+                "--certv7_add_pool", str(args.certv7_add_pool),
+                "--certv7_remove_pool", str(args.certv7_remove_pool),
+                "--certv7_d_efficiency_floor", str(args.certv7_d_efficiency_floor),
+                "--certv7_assignment_topk", str(args.certv7_assignment_topk),
+                "--certv7_assignment_temperature", str(args.certv7_assignment_temperature),
+                "--certv7_assignment_max_seconds", str(args.certv7_assignment_max_seconds),
+                "--certv7_cross_time_similarity", str(args.certv7_cross_time_similarity),
+                "--certv7_path_margin", str(args.certv7_path_margin),
+                "--certv7_debug" if args.certv7_debug else "--no-certv7_debug",
                 "--certhr_horizon_gap_seconds",
                 str(args.certhr_horizon_gap_seconds),
                 "--certhr_chunk_max_seconds",
@@ -799,7 +821,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_hr,certvid_lh,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_hr,certvid_lh,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -918,6 +940,28 @@ def main() -> None:
     parser.add_argument("--certv6_continuity_low", type=float, default=0.55)
     parser.add_argument("--certv6_continuity_high", type=float, default=0.80)
     parser.add_argument("--certv6_query_per_atom_max", type=int, default=3)
+    parser.add_argument("--certv7_min_duration_seconds", type=float, default=120.0)
+    parser.add_argument("--certv7_min_path_residual", type=float, default=0.02)
+    parser.add_argument("--certv7_max_skip_units", type=int, default=8)
+    parser.add_argument("--certv7_transition_ridge", type=float, default=0.10)
+    parser.add_argument("--certv7_match_similarity", type=float, default=0.30)
+    parser.add_argument("--certv7_match_spatial_radius", type=float, default=0.60)
+    parser.add_argument("--certv7_node_weight", type=float, default=0.20)
+    parser.add_argument("--certv7_local_edge_weight", type=float, default=0.35)
+    parser.add_argument("--certv7_skip_edge_weight", type=float, default=0.25)
+    parser.add_argument("--certv7_query_edge_weight", type=float, default=0.20)
+    parser.add_argument("--certv7_query_peaks_per_atom", type=int, default=3)
+    parser.add_argument("--certv7_query_min_frame_gap", type=int, default=2)
+    parser.add_argument("--certv7_max_swap_ratio", type=float, default=0.30)
+    parser.add_argument("--certv7_add_pool", type=int, default=96)
+    parser.add_argument("--certv7_remove_pool", type=int, default=96)
+    parser.add_argument("--certv7_d_efficiency_floor", type=float, default=0.97)
+    parser.add_argument("--certv7_assignment_topk", type=int, default=2)
+    parser.add_argument("--certv7_assignment_temperature", type=float, default=0.07)
+    parser.add_argument("--certv7_assignment_max_seconds", type=float, default=12.0)
+    parser.add_argument("--certv7_cross_time_similarity", type=float, default=0.20)
+    parser.add_argument("--certv7_path_margin", type=float, default=1e-4)
+    parser.add_argument("--certv7_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
     parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)
     parser.add_argument("--certhr_chunk_max_units", type=int, default=4)

@@ -167,6 +167,28 @@ class BenchmarkArgs:
     certv6_continuity_low: float = field(default=0.55)
     certv6_continuity_high: float = field(default=0.80)
     certv6_query_per_atom_max: int = field(default=3)
+    certv7_min_duration_seconds: float = field(default=120.0)
+    certv7_min_path_residual: float = field(default=0.02)
+    certv7_max_skip_units: int = field(default=8)
+    certv7_transition_ridge: float = field(default=0.10)
+    certv7_match_similarity: float = field(default=0.30)
+    certv7_match_spatial_radius: float = field(default=0.60)
+    certv7_node_weight: float = field(default=0.20)
+    certv7_local_edge_weight: float = field(default=0.35)
+    certv7_skip_edge_weight: float = field(default=0.25)
+    certv7_query_edge_weight: float = field(default=0.20)
+    certv7_query_peaks_per_atom: int = field(default=3)
+    certv7_query_min_frame_gap: int = field(default=2)
+    certv7_max_swap_ratio: float = field(default=0.30)
+    certv7_add_pool: int = field(default=96)
+    certv7_remove_pool: int = field(default=96)
+    certv7_d_efficiency_floor: float = field(default=0.97)
+    certv7_assignment_topk: int = field(default=2)
+    certv7_assignment_temperature: float = field(default=0.07)
+    certv7_assignment_max_seconds: float = field(default=12.0)
+    certv7_cross_time_similarity: float = field(default=0.20)
+    certv7_path_margin: float = field(default=1e-4)
+    certv7_debug: bool = field(default=False)
     certhr_horizon_gap_seconds: float = field(default=4.0)
     certhr_chunk_max_seconds: float = field(default=60.0)
     certhr_chunk_max_units: int = field(default=4)
@@ -924,7 +946,7 @@ def _publish_certhr_timing(model: Any, timing: tuple[list[float], str] | None) -
         return None
     config._certvid_frame_times_sec = None
     config._certvid_frame_times_source = "missing"
-    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_hr", "certvid_lh"} and timing is not None:
+    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_hr", "certvid_lh", "certvid_v7"} and timing is not None:
         config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
     return config
 
@@ -2647,6 +2669,28 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv6_continuity_low=args.certv6_continuity_low,
         certv6_continuity_high=args.certv6_continuity_high,
         certv6_query_per_atom_max=args.certv6_query_per_atom_max,
+        certv7_min_duration_seconds=args.certv7_min_duration_seconds,
+        certv7_min_path_residual=args.certv7_min_path_residual,
+        certv7_max_skip_units=args.certv7_max_skip_units,
+        certv7_transition_ridge=args.certv7_transition_ridge,
+        certv7_match_similarity=args.certv7_match_similarity,
+        certv7_match_spatial_radius=args.certv7_match_spatial_radius,
+        certv7_node_weight=args.certv7_node_weight,
+        certv7_local_edge_weight=args.certv7_local_edge_weight,
+        certv7_skip_edge_weight=args.certv7_skip_edge_weight,
+        certv7_query_edge_weight=args.certv7_query_edge_weight,
+        certv7_query_peaks_per_atom=args.certv7_query_peaks_per_atom,
+        certv7_query_min_frame_gap=args.certv7_query_min_frame_gap,
+        certv7_max_swap_ratio=args.certv7_max_swap_ratio,
+        certv7_add_pool=args.certv7_add_pool,
+        certv7_remove_pool=args.certv7_remove_pool,
+        certv7_d_efficiency_floor=args.certv7_d_efficiency_floor,
+        certv7_assignment_topk=args.certv7_assignment_topk,
+        certv7_assignment_temperature=args.certv7_assignment_temperature,
+        certv7_assignment_max_seconds=args.certv7_assignment_max_seconds,
+        certv7_cross_time_similarity=args.certv7_cross_time_similarity,
+        certv7_path_margin=args.certv7_path_margin,
+        certv7_debug=args.certv7_debug,
         certhr_horizon_gap_seconds=args.certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=args.certhr_chunk_max_seconds,
         certhr_chunk_max_units=args.certhr_chunk_max_units,
@@ -3307,6 +3351,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v3-active][ours]"
         elif variant_name == "certvid_v6":
             ours_prefix = "[certvid-v6-active][ours]"
+        elif variant_name == "certvid_v7":
+            ours_prefix = "[certvid-v7-active][ours]"
         elif variant_name == "certvid_hr":
             ours_prefix = "[certvid-hr-active][ours]"
         elif variant_name == "certvid_lh":

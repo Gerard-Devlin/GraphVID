@@ -125,6 +125,30 @@ class FlashVidConfig:
     certv6_continuity_high: float = field(default=0.80)
     certv6_query_per_atom_max: int = field(default=3)
 
+    # CertVID V7: causal multi-scale transition repair with exact V3 fallback.
+    certv7_min_duration_seconds: float = field(default=120.0)
+    certv7_min_path_residual: float = field(default=0.02)
+    certv7_max_skip_units: int = field(default=8)
+    certv7_transition_ridge: float = field(default=0.10)
+    certv7_match_similarity: float = field(default=0.30)
+    certv7_match_spatial_radius: float = field(default=0.60)
+    certv7_node_weight: float = field(default=0.20)
+    certv7_local_edge_weight: float = field(default=0.35)
+    certv7_skip_edge_weight: float = field(default=0.25)
+    certv7_query_edge_weight: float = field(default=0.20)
+    certv7_query_peaks_per_atom: int = field(default=3)
+    certv7_query_min_frame_gap: int = field(default=2)
+    certv7_max_swap_ratio: float = field(default=0.30)
+    certv7_add_pool: int = field(default=96)
+    certv7_remove_pool: int = field(default=96)
+    certv7_d_efficiency_floor: float = field(default=0.97)
+    certv7_assignment_topk: int = field(default=2)
+    certv7_assignment_temperature: float = field(default=0.07)
+    certv7_assignment_max_seconds: float = field(default=12.0)
+    certv7_cross_time_similarity: float = field(default=0.20)
+    certv7_path_margin: float = field(default=1e-4)
+    certv7_debug: bool = field(default=False)
+
     # CertVID-HR: V3-preserving long-horizon evidence repair.
     certhr_horizon_gap_seconds: float = field(default=4.0)
     certhr_chunk_max_seconds: float = field(default=60.0)
@@ -265,6 +289,7 @@ class FlashVidConfig:
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
     # "certvid_lh": V3-preserving long-horizon allocation and relay path.
+    # "certvid_v7": V3-preserving causal transition repair.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

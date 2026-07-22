@@ -209,6 +209,28 @@ def flashvid(
     certv6_continuity_low: float = 0.55,
     certv6_continuity_high: float = 0.80,
     certv6_query_per_atom_max: int = 3,
+    certv7_min_duration_seconds: float = 120.0,
+    certv7_min_path_residual: float = 0.02,
+    certv7_max_skip_units: int = 8,
+    certv7_transition_ridge: float = 0.10,
+    certv7_match_similarity: float = 0.30,
+    certv7_match_spatial_radius: float = 0.60,
+    certv7_node_weight: float = 0.20,
+    certv7_local_edge_weight: float = 0.35,
+    certv7_skip_edge_weight: float = 0.25,
+    certv7_query_edge_weight: float = 0.20,
+    certv7_query_peaks_per_atom: int = 3,
+    certv7_query_min_frame_gap: int = 2,
+    certv7_max_swap_ratio: float = 0.30,
+    certv7_add_pool: int = 96,
+    certv7_remove_pool: int = 96,
+    certv7_d_efficiency_floor: float = 0.97,
+    certv7_assignment_topk: int = 2,
+    certv7_assignment_temperature: float = 0.07,
+    certv7_assignment_max_seconds: float = 12.0,
+    certv7_cross_time_similarity: float = 0.20,
+    certv7_path_margin: float = 1e-4,
+    certv7_debug: bool = False,
     certhr_horizon_gap_seconds: float = 4.0,
     certhr_chunk_max_seconds: float = 60.0,
     certhr_chunk_max_units: int = 4,
@@ -554,6 +576,7 @@ def flashvid(
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
+            "certvid_v7" preserves causal multi-scale transitions under a V3 static guard;
             "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
             "certvid_lh" keeps V3 for short videos and adds long-horizon allocation and relays;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
@@ -683,10 +706,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -798,6 +821,28 @@ def flashvid(
         certv6_continuity_low=certv6_continuity_low,
         certv6_continuity_high=certv6_continuity_high,
         certv6_query_per_atom_max=certv6_query_per_atom_max,
+        certv7_min_duration_seconds=certv7_min_duration_seconds,
+        certv7_min_path_residual=certv7_min_path_residual,
+        certv7_max_skip_units=certv7_max_skip_units,
+        certv7_transition_ridge=certv7_transition_ridge,
+        certv7_match_similarity=certv7_match_similarity,
+        certv7_match_spatial_radius=certv7_match_spatial_radius,
+        certv7_node_weight=certv7_node_weight,
+        certv7_local_edge_weight=certv7_local_edge_weight,
+        certv7_skip_edge_weight=certv7_skip_edge_weight,
+        certv7_query_edge_weight=certv7_query_edge_weight,
+        certv7_query_peaks_per_atom=certv7_query_peaks_per_atom,
+        certv7_query_min_frame_gap=certv7_query_min_frame_gap,
+        certv7_max_swap_ratio=certv7_max_swap_ratio,
+        certv7_add_pool=certv7_add_pool,
+        certv7_remove_pool=certv7_remove_pool,
+        certv7_d_efficiency_floor=certv7_d_efficiency_floor,
+        certv7_assignment_topk=certv7_assignment_topk,
+        certv7_assignment_temperature=certv7_assignment_temperature,
+        certv7_assignment_max_seconds=certv7_assignment_max_seconds,
+        certv7_cross_time_similarity=certv7_cross_time_similarity,
+        certv7_path_margin=certv7_path_margin,
+        certv7_debug=certv7_debug,
         certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=certhr_chunk_max_seconds,
         certhr_chunk_max_units=certhr_chunk_max_units,
