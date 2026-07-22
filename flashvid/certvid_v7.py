@@ -1,10 +1,12 @@
-"""CertVID V7: causal multi-scale transition repair over exact V3 anchors.
+"""CertVID V7: transport-aware temporal budgeting with local coverage.
 
-V7 keeps V3 as the static evidence selector and exact fallback.  For reliable
-long-horizon inputs it learns forward transition operators at several temporal
-scales, then exchanges a bounded set of anchors only when the compressed video
-better preserves their causal residuals without collapsing V3's D-optimal
-information volume.
+V7 keeps CertVID V3 as an exact fallback, but replaces the previous
+post-hoc transition-operator repair.  For reliable long-horizon inputs it
+estimates adjacent-frame transport difficulty on compact spatial prototypes,
+allocates the fixed token budget across time, and solves a weighted facility
+location problem inside every frame.  A small in-budget relay set preserves
+query peaks and hard event boundaries.  Residual fusion is restricted to the
+same frame or a demonstrably safe adjacent-frame transition.
 """
 
 from __future__ import annotations
@@ -16,8 +18,14 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-from .certvid import CertVidPlan, _cfg_float, _cfg_int, _minmax, apply_certvid_plan
-from .certvid_hr import _normalize_frame_times
+from .certvid import (
+    CertVidPlan,
+    _cfg_float,
+    _cfg_int,
+    _grid_hw,
+    _minmax,
+    apply_certvid_plan,
+)
 from .certvid_v3 import certvid_v3_compression
 
 
@@ -36,33 +44,8 @@ class _V3Analysis:
     ridge: float
 
 
-@dataclass
-class _Edges:
-    source: torch.Tensor
-    target: torch.Tensor
-    weight: torch.Tensor
-
-    @property
-    def count(self) -> int:
-        return int(self.source.numel())
-
-
-@dataclass
-class _TransitionFamily:
-    edges: _Edges
-    operator: torch.Tensor
-
-
-def _empty_edges(device: torch.device) -> _Edges:
-    return _Edges(
-        source=torch.empty(0, dtype=torch.long, device=device),
-        target=torch.empty(0, dtype=torch.long, device=device),
-        weight=torch.empty(0, dtype=torch.float32, device=device),
-    )
-
-
 def _analysis_from_sink(sink: Dict[str, Any]) -> _V3Analysis:
-    required = {
+    required = (
         "metric_flat",
         "design",
         "demand_weight",
@@ -74,423 +57,535 @@ def _analysis_from_sink(sink: Dict[str, Any]) -> _V3Analysis:
         "frame_ids",
         "temporal_ids",
         "ridge",
-    }
-    missing = sorted(required.difference(sink))
+    )
+    missing = [name for name in required if name not in sink]
     if missing:
-        raise RuntimeError(f"CertVID V7 missing captured V3 tensors: {missing}")
+        raise ValueError(f"V3 analysis is missing: {', '.join(missing)}")
     return _V3Analysis(**{name: sink[name] for name in required})
 
 
-def _semantic_segments(metric_frames: torch.Tensor) -> tuple[torch.Tensor, float]:
-    frame_repr = F.normalize(metric_frames.float().mean(dim=1), dim=-1, eps=1e-6)
-    if frame_repr.shape[0] <= 1:
-        return torch.zeros(1, dtype=torch.long, device=metric_frames.device), 1.0
-    gaps = 1.0 - (frame_repr[1:] * frame_repr[:-1]).sum(dim=-1)
-    threshold = max(0.10, float(torch.quantile(gaps.float(), 0.85).item()))
-    boundaries = gaps >= threshold
-    segments = torch.zeros(frame_repr.shape[0], dtype=torch.long, device=metric_frames.device)
-    segments[1:] = torch.cumsum(boundaries.long(), dim=0)
-    return segments, threshold
-
-
-def _matched_edges(
-    metric_frames: torch.Tensor,
-    frame_times: torch.Tensor,
-    scale: int,
-    component_frames: torch.Tensor,
+def _normalize_frame_times(
+    raw_times: Any,
+    frame_count: int,
     *,
-    similarity_floor: float,
-    spatial_radius: float,
-) -> _Edges:
-    frame_count, tokens_per_frame, _ = metric_frames.shape
-    if scale <= 0 or frame_count <= scale:
-        return _empty_edges(metric_frames.device)
-    sources = []
-    targets = []
-    weights = []
-    positive_gaps = frame_times[1:] - frame_times[:-1]
-    positive_gaps = positive_gaps[positive_gaps > 0]
-    median_gap = float(torch.median(positive_gaps).item()) if positive_gaps.numel() else 1.0
-    height = max(1, int(math.sqrt(tokens_per_frame)))
-    while height > 1 and tokens_per_frame % height != 0:
-        height -= 1
-    width = max(1, tokens_per_frame // height)
-    token_ids = torch.arange(tokens_per_frame, device=metric_frames.device)
-    rows = torch.div(token_ids, width, rounding_mode="floor").float()
-    cols = torch.remainder(token_ids, width).float()
-    coords = torch.stack(
-        [rows / max(1, height - 1), cols / max(1, width - 1)],
-        dim=-1,
-    )
-    for frame in range(frame_count - scale):
-        similarity = metric_frames[frame] @ metric_frames[frame + scale].T
-        match_similarity, match = similarity.max(dim=1)
-        reverse = similarity.argmax(dim=0)
-        local_ids = torch.arange(tokens_per_frame, device=metric_frames.device)
-        mutual = reverse.index_select(0, match) == local_ids
-        spatial_distance = (coords - coords.index_select(0, match)).norm(dim=-1)
-        same_component = (
-            component_frames[frame]
-            == component_frames[frame + scale].index_select(0, match)
-        )
-        reliable = match_similarity >= float(similarity_floor)
-        reliable &= spatial_distance <= float(max(0.0, spatial_radius))
-        if scale > 1:
-            reliable &= same_component
-        valid = mutual & reliable
-        minimum = max(1, tokens_per_frame // 8)
-        if int(valid.sum().item()) < minimum:
-            reliability = match_similarity - 0.10 * spatial_distance
-            if scale > 1:
-                reliability = reliability + 0.10 * same_component.float()
-            eligible = torch.where(reliable)[0]
-            if eligible.numel():
-                count = min(minimum, int(eligible.numel()))
-                fallback_order = torch.argsort(
-                    reliability.index_select(0, eligible),
-                    descending=True,
-                    stable=True,
-                )[:count]
-                valid[eligible.index_select(0, fallback_order)] = True
-        local_ids = local_ids[valid]
-        match = match[valid]
-        match_similarity = match_similarity[valid]
-        source = local_ids + frame * tokens_per_frame
-        target = match + (frame + scale) * tokens_per_frame
-        elapsed = max(0.0, float(frame_times[frame + scale].item() - frame_times[frame].item()))
-        time_ratio = max(0.0, elapsed / max(1e-6, median_gap))
-        horizon_bonus = 1.0 + 0.25 * math.log1p(time_ratio)
-        edge_weight = ((match_similarity + 1.0) * 0.5).clamp_min(0.05) * horizon_bonus
-        sources.append(source)
-        targets.append(target)
-        weights.append(edge_weight.float())
-    return _Edges(
-        source=torch.cat(sources),
-        target=torch.cat(targets),
-        weight=torch.cat(weights),
-    )
-
-
-def _fit_transition(
-    metric: torch.Tensor,
-    edges: _Edges,
-    ridge: float,
-) -> _TransitionFamily:
-    dim = int(metric.shape[1])
-    if edges.count == 0:
-        return _TransitionFamily(edges, torch.eye(dim, dtype=torch.float32, device=metric.device))
-    source = metric.index_select(0, edges.source).float()
-    target = metric.index_select(0, edges.target).float()
-    root_weight = edges.weight.float().clamp_min(1e-6).sqrt().unsqueeze(1)
-    source_weighted = source * root_weight
-    target_weighted = target * root_weight
-    gram = source_weighted.T @ source_weighted
-    gram.diagonal().add_(max(1e-6, float(ridge)))
-    cross = source_weighted.T @ target_weighted
+    device: torch.device,
+) -> Tuple[Optional[torch.Tensor], Optional[str]]:
+    if raw_times is None:
+        return None, "missing_timestamps"
     try:
-        operator = torch.linalg.solve(gram, cross)
-    except RuntimeError:
-        operator = torch.linalg.pinv(gram) @ cross
-    if not torch.isfinite(operator).all():
-        raise RuntimeError("CertVID V7 learned a non-finite transition operator")
-    return _TransitionFamily(edges, operator)
+        times = torch.as_tensor(raw_times, dtype=torch.float64, device=device).reshape(-1)
+    except (TypeError, ValueError, RuntimeError):
+        return None, "invalid_timestamp_type"
+    if times.numel() == 0 or frame_count <= 0:
+        return None, "empty_timestamps"
+    if not bool(torch.isfinite(times).all()):
+        return None, "nonfinite_timestamps"
+    if times.numel() == frame_count:
+        mapped = times
+    elif times.numel() > frame_count and times.numel() % frame_count == 0:
+        mapped = times.reshape(frame_count, -1).mean(dim=1)
+    else:
+        return None, "timestamp_length_mismatch"
+    if mapped.numel() > 1 and bool(torch.any(mapped[1:] < mapped[:-1])):
+        return None, "nonmonotonic_timestamps"
+    return mapped.float(), None
 
 
-def _query_edges(
-    query_relevance: torch.Tensor,
-    query_confidence: float,
+def _spatial_prototypes(
+    metric_frames: torch.Tensor,
+    demand_frames: torch.Tensor,
+    height: int,
+    width: int,
+    bins: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pool each frame into demand-weighted spatial transport prototypes."""
+
+    frame_count, tokens_per_frame, _ = metric_frames.shape
+    row_bins = min(max(1, int(bins)), height)
+    col_bins = min(max(1, int(bins)), width)
+    token_ids = torch.arange(tokens_per_frame, device=metric_frames.device)
+    rows = torch.div(token_ids, width, rounding_mode="floor").clamp_max(height - 1)
+    cols = torch.remainder(token_ids, width).clamp_max(width - 1)
+    row_ids = torch.div(rows * row_bins, max(1, height), rounding_mode="floor").clamp_max(row_bins - 1)
+    col_ids = torch.div(cols * col_bins, max(1, width), rounding_mode="floor").clamp_max(col_bins - 1)
+    cell_ids = row_ids * col_bins + col_ids
+    cell_count = row_bins * col_bins
+
+    prototypes = []
+    masses = []
+    coordinates = []
+    for cell in range(cell_count):
+        members = torch.where(cell_ids == cell)[0]
+        if members.numel() == 0:
+            continue
+        weights = demand_frames[:, members].float().clamp_min(1e-8)
+        mass = weights.sum(dim=1)
+        pooled = torch.sum(metric_frames[:, members].float() * weights.unsqueeze(-1), dim=1)
+        pooled = pooled / mass.unsqueeze(1).clamp_min(1e-8)
+        prototypes.append(F.normalize(pooled, p=2, dim=-1, eps=1e-6))
+        masses.append(mass)
+        coordinates.append(
+            torch.tensor(
+                [
+                    (float(rows[members].float().mean().item()) + 0.5) / max(1, height),
+                    (float(cols[members].float().mean().item()) + 0.5) / max(1, width),
+                ],
+                dtype=torch.float32,
+                device=metric_frames.device,
+            )
+        )
+    if not prototypes:
+        raise RuntimeError("transport prototype construction produced no cells")
+    prototype_tensor = torch.stack(prototypes, dim=1)
+    mass_tensor = torch.stack(masses, dim=1)
+    mass_tensor = mass_tensor / mass_tensor.sum(dim=1, keepdim=True).clamp_min(1e-8)
+    return prototype_tensor, mass_tensor, torch.stack(coordinates, dim=0)
+
+
+def _sinkhorn_transport_costs(
+    prototypes: torch.Tensor,
+    masses: torch.Tensor,
+    coordinates: torch.Tensor,
+    *,
+    epsilon: float,
+    steps: int,
+    spatial_weight: float,
+) -> torch.Tensor:
+    """Return one entropic transport cost for every adjacent frame pair."""
+
+    if prototypes.shape[0] <= 1:
+        return prototypes.new_empty((0,), dtype=torch.float32)
+    left = prototypes[:-1].float()
+    right = prototypes[1:].float()
+    feature_cost = 0.5 * (
+        1.0 - torch.bmm(left, right.transpose(1, 2)).clamp(-1.0, 1.0)
+    )
+    spatial = torch.cdist(coordinates.float(), coordinates.float(), p=2)
+    spatial = spatial / math.sqrt(2.0)
+    frame_gap = 1.0 - torch.sum(left.mean(dim=1) * right.mean(dim=1), dim=-1).clamp(-1.0, 1.0)
+    semantic_weight = (0.60 + 0.30 * (0.5 * frame_gap).clamp(0.0, 1.0)).view(-1, 1, 1)
+    spatial_share = min(0.45, max(0.0, float(spatial_weight)))
+    semantic_weight = torch.maximum(semantic_weight, feature_cost.new_tensor(1.0 - spatial_share))
+    cost = semantic_weight * feature_cost + (1.0 - semantic_weight) * spatial.unsqueeze(0)
+
+    source = masses[:-1].float()
+    target = masses[1:].float()
+    epsilon = max(1e-3, float(epsilon))
+    log_kernel = -cost / epsilon
+    log_source = source.clamp_min(1e-20).log()
+    log_target = target.clamp_min(1e-20).log()
+    log_u = torch.zeros_like(log_source)
+    log_v = torch.zeros_like(log_target)
+    for _ in range(max(1, int(steps))):
+        log_v = log_target - torch.logsumexp(log_kernel + log_u.unsqueeze(2), dim=1)
+        log_u = log_source - torch.logsumexp(log_kernel + log_v.unsqueeze(1), dim=2)
+    transport = torch.exp(log_u.unsqueeze(2) + log_kernel + log_v.unsqueeze(1))
+    values = torch.sum(transport * cost, dim=(1, 2))
+    if not bool(torch.isfinite(values).all()):
+        raise RuntimeError("non-finite temporal transport cost")
+    return values
+
+
+def _temporal_signals(
+    metric_frames: torch.Tensor,
+    pair_costs: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Frame uniqueness, transition stress, event strength, token novelty."""
+
+    frame_count, tokens_per_frame, _ = metric_frames.shape
+    frame_reps = F.normalize(metric_frames.float().mean(dim=1), p=2, dim=-1, eps=1e-6)
+    if frame_count <= 1:
+        zeros = metric_frames.new_zeros((frame_count,), dtype=torch.float32)
+        return zeros, zeros, zeros, metric_frames.new_zeros((frame_count, tokens_per_frame))
+
+    global_similarity = 0.5 * (frame_reps @ frame_reps.transpose(0, 1) + 1.0)
+    global_similarity.fill_diagonal_(-1.0)
+    neighbors = min(3, frame_count - 1)
+    uniqueness = 1.0 - torch.topk(global_similarity, k=neighbors, dim=1).values.mean(dim=1)
+    uniqueness = _minmax(uniqueness, dim=0)
+
+    adjacent_gap = 0.5 * (
+        1.0 - torch.sum(frame_reps[:-1] * frame_reps[1:], dim=-1).clamp(-1.0, 1.0)
+    )
+    event = torch.zeros(frame_count, dtype=torch.float32, device=metric_frames.device)
+    event[:-1] = torch.maximum(event[:-1], adjacent_gap)
+    event[1:] = torch.maximum(event[1:], adjacent_gap)
+    if frame_count > 2:
+        incoming = frame_reps[1:-1] - frame_reps[:-2]
+        outgoing = frame_reps[2:] - frame_reps[1:-1]
+        curvature = 0.5 * (
+            1.0 - F.cosine_similarity(incoming, outgoing, dim=-1, eps=1e-6)
+        )
+        event[1:-1] = torch.maximum(event[1:-1], curvature)
+    event = _minmax(event, dim=0)
+
+    pair_stress = _minmax(pair_costs, dim=0) if pair_costs.numel() else pair_costs
+    transport = torch.zeros(frame_count, dtype=torch.float32, device=metric_frames.device)
+    if pair_stress.numel():
+        transport[:-1] = torch.maximum(transport[:-1], pair_stress)
+        transport[1:] = torch.maximum(transport[1:], pair_stress)
+
+    novelty = torch.zeros((frame_count, tokens_per_frame), dtype=torch.float32, device=metric_frames.device)
+    for frame in range(frame_count - 1):
+        similarity = metric_frames[frame].float() @ metric_frames[frame + 1].float().transpose(0, 1)
+        forward = 0.5 * (1.0 - similarity.max(dim=1).values.clamp(-1.0, 1.0))
+        backward = 0.5 * (1.0 - similarity.max(dim=0).values.clamp(-1.0, 1.0))
+        novelty[frame] = torch.maximum(novelty[frame], forward)
+        novelty[frame + 1] = torch.maximum(novelty[frame + 1], backward)
+    novelty = _minmax(novelty, dim=1)
+    return uniqueness, transport, event, novelty
+
+
+def _frame_query_signal(analysis: _V3Analysis, frame_count: int, tokens_per_frame: int) -> torch.Tensor:
+    if analysis.query_relevance.numel() == 0:
+        return analysis.metric_flat.new_zeros((frame_count,), dtype=torch.float32)
+    relevance = analysis.query_relevance.reshape(-1, frame_count, tokens_per_frame)
+    return _minmax(relevance.amax(dim=(0, 2)), dim=0)
+
+
+def _query_relay_candidates(
+    analysis: _V3Analysis,
     frame_count: int,
     tokens_per_frame: int,
-    frame_times: torch.Tensor,
     *,
-    max_peaks: int,
+    peaks_per_atom: int,
     min_frame_gap: int,
-) -> _Edges:
-    device = frame_times.device
-    if query_relevance.numel() == 0 or query_confidence < 0.10 or max_peaks < 2:
-        return _empty_edges(device)
-    sources = []
-    targets = []
-    weights = []
-    relevance = query_relevance.reshape(query_relevance.shape[0], frame_count, tokens_per_frame)
-    for atom in range(relevance.shape[0]):
-        frame_score, frame_token = relevance[atom].max(dim=1)
-        peak_threshold = max(
-            0.75,
-            float(torch.quantile(frame_score.float(), 0.90).item()),
-        )
-        order = torch.argsort(frame_score, descending=True, stable=True)
-        peaks = []
-        for candidate in order.tolist():
-            if float(frame_score[candidate].item()) + 1e-12 < peak_threshold:
+    threshold: float,
+) -> list[int]:
+    if analysis.query_relevance.numel() == 0 or analysis.query_confidence <= 1e-6:
+        return []
+    candidates: list[tuple[float, int]] = []
+    relevance = analysis.query_relevance.reshape(-1, frame_count, tokens_per_frame)
+    for atom_scores in relevance:
+        frame_scores, local_tokens = atom_scores.max(dim=1)
+        chosen_frames: list[int] = []
+        order = torch.argsort(frame_scores, descending=True, stable=True).tolist()
+        for frame in order:
+            if float(frame_scores[frame].item()) < float(threshold):
                 continue
-            if all(abs(candidate - existing) >= max(1, min_frame_gap) for existing in peaks):
-                peaks.append(candidate)
-            if len(peaks) >= max_peaks:
+            if any(abs(frame - previous) < max(1, int(min_frame_gap)) for previous in chosen_frames):
+                continue
+            token = frame * tokens_per_frame + int(local_tokens[frame].item())
+            candidates.append((float(frame_scores[frame].item()), token))
+            chosen_frames.append(frame)
+            if len(chosen_frames) >= max(1, int(peaks_per_atom)):
                 break
-        if len(peaks) < 2:
-            continue
-        peaks.sort()
-        for left, right in zip(peaks[:-1], peaks[1:]):
-            source = left * tokens_per_frame + int(frame_token[left].item())
-            target = right * tokens_per_frame + int(frame_token[right].item())
-            score = math.sqrt(
-                max(0.0, float(frame_score[left].item()))
-                * max(0.0, float(frame_score[right].item()))
-            )
-            elapsed = max(1e-6, float(frame_times[right].item() - frame_times[left].item()))
-            duration_bonus = 1.0 + math.log1p(elapsed) / 10.0
-            sources.append(source)
-            targets.append(target)
-            weights.append(max(1e-4, score * query_confidence * duration_bonus))
-    if not sources:
-        return _empty_edges(device)
-    return _Edges(
-        source=torch.tensor(sources, dtype=torch.long, device=device),
-        target=torch.tensor(targets, dtype=torch.long, device=device),
-        weight=torch.tensor(weights, dtype=torch.float32, device=device),
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return list(dict.fromkeys(token for _, token in candidates))
+
+
+def _boundary_relay_candidates(
+    novelty: torch.Tensor,
+    pair_costs: torch.Tensor,
+) -> list[int]:
+    frame_count, tokens_per_frame = novelty.shape
+    if frame_count <= 1:
+        return []
+    stress = _minmax(pair_costs, dim=0) if pair_costs.numel() else novelty.new_zeros((frame_count - 1,))
+    offers: list[tuple[float, int]] = []
+    for pair in range(frame_count - 1):
+        scale = 0.50 + 0.50 * float(stress[pair].item())
+        for frame in (pair, pair + 1):
+            scores = novelty[frame]
+            count = min(8, tokens_per_frame)
+            for local in torch.topk(scores, k=count, largest=True, sorted=True).indices.tolist():
+                offers.append((scale * float(scores[local].item()), frame * tokens_per_frame + int(local)))
+    offers.sort(key=lambda item: (-item[0], item[1]))
+    return list(dict.fromkeys(token for _, token in offers))
+
+
+def _compose_mandatory(
+    v3_plan: CertVidPlan,
+    query_candidates: list[int],
+    boundary_candidates: list[int],
+    *,
+    budget: int,
+    relay_ratio: float,
+    query_share: float,
+) -> Tuple[list[int], int, int, int]:
+    protected = [
+        int(token)
+        for token, alpha in zip(v3_plan.anchor_indices.tolist(), v3_plan.fusion_alpha.tolist())
+        if float(alpha) <= 1e-12
+    ]
+    mandatory = list(dict.fromkeys(protected))[:budget]
+    mandatory_set = set(mandatory)
+    relay_limit = min(
+        max(0, budget - len(mandatory)),
+        max(0, int(round(budget * min(0.50, max(0.0, float(relay_ratio)))))),
     )
+    query_limit = min(relay_limit, int(round(relay_limit * min(1.0, max(0.0, float(query_share))))))
+    query_added = 0
+    for token in query_candidates:
+        if query_added >= query_limit or len(mandatory) >= budget:
+            break
+        if token not in mandatory_set:
+            mandatory.append(token)
+            mandatory_set.add(token)
+            query_added += 1
+    boundary_added = 0
+    for token in boundary_candidates:
+        if query_added + boundary_added >= relay_limit or len(mandatory) >= budget:
+            break
+        if token not in mandatory_set:
+            mandatory.append(token)
+            mandatory_set.add(token)
+            boundary_added += 1
+    # Unused boundary capacity can be reclaimed by additional query peaks.
+    for token in query_candidates:
+        if query_added + boundary_added >= relay_limit or len(mandatory) >= budget:
+            break
+        if token not in mandatory_set:
+            mandatory.append(token)
+            mandatory_set.add(token)
+            query_added += 1
+    return mandatory, len(protected), query_added, boundary_added
 
 
-def _reconstruct(metric: torch.Tensor, plan: CertVidPlan) -> torch.Tensor:
-    anchors = metric.index_select(0, plan.anchor_indices.long())
-    assignment = plan.assignment_indices.long()
-    weights = plan.assignment_weights.float()
-    reconstructed = torch.zeros_like(metric.float())
-    for neighbor in range(assignment.shape[1]):
-        reconstructed += anchors.index_select(0, assignment[:, neighbor]) * weights[:, neighbor].unsqueeze(1)
-    return F.normalize(reconstructed, dim=-1, eps=1e-6)
-
-
-def _causal_distortion(
-    metric: torch.Tensor,
-    reconstructed: torch.Tensor,
-    family: _TransitionFamily,
+def _allocate_frame_budget(
+    budget: int,
+    tokens_per_frame: int,
+    mandatory: list[int],
+    importance: torch.Tensor,
+    *,
+    floor_ratio: float,
+    cap_ratio: float,
+    temperature: float,
 ) -> torch.Tensor:
-    edges = family.edges
-    if edges.count == 0:
-        return torch.empty(0, dtype=torch.float32, device=metric.device)
-    source = metric.index_select(0, edges.source).float()
-    target = metric.index_select(0, edges.target).float()
-    source_hat = reconstructed.index_select(0, edges.source).float()
-    target_hat = reconstructed.index_select(0, edges.target).float()
-    original_residual = target - source @ family.operator
-    compressed_residual = target_hat - source_hat @ family.operator
-    error = (original_residual - compressed_residual).pow(2).mean(dim=-1)
-    raw_transition = (target - source).pow(2).mean(dim=-1)
-    scale = original_residual.pow(2).mean(dim=-1) + 0.10 * raw_transition + 1e-4
-    return (error / scale).clamp(0.0, 4.0)
+    frame_count = int(importance.numel())
+    mandatory_counts = torch.zeros(frame_count, dtype=torch.long, device=importance.device)
+    if mandatory:
+        ids = torch.tensor(mandatory, dtype=torch.long, device=importance.device) // tokens_per_frame
+        mandatory_counts = torch.bincount(ids, minlength=frame_count)
+    average = budget / max(1, frame_count)
+    floor = max(1, int(math.floor(average * min(1.0, max(0.0, float(floor_ratio))))))
+    quotas = torch.maximum(mandatory_counts, torch.full_like(mandatory_counts, floor))
+    if int(quotas.sum().item()) > budget:
+        quotas = mandatory_counts.clone()
+        for frame in torch.argsort(importance, descending=True, stable=True).tolist():
+            if int(quotas.sum().item()) >= budget:
+                break
+            if quotas[frame] == 0:
+                quotas[frame] = 1
+    if int(quotas.sum().item()) > budget:
+        raise RuntimeError("mandatory relay set exceeds the token budget")
 
-
-def _reconstruct_scalar(values: torch.Tensor, plan: CertVidPlan) -> torch.Tensor:
-    anchors = values.index_select(0, plan.anchor_indices.long()).float()
-    reconstructed = torch.zeros_like(values, dtype=torch.float32)
-    for neighbor in range(plan.assignment_indices.shape[1]):
-        reconstructed += anchors.index_select(
-            0,
-            plan.assignment_indices[:, neighbor].long(),
-        ) * plan.assignment_weights[:, neighbor].float()
-    return reconstructed
-
-
-def _query_pair_distortion(
-    query_score: torch.Tensor,
-    plan: CertVidPlan,
-    edges: _Edges,
-) -> torch.Tensor:
-    if edges.count == 0:
-        return torch.empty(0, dtype=torch.float32, device=query_score.device)
-    reconstructed = _reconstruct_scalar(query_score, plan)
-    source = query_score.index_select(0, edges.source).float()
-    target = query_score.index_select(0, edges.target).float()
-    source_hat = reconstructed.index_select(0, edges.source)
-    target_hat = reconstructed.index_select(0, edges.target)
-    original_pair = torch.stack([source, target, target - source], dim=-1)
-    compressed_pair = torch.stack(
-        [source_hat, target_hat, target_hat - source_hat],
-        dim=-1,
+    remaining = budget - int(quotas.sum().item())
+    frame_cap = min(
+        tokens_per_frame,
+        max(floor, int(math.ceil(average * max(1.0, float(cap_ratio))))),
     )
-    error = (original_pair - compressed_pair).pow(2).mean(dim=-1)
-    scale = original_pair.pow(2).mean(dim=-1) + 1e-4
-    return (error / scale).clamp(0.0, 4.0)
+    capacity = torch.maximum(
+        mandatory_counts,
+        torch.full_like(quotas, frame_cap),
+    ).clamp_max(tokens_per_frame)
+    temperature = max(1e-3, float(temperature))
+    while remaining > 0:
+        active = quotas < capacity
+        if not bool(active.any()):
+            break
+        active_ids = torch.where(active)[0]
+        weights = torch.softmax(importance[active] / temperature, dim=0)
+        proposal = weights * remaining
+        additions = torch.floor(proposal).long()
+        room = capacity[active] - quotas[active]
+        additions = torch.minimum(additions, room)
+        if int(additions.sum().item()) == 0:
+            fractional = proposal - torch.floor(proposal)
+            order = torch.argsort(fractional, descending=True, stable=True)
+            take = min(remaining, int(order.numel()))
+            additions[order[:take]] = 1
+            additions = torch.minimum(additions, room)
+        quotas[active_ids] += additions
+        used = int(additions.sum().item())
+        if used <= 0:
+            break
+        remaining -= used
+    if int(quotas.sum().item()) != budget:
+        raise RuntimeError(f"frame allocator produced {int(quotas.sum().item())}/{budget} tokens")
+    return quotas
 
 
-def _weighted_mean(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-    if values.numel() == 0:
-        return torch.zeros((), dtype=torch.float32, device=weights.device)
-    return (values.float() * weights.float()).sum() / weights.float().sum().clamp_min(1e-6)
-
-
-def _family_statistics(
+def _facility_select_frame(
     metric: torch.Tensor,
-    reconstructed: torch.Tensor,
-    families: list[_TransitionFamily],
-) -> tuple[torch.Tensor, list[tuple[_Edges, torch.Tensor]]]:
-    records: list[tuple[_Edges, torch.Tensor]] = []
-    family_losses = []
-    for family in families:
-        distortion = _causal_distortion(metric, reconstructed, family)
-        if distortion.numel() == 0:
-            continue
-        records.append((family.edges, distortion))
-        family_losses.append(_weighted_mean(distortion, family.edges.weight))
-    if not family_losses:
-        return torch.zeros((), dtype=torch.float32, device=metric.device), records
-    return torch.stack(family_losses).mean(), records
+    demand: torch.Tensor,
+    priority: torch.Tensor,
+    mandatory_local: list[int],
+    quota: int,
+    *,
+    quality_mix: float,
+) -> list[int]:
+    token_count = int(metric.shape[0])
+    quota = min(token_count, max(len(mandatory_local), int(quota)))
+    if quota >= token_count:
+        return list(range(token_count))
+    similarity = 0.5 * (metric.float() @ metric.float().transpose(0, 1) + 1.0)
+    weights = demand.float().clamp_min(1e-8)
+    weights = weights / weights.sum().clamp_min(1e-8)
+    selected = list(dict.fromkeys(int(token) for token in mandatory_local))
+    selected_mask = torch.zeros(token_count, dtype=torch.bool, device=metric.device)
+    if selected:
+        selected_tensor = torch.tensor(selected, dtype=torch.long, device=metric.device)
+        selected_mask[selected_tensor] = True
+        coverage = similarity[:, selected_tensor].amax(dim=1)
+    else:
+        coverage = torch.zeros(token_count, dtype=torch.float32, device=metric.device)
+    mix = min(0.50, max(0.0, float(quality_mix)))
+    priority = _minmax(priority.float(), dim=0)
+    while len(selected) < quota:
+        gain = torch.sum(
+            (similarity - coverage.unsqueeze(1)).clamp_min(0.0) * weights.unsqueeze(1),
+            dim=0,
+        )
+        score = (1.0 - mix) * gain + mix * priority
+        score = score.masked_fill(selected_mask, float("-inf"))
+        token = int(torch.argmax(score).item())
+        if not math.isfinite(float(score[token].item())):
+            token = int(torch.where(~selected_mask)[0][0].item())
+        selected.append(token)
+        selected_mask[token] = True
+        coverage = torch.maximum(coverage, similarity[:, token])
+    return selected
 
 
-def _path_objective(
+def _select_anchors(
     analysis: _V3Analysis,
-    plan: CertVidPlan,
-    local_families: list[_TransitionFamily],
-    skip_families: list[_TransitionFamily],
-    query_family: Optional[_TransitionFamily],
-    config: Any,
-) -> tuple[float, Dict[str, float], torch.Tensor]:
-    reconstructed = _reconstruct(analysis.metric_flat, plan)
-    node_residual = 1.0 - (analysis.metric_flat * reconstructed).sum(dim=-1).clamp(-1.0, 1.0)
-    local_loss, local_records = _family_statistics(
-        analysis.metric_flat,
-        reconstructed,
-        local_families,
-    )
-    skip_loss, skip_records = _family_statistics(
-        analysis.metric_flat,
-        reconstructed,
-        skip_families,
-    )
-    query_records: list[tuple[_Edges, torch.Tensor]] = []
-    query_loss = torch.zeros((), dtype=torch.float32, device=analysis.metric_flat.device)
-    if query_family is not None and query_family.edges.count:
-        causal_query = _causal_distortion(
-            analysis.metric_flat,
-            reconstructed,
-            query_family,
+    v3_indices: torch.Tensor,
+    mandatory: list[int],
+    quotas: torch.Tensor,
+    novelty: torch.Tensor,
+    frame_query: torch.Tensor,
+    *,
+    quality_mix: float,
+) -> torch.Tensor:
+    frame_count = int(quotas.numel())
+    tokens_per_frame = int(analysis.metric_flat.shape[0] // frame_count)
+    metric_frames = analysis.metric_flat.reshape(frame_count, tokens_per_frame, -1)
+    demand_frames = analysis.demand_weight.reshape(frame_count, tokens_per_frame)
+    attention_frames = analysis.attention.reshape(frame_count, tokens_per_frame)
+    query_frames = analysis.query_score.reshape(frame_count, tokens_per_frame)
+    v3_mask = torch.zeros(analysis.metric_flat.shape[0], dtype=torch.float32, device=analysis.metric_flat.device)
+    v3_mask[v3_indices] = 1.0
+    v3_mask = v3_mask.reshape(frame_count, tokens_per_frame)
+    mandatory_by_frame: list[list[int]] = [[] for _ in range(frame_count)]
+    for token in mandatory:
+        mandatory_by_frame[token // tokens_per_frame].append(token % tokens_per_frame)
+
+    selected: list[int] = []
+    for frame in range(frame_count):
+        local_priority = (
+            0.34 * _minmax(demand_frames[frame], dim=0)
+            + 0.20 * attention_frames[frame]
+            + 0.18 * novelty[frame]
+            + 0.16 * query_frames[frame] * frame_query[frame]
+            + 0.12 * v3_mask[frame]
         )
-        pair_query = _query_pair_distortion(
-            analysis.query_score,
-            plan,
-            query_family.edges,
+        local = _facility_select_frame(
+            metric_frames[frame],
+            demand_frames[frame],
+            local_priority,
+            mandatory_by_frame[frame],
+            int(quotas[frame].item()),
+            quality_mix=quality_mix,
         )
-        query_distortion = 0.70 * causal_query + 0.30 * pair_query
-        query_loss = _weighted_mean(query_distortion, query_family.edges.weight)
-        query_records.append((query_family.edges, query_distortion))
-    components = {
-        "node": float((node_residual * analysis.demand_weight).sum().item()),
-        "local": float(local_loss.item()),
-        "skip": float(skip_loss.item()),
-        "query": float(query_loss.item()),
-    }
-    configured = {
-        "node": max(0.0, _cfg_float(config, "certv7_node_weight", 0.20)),
-        "local": max(0.0, _cfg_float(config, "certv7_local_edge_weight", 0.35)),
-        "skip": max(0.0, _cfg_float(config, "certv7_skip_edge_weight", 0.25)),
-        "query": max(0.0, _cfg_float(config, "certv7_query_edge_weight", 0.20)),
-    }
-    active = {
-        "node": configured["node"],
-        "local": configured["local"] if local_records else 0.0,
-        "skip": configured["skip"] if skip_records else 0.0,
-        "query": configured["query"] if query_records else 0.0,
-    }
-    denominator = max(1e-8, sum(active.values()))
-    objective = sum(active[name] * components[name] for name in active) / denominator
-
-    incident = node_residual * analysis.demand_weight * float(analysis.metric_flat.shape[0])
-    incident_weight = torch.ones_like(incident)
-    for records, scale in (
-        (local_records, active["local"]),
-        (skip_records, active["skip"]),
-        (query_records, active["query"]),
-    ):
-        if scale <= 0.0:
-            continue
-        for edges, distortion in records:
-            normalized_weight = (
-                edges.weight.float()
-                / edges.weight.float().sum().clamp_min(1e-6)
-                * float(analysis.metric_flat.shape[0])
-            )
-            contribution = distortion * normalized_weight * scale
-            weight = normalized_weight * scale
-            incident.index_add_(0, edges.source, contribution)
-            incident.index_add_(0, edges.target, contribution)
-            incident_weight.index_add_(0, edges.source, weight)
-            incident_weight.index_add_(0, edges.target, weight)
-    incident = incident / incident_weight.clamp_min(1e-6)
-    return float(objective), components, incident
+        selected.extend(frame * tokens_per_frame + token for token in local)
+    result = torch.tensor(sorted(selected), dtype=torch.long, device=analysis.metric_flat.device)
+    if result.numel() != int(quotas.sum().item()) or result.unique().numel() != result.numel():
+        raise RuntimeError("facility selector violated the fixed unique-token budget")
+    return result
 
 
-def _build_path_plan(
+def _logdet_efficiency(
+    design: torch.Tensor,
+    baseline: torch.Tensor,
     selected: torch.Tensor,
+    ridge: float,
+) -> float:
+    dimension = int(design.shape[1])
+    identity = torch.eye(dimension, dtype=torch.float32, device=design.device)
+    ridge = max(1e-4, float(ridge))
+
+    def logdet(indices: torch.Tensor) -> torch.Tensor:
+        rows = design[indices].float()
+        information = ridge * identity + rows.transpose(0, 1) @ rows
+        sign, value = torch.linalg.slogdet(information)
+        if float(sign.item()) <= 0.0:
+            raise RuntimeError("non-positive design information matrix")
+        return value
+
+    difference = (logdet(selected) - logdet(baseline)) / max(1, dimension)
+    return float(torch.exp(difference.clamp(max=20.0)).item())
+
+
+def _coverage_score(metric: torch.Tensor, selected: torch.Tensor, demand: torch.Tensor) -> float:
+    similarity = 0.5 * (metric.float() @ metric[selected].float().transpose(0, 1) + 1.0)
+    coverage = similarity.amax(dim=1)
+    weights = demand.float() / demand.float().sum().clamp_min(1e-8)
+    return float(torch.sum(coverage * weights).item())
+
+
+def _build_local_plan(
+    selected: torch.Tensor,
+    mandatory: list[int],
     analysis: _V3Analysis,
     frame_times: torch.Tensor,
-    frame_segments: torch.Tensor,
-    locked_tokens: torch.Tensor,
-    added_tokens: torch.Tensor,
+    pair_costs: torch.Tensor,
+    *,
+    frame_count: int,
+    tokens_per_frame: int,
     config: Any,
 ) -> CertVidPlan:
-    metric = analysis.metric_flat
-    total_tokens = int(metric.shape[0])
+    total_tokens = int(analysis.metric_flat.shape[0])
     budget = int(selected.numel())
-    similarity = metric @ metric.index_select(0, selected).T
-    source_frames = analysis.frame_ids.long()
-    anchor_frames = source_frames.index_select(0, selected)
-    source_times = frame_times.index_select(0, source_frames)
-    anchor_times = frame_times.index_select(0, anchor_frames)
-    time_distance = (source_times.unsqueeze(1) - anchor_times.unsqueeze(0)).abs()
-    positive_gaps = frame_times[1:] - frame_times[:-1]
-    positive_gaps = positive_gaps[positive_gaps > 0]
-    median_gap = float(torch.median(positive_gaps).item()) if positive_gaps.numel() else 0.0
-    radius = max(
-        max(0.0, _cfg_float(config, "certv7_assignment_max_seconds", 12.0)),
-        1.5 * median_gap,
-    )
-    source_segments = frame_segments.index_select(0, source_frames)
-    anchor_segments = frame_segments.index_select(0, anchor_frames)
-    same_frame = source_frames.unsqueeze(1) == anchor_frames.unsqueeze(0)
-    cross_valid = (
-        (source_segments.unsqueeze(1) == anchor_segments.unsqueeze(0))
-        & (time_distance <= radius)
-        & (similarity >= _cfg_float(config, "certv7_cross_time_similarity", 0.90))
-    )
-    valid = same_frame | cross_valid
-    no_target = ~valid.any(dim=1)
-    if bool(no_target.any()):
-        nearest = time_distance.argmin(dim=1)
-        valid[no_target, nearest[no_target]] = True
-    same_component = analysis.component_ids.unsqueeze(1) == analysis.component_ids.index_select(0, selected).unsqueeze(0)
-    scores = similarity + 0.08 * same_component.float()
-    scores = scores.masked_fill(~valid, -2.0)
+    similarity = analysis.metric_flat.float() @ analysis.metric_flat[selected].float().transpose(0, 1)
+    source_frame = torch.arange(frame_count, device=selected.device).repeat_interleave(tokens_per_frame)
+    anchor_frame = source_frame[selected]
+    frame_delta = (source_frame.unsqueeze(1) - anchor_frame.unsqueeze(0)).abs()
+    valid = frame_delta == 0
+
+    if pair_costs.numel() and frame_count > 1:
+        normalized_cost = _minmax(pair_costs, dim=0)
+        safe_quantile = min(1.0, max(0.0, _cfg_float(config, "certv7_cross_frame_cost_quantile", 0.45)))
+        cost_limit = float(torch.quantile(normalized_cost, safe_quantile).item())
+        adjacent = frame_delta == 1
+        earlier = torch.minimum(source_frame.unsqueeze(1), anchor_frame.unsqueeze(0)).clamp_max(frame_count - 2)
+        pair_safe = normalized_cost[earlier] <= cost_limit + 1e-8
+        time_gap = torch.abs(frame_times[source_frame].unsqueeze(1) - frame_times[anchor_frame].unsqueeze(0))
+        cross_safe = (
+            adjacent
+            & pair_safe
+            & (time_gap <= _cfg_float(config, "certv7_cross_frame_max_seconds", 12.0))
+            & (similarity >= _cfg_float(config, "certv7_cross_frame_similarity", 0.82))
+        )
+        valid = valid | cross_safe
+    similarity = similarity.masked_fill(~valid, -2.0)
+    same_component = analysis.component_ids.unsqueeze(1) == analysis.component_ids[selected].unsqueeze(0)
+    similarity = similarity + _cfg_float(config, "certv7_component_bonus", 0.08) * same_component.float()
+
     topk = min(max(1, _cfg_int(config, "certv7_assignment_topk", 2)), budget)
-    values, assignment = torch.topk(scores, k=topk, dim=1, largest=True)
-    valid_top = values > -1.5
+    values, assignment = torch.topk(similarity, k=topk, dim=1, largest=True)
     weights = torch.softmax(
         values.float() / max(1e-4, _cfg_float(config, "certv7_assignment_temperature", 0.07)),
         dim=1,
     )
-    weights = weights * valid_top.float()
-    weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
-
     anchor_positions = torch.arange(budget, dtype=torch.long, device=selected.device)
     assignment[selected, 0] = anchor_positions
     weights[selected] = 0.0
     weights[selected, 0] = 1.0
-    source_mass = (0.5 + 0.5 * analysis.demand_weight * float(total_tokens)).clamp(0.25, 2.0)
-    protection = torch.maximum(analysis.attention[selected], analysis.query_score[selected])
-    alpha = torch.full(
-        (budget,),
-        min(max(_cfg_float(config, "certv3_fusion_alpha", 0.12), 0.0), 0.75),
-        dtype=torch.float32,
-        device=selected.device,
-    )
-    alpha *= 1.0 - 0.65 * protection.clamp(0.0, 1.0)
-    protected_count = min(budget, max(1, int(math.ceil(0.15 * budget))))
-    alpha[torch.topk(protection, k=protected_count).indices] = 0.0
-    if locked_tokens.numel():
-        alpha[torch.isin(selected, locked_tokens)] = 0.0
-    if added_tokens.numel():
-        alpha[torch.isin(selected, added_tokens)] = 0.0
+
+    source_mass = (0.5 + 0.5 * analysis.demand_weight * total_tokens).clamp(0.25, 2.0)
+    alpha_value = min(0.75, max(0.0, _cfg_float(config, "certv3_fusion_alpha", 0.12)))
+    alpha = torch.full((budget,), alpha_value, dtype=torch.float32, device=selected.device)
+    protected = torch.zeros(budget, dtype=torch.bool, device=selected.device)
+    if mandatory:
+        mandatory_tensor = torch.tensor(mandatory, dtype=torch.long, device=selected.device)
+        protected |= torch.isin(selected, mandatory_tensor)
+    protect_ratio = min(0.50, max(0.0, _cfg_float(config, "certv7_design_protect_ratio", 0.15)))
+    protect_count = min(budget, int(math.ceil(protect_ratio * budget)))
+    if protect_count > 0:
+        leverage_proxy = analysis.design[selected].float().square().sum(dim=1)
+        protected[torch.topk(leverage_proxy, k=protect_count, largest=True).indices] = True
+    alpha[protected] = 0.0
     return CertVidPlan(
         anchor_indices=selected,
         assignment_indices=assignment,
@@ -501,128 +596,40 @@ def _build_path_plan(
     )
 
 
-def _information_logdet(design: torch.Tensor, selected: torch.Tensor, ridge: float) -> float:
-    rows = design.index_select(0, selected).float()
-    information = rows.T @ rows
-    information.diagonal().add_(max(1e-6, float(ridge)))
-    sign, logdet = torch.linalg.slogdet(information)
-    if float(sign.item()) <= 0.0 or not torch.isfinite(logdet):
-        raise RuntimeError("CertVID V7 information matrix is not positive definite")
-    return float(logdet.item())
-
-
-def _anchor_load(plan: CertVidPlan, demand: torch.Tensor) -> torch.Tensor:
-    load = torch.zeros(plan.anchor_indices.numel(), dtype=torch.float32, device=demand.device)
-    for neighbor in range(plan.assignment_indices.shape[1]):
-        load.index_add_(
-            0,
-            plan.assignment_indices[:, neighbor].long(),
-            demand * plan.assignment_weights[:, neighbor].float(),
-        )
-    return load
-
-
-def _exchange_proposals(
-    analysis: _V3Analysis,
-    baseline_plan: CertVidPlan,
-    incident: torch.Tensor,
-    max_swaps: int,
-    add_pool: int,
-    remove_pool: int,
-) -> list[tuple[int, int]]:
-    selected = baseline_plan.anchor_indices.long()
-    total_tokens = int(analysis.metric_flat.shape[0])
-    selected_mask = torch.zeros(total_tokens, dtype=torch.bool, device=selected.device)
-    selected_mask[selected] = True
-    locked_mask = baseline_plan.fusion_alpha.float() <= 1e-12
-
-    similarity = analysis.metric_flat @ analysis.metric_flat.index_select(0, selected).T
-    diversity = 1.0 - similarity.max(dim=1).values
-    add_score = 0.65 * _minmax(incident, dim=0) + 0.20 * _minmax(diversity, dim=0)
-    add_score += 0.15 * _minmax(analysis.query_score, dim=0)
-    add_score[selected_mask] = float("-inf")
-    additions = torch.argsort(add_score, descending=True, stable=True)[: max(1, add_pool)]
-
-    load = _anchor_load(baseline_plan, analysis.demand_weight)
-    rows = analysis.design.index_select(0, selected).float()
-    information = rows.T @ rows
-    information.diagonal().add_(max(1e-6, analysis.ridge))
-    inverse = torch.linalg.pinv(information)
-    leverage = torch.sum((rows @ inverse) * rows, dim=1)
-    remove_keep = (
-        0.50 * _minmax(incident.index_select(0, selected), dim=0)
-        + 0.30 * _minmax(load, dim=0)
-        + 0.20 * _minmax(leverage, dim=0)
-    )
-    eligible_positions = torch.where(~locked_mask)[0]
-    if eligible_positions.numel() == 0:
-        return []
-    eligible_keep = remove_keep.index_select(0, eligible_positions)
-    removal_order = torch.argsort(eligible_keep, descending=False, stable=True)
-    removals = eligible_positions.index_select(
-        0,
-        removal_order[: min(max(1, remove_pool), int(eligible_positions.numel()))],
-    )
-
-    frame_counts = torch.bincount(
-        analysis.frame_ids.index_select(0, selected).long(),
-        minlength=int(analysis.frame_ids.max().item()) + 1,
-    ).tolist()
-    used_removals = set()
-    proposals: list[tuple[int, int]] = []
-    for add_tensor in additions:
-        add = int(add_tensor.item())
-        add_frame = int(analysis.frame_ids[add].item())
-        frame_counts[add_frame] += 1
-        chosen_position = None
-        for remove_position_tensor in removals:
-            remove_position = int(remove_position_tensor.item())
-            if remove_position in used_removals or bool(locked_mask[remove_position].item()):
-                continue
-            remove = int(selected[remove_position].item())
-            remove_frame = int(analysis.frame_ids[remove].item())
-            if frame_counts[remove_frame] <= 1:
-                continue
-            chosen_position = remove_position
-            frame_counts[remove_frame] -= 1
-            break
-        if chosen_position is None:
-            frame_counts[add_frame] -= 1
-            continue
-        used_removals.add(chosen_position)
-        proposals.append((add, int(selected[chosen_position].item())))
-        if len(proposals) >= max_swaps:
-            break
-    return proposals
-
-
 def _store_diagnostics(config: Any, diagnostics: Dict[str, Any]) -> None:
     config.last_certv7_diagnostics = diagnostics
     config.last_certv7_timestamp_source = diagnostics.get("timestamp_source", "missing")
     config.last_certv7_fallback_reason = diagnostics.get("fallback_reason")
     config.last_certv7_duration_seconds = float(diagnostics.get("duration_seconds", 0.0))
-    config.last_certv7_local_edge_count = int(diagnostics.get("local_edge_count", 0))
-    config.last_certv7_skip_edge_count = int(diagnostics.get("skip_edge_count", 0))
-    config.last_certv7_query_edge_count = int(diagnostics.get("query_edge_count", 0))
-    config.last_certv7_transition_scale_count = int(
-        diagnostics.get("transition_scale_count", 0)
-    )
-    config.last_certv7_swap_count = int(diagnostics.get("swap_count", 0))
-    config.last_certv7_modified_ratio = float(diagnostics.get("modified_ratio", 0.0))
+    config.last_certv7_pair_cost_mean = float(diagnostics.get("pair_cost_mean", 0.0))
+    config.last_certv7_pair_cost_max = float(diagnostics.get("pair_cost_max", 0.0))
+    config.last_certv7_frame_budget_min = int(diagnostics.get("frame_budget_min", 0))
+    config.last_certv7_frame_budget_max = int(diagnostics.get("frame_budget_max", 0))
+    config.last_certv7_frame_budget_sum = int(diagnostics.get("frame_budget_sum", 0))
+    config.last_certv7_protected_count = int(diagnostics.get("protected_count", 0))
+    config.last_certv7_query_relay_count = int(diagnostics.get("query_relay_count", 0))
+    config.last_certv7_boundary_relay_count = int(diagnostics.get("boundary_relay_count", 0))
+    config.last_certv7_selection_change_ratio = float(diagnostics.get("selection_change_ratio", 0.0))
     config.last_certv7_d_efficiency = float(diagnostics.get("d_efficiency", 1.0))
-    config.last_certv7_base_path_loss = float(diagnostics.get("base_path_loss", 0.0))
-    config.last_certv7_final_path_loss = float(diagnostics.get("final_path_loss", 0.0))
+    config.last_certv7_base_coverage = float(diagnostics.get("base_coverage", 0.0))
+    config.last_certv7_final_coverage = float(diagnostics.get("final_coverage", 0.0))
+    config.last_certv7_unsafe_assignment_count = int(diagnostics.get("unsafe_assignment_count", 0))
+    # Compatibility with older log collectors that displayed V7 as a repair.
+    config.last_certv7_swap_count = int(diagnostics.get("changed_anchor_count", 0))
+    config.last_certv7_modified_ratio = float(diagnostics.get("selection_change_ratio", 0.0))
+    config.last_certv7_base_path_loss = 0.0
+    config.last_certv7_final_path_loss = 0.0
     if bool(getattr(config, "certv7_debug", False)):
         print(
-            "[CertVID-V7] "
+            "[certvid-v7] "
             f"fallback={diagnostics.get('fallback_reason')} "
             f"duration={diagnostics.get('duration_seconds', 0.0):.1f}s "
-            f"edges={diagnostics.get('local_edge_count', 0)}/"
-            f"{diagnostics.get('skip_edge_count', 0)}/"
-            f"{diagnostics.get('query_edge_count', 0)} "
-            f"swaps={diagnostics.get('swap_count', 0)} "
-            f"path={diagnostics.get('base_path_loss', 0.0):.5f}->"
-            f"{diagnostics.get('final_path_loss', 0.0):.5f}"
+            f"budget={diagnostics.get('frame_budget_min', 0)}-"
+            f"{diagnostics.get('frame_budget_max', 0)} "
+            f"relay={diagnostics.get('query_relay_count', 0)}/"
+            f"{diagnostics.get('boundary_relay_count', 0)} "
+            f"coverage={diagnostics.get('base_coverage', 0.0):.4f}->"
+            f"{diagnostics.get('final_coverage', 0.0):.4f}"
         )
 
 
@@ -635,10 +642,9 @@ def _fallback(
     plan: Optional[CertVidPlan],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     diagnostics["fallback_reason"] = reason
-    diagnostics.setdefault("swap_count", 0)
-    diagnostics.setdefault("modified_ratio", 0.0)
     diagnostics.setdefault("d_efficiency", 1.0)
-    diagnostics.setdefault("final_path_loss", diagnostics.get("base_path_loss", 0.0))
+    diagnostics.setdefault("selection_change_ratio", 0.0)
+    diagnostics.setdefault("changed_anchor_count", 0)
     if plan is not None:
         config._certvid_plan = plan
     config.last_adapter_variant = "certvid_v7"
@@ -652,7 +658,7 @@ def certvid_v7_compression(
     flashvid_config: Any,
     question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Repair V3 anchors against causal multi-scale transition distortion."""
+    """Compress long videos with transport-aware temporal budget allocation."""
 
     if video_features.ndim != 3:
         raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
@@ -662,16 +668,9 @@ def certvid_v7_compression(
         "timestamp_source": str(getattr(config, "_certvid_frame_times_source", "missing")),
         "fallback_reason": None,
         "duration_seconds": 0.0,
-        "local_edge_count": 0,
-        "skip_edge_count": 0,
-        "query_edge_count": 0,
-        "swap_count": 0,
-        "modified_ratio": 0.0,
-        "d_efficiency": 1.0,
     }
-    raw_times = getattr(config, "_certvid_frame_times_sec", None)
     frame_times, timestamp_error = _normalize_frame_times(
-        raw_times,
+        getattr(config, "_certvid_frame_times_sec", None),
         frame_count,
         device=video_features.device,
     )
@@ -681,13 +680,17 @@ def certvid_v7_compression(
         else 0.0
     )
     diagnostics["duration_seconds"] = duration
-    can_analyze = frame_times is not None and duration >= _cfg_float(config, "certv7_min_duration_seconds", 120.0)
+    can_analyze = (
+        frame_times is not None
+        and duration >= _cfg_float(config, "certv7_min_duration_seconds", 120.0)
+        and frame_count > 1
+    )
     sink: Optional[Dict[str, Any]] = {} if can_analyze else None
     v3_output, v3_indices = certvid_v3_compression(
-        video_features=video_features,
-        cls_attention=cls_attention,
-        flashvid_config=config,
-        question_features=question_features,
+        video_features,
+        cls_attention,
+        config,
+        question_features,
         analysis_sink=sink,
     )
     v3_plan = getattr(config, "_certvid_plan", None)
@@ -709,170 +712,161 @@ def certvid_v7_compression(
 
     try:
         analysis = _analysis_from_sink(sink)
+        budget = int(v3_indices.numel())
         metric_frames = analysis.metric_flat.reshape(frame_count, tokens_per_frame, -1)
-        component_frames = analysis.component_ids.reshape(frame_count, tokens_per_frame)
-        frame_segments, segment_threshold = _semantic_segments(metric_frames)
-        transition_ridge = max(
-            1e-6,
-            _cfg_float(config, "certv7_transition_ridge", 0.10),
-        )
-        similarity_floor = _cfg_float(config, "certv7_match_similarity", 0.30)
-        spatial_radius = max(
-            0.0,
-            _cfg_float(config, "certv7_match_spatial_radius", 0.60),
-        )
-        local_edges = _matched_edges(
+        demand_frames = analysis.demand_weight.reshape(frame_count, tokens_per_frame)
+        height, width = _grid_hw(tokens_per_frame, config)
+        prototypes, masses, coordinates = _spatial_prototypes(
             metric_frames,
-            frame_times,
-            1,
-            component_frames,
-            similarity_floor=similarity_floor,
-            spatial_radius=spatial_radius,
+            demand_frames,
+            height,
+            width,
+            _cfg_int(config, "certv7_transport_spatial_bins", 4),
         )
-        local_families = [_fit_transition(analysis.metric_flat, local_edges, transition_ridge)]
-        skip_families: list[_TransitionFamily] = []
-        max_skip = max(2, _cfg_int(config, "certv7_max_skip_units", 8))
-        scale = 2
-        while scale <= max_skip:
-            edges = _matched_edges(
-                metric_frames,
-                frame_times,
-                scale,
-                component_frames,
-                similarity_floor=similarity_floor,
-                spatial_radius=spatial_radius,
-            )
-            if edges.count:
-                skip_families.append(
-                    _fit_transition(analysis.metric_flat, edges, transition_ridge)
-                )
-            scale *= 2
-        query_edges = _query_edges(
-            analysis.query_relevance,
-            analysis.query_confidence,
+        pair_costs = _sinkhorn_transport_costs(
+            prototypes,
+            masses,
+            coordinates,
+            epsilon=_cfg_float(config, "certv7_transport_epsilon", 0.08),
+            steps=_cfg_int(config, "certv7_transport_steps", 8),
+            spatial_weight=_cfg_float(config, "certv7_transport_spatial_weight", 0.20),
+        )
+        uniqueness, transport, event, novelty = _temporal_signals(metric_frames, pair_costs)
+        frame_query = _frame_query_signal(analysis, frame_count, tokens_per_frame)
+        query_gate = min(1.0, max(0.0, float(analysis.query_confidence)))
+        weights = torch.tensor(
+            [
+                max(0.0, _cfg_float(config, "certv7_uniqueness_weight", 0.25)),
+                max(0.0, _cfg_float(config, "certv7_transport_weight", 0.35)),
+                max(0.0, _cfg_float(config, "certv7_event_weight", 0.20)),
+                max(0.0, _cfg_float(config, "certv7_query_weight", 0.20)) * query_gate,
+            ],
+            dtype=torch.float32,
+            device=video_features.device,
+        )
+        weights = weights / weights.sum().clamp_min(1e-8)
+        importance = _minmax(
+            weights[0] * uniqueness
+            + weights[1] * transport
+            + weights[2] * event
+            + weights[3] * frame_query,
+            dim=0,
+        )
+
+        query_candidates = _query_relay_candidates(
+            analysis,
             frame_count,
             tokens_per_frame,
-            frame_times,
-            max_peaks=max(2, _cfg_int(config, "certv7_query_peaks_per_atom", 3)),
-            min_frame_gap=max(1, _cfg_int(config, "certv7_query_min_frame_gap", 2)),
+            peaks_per_atom=_cfg_int(config, "certv7_query_peaks_per_atom", 2),
+            min_frame_gap=_cfg_int(config, "certv7_query_min_frame_gap", 3),
+            threshold=_cfg_float(config, "certv7_query_peak_threshold", 0.70),
         )
-        query_family = (
-            _fit_transition(analysis.metric_flat, query_edges, transition_ridge)
-            if query_edges.count
-            else None
+        boundary_candidates = _boundary_relay_candidates(novelty, pair_costs)
+        mandatory, protected_count, query_relays, boundary_relays = _compose_mandatory(
+            v3_plan,
+            query_candidates,
+            boundary_candidates,
+            budget=budget,
+            relay_ratio=_cfg_float(config, "certv7_relay_ratio", 0.10),
+            query_share=_cfg_float(config, "certv7_relay_query_share", 0.40),
+        )
+        quotas = _allocate_frame_budget(
+            budget,
+            tokens_per_frame,
+            mandatory,
+            importance,
+            floor_ratio=_cfg_float(config, "certv7_frame_floor_ratio", 0.55),
+            cap_ratio=_cfg_float(config, "certv7_frame_cap_ratio", 2.0),
+            temperature=_cfg_float(config, "certv7_budget_temperature", 0.30),
+        )
+        v3_counts = torch.bincount(v3_indices // tokens_per_frame, minlength=frame_count)
+        quota_shift = 0.5 * torch.abs(quotas - v3_counts).sum().float() / max(1, budget)
+        relay_tensor = torch.tensor(mandatory[protected_count:], dtype=torch.long, device=v3_indices.device)
+        relay_deficit = (
+            float((~torch.isin(relay_tensor, v3_indices)).sum().item()) / max(1, budget)
+            if relay_tensor.numel()
+            else 0.0
         )
         diagnostics.update(
             {
-                "segment_count": int(frame_segments.max().item()) + 1,
-                "segment_threshold": segment_threshold,
-                "transition_ridge": transition_ridge,
-                "local_edge_count": local_edges.count,
-                "skip_edge_count": sum(family.edges.count for family in skip_families),
-                "transition_scale_count": len(local_families) + len(skip_families),
-                "query_edge_count": query_edges.count,
+                "pair_cost_mean": float(pair_costs.mean().item()) if pair_costs.numel() else 0.0,
+                "pair_cost_max": float(pair_costs.max().item()) if pair_costs.numel() else 0.0,
+                "frame_budget_min": int(quotas.min().item()),
+                "frame_budget_max": int(quotas.max().item()),
+                "frame_budget_sum": int(quotas.sum().item()),
+                "frame_budgets": quotas.detach().cpu().tolist(),
+                "v3_frame_budgets": v3_counts.detach().cpu().tolist(),
+                "quota_shift_ratio": float(quota_shift.item()),
+                "relay_deficit_ratio": relay_deficit,
+                "protected_count": protected_count,
+                "query_relay_count": query_relays,
+                "boundary_relay_count": boundary_relays,
             }
         )
-        base_loss, base_components, incident = _path_objective(
+        min_change = _cfg_float(config, "certv7_min_reallocation_ratio", 0.02)
+        if max(float(quota_shift.item()), relay_deficit) < min_change:
+            return _fallback(config, diagnostics, "v3_temporally_sufficient", v3_output, v3_indices, v3_plan)
+
+        selected = _select_anchors(
             analysis,
-            v3_plan,
-            local_families,
-            skip_families,
-            query_family,
-            config,
+            v3_indices,
+            mandatory,
+            quotas,
+            novelty,
+            frame_query,
+            quality_mix=_cfg_float(config, "certv7_facility_quality_mix", 0.18),
         )
-        diagnostics["base_path_loss"] = base_loss
-        diagnostics["base_path_components"] = base_components
-        if base_loss < _cfg_float(config, "certv7_min_path_residual", 0.02):
-            return _fallback(config, diagnostics, "path_already_faithful", v3_output, v3_indices, v3_plan)
+        d_efficiency = _logdet_efficiency(
+            analysis.design,
+            v3_indices,
+            selected,
+            analysis.ridge,
+        )
+        diagnostics["d_efficiency"] = d_efficiency
+        if d_efficiency + 1e-12 < _cfg_float(config, "certv7_d_efficiency_floor", 0.90):
+            return _fallback(config, diagnostics, "design_guard", v3_output, v3_indices, v3_plan)
 
-        budget = int(v3_indices.numel())
-        max_swaps = min(
-            budget,
-            max(1, int(math.ceil(_cfg_float(config, "certv7_max_swap_ratio", 0.30) * budget))),
-        )
-        proposals = _exchange_proposals(
+        base_coverage = _coverage_score(analysis.metric_flat, v3_indices, analysis.demand_weight)
+        final_coverage = _coverage_score(analysis.metric_flat, selected, analysis.demand_weight)
+        plan = _build_local_plan(
+            selected,
+            mandatory,
             analysis,
-            v3_plan,
-            incident,
-            max_swaps=max_swaps,
-            add_pool=max(max_swaps, _cfg_int(config, "certv7_add_pool", 96)),
-            remove_pool=max(max_swaps, _cfg_int(config, "certv7_remove_pool", 96)),
+            frame_times,
+            pair_costs,
+            frame_count=frame_count,
+            tokens_per_frame=tokens_per_frame,
+            config=config,
         )
-        if not proposals:
-            return _fallback(config, diagnostics, "no_exchange_candidates", v3_output, v3_indices, v3_plan)
-
-        baseline_logdet = _information_logdet(analysis.design, v3_indices, analysis.ridge)
-        d_floor = _cfg_float(config, "certv7_d_efficiency_floor", 0.97)
-        path_margin = _cfg_float(config, "certv7_path_margin", 1e-4)
-        locked = v3_indices[v3_plan.fusion_alpha.float() <= 1e-12]
-        prefix_sizes = []
-        size = len(proposals)
-        while size >= 1:
-            if size not in prefix_sizes:
-                prefix_sizes.append(size)
-            size //= 2
-        best = None
-        for prefix in prefix_sizes:
-            selected_set = {int(token) for token in v3_indices.tolist()}
-            added = []
-            for add, remove in proposals[:prefix]:
-                selected_set.remove(remove)
-                selected_set.add(add)
-                added.append(add)
-            selected = torch.tensor(sorted(selected_set), dtype=torch.long, device=v3_indices.device)
-            if selected.numel() != budget or selected.unique().numel() != budget:
-                continue
-            logdet = _information_logdet(analysis.design, selected, analysis.ridge)
-            d_efficiency = math.exp((logdet - baseline_logdet) / max(1, analysis.design.shape[1]))
-            if d_efficiency + 1e-12 < d_floor:
-                continue
-            added_tensor = torch.tensor(added, dtype=torch.long, device=selected.device)
-            plan = _build_path_plan(
-                selected,
-                analysis,
-                frame_times,
-                frame_segments,
-                locked,
-                added_tensor,
-                config,
-            )
-            loss, components, _ = _path_objective(
-                analysis,
-                plan,
-                local_families,
-                skip_families,
-                query_family,
-                config,
-            )
-            if base_loss - loss < path_margin:
-                continue
-            if best is None or loss < best[0]:
-                best = (loss, components, selected, plan, d_efficiency, prefix)
-        if best is None:
-            return _fallback(config, diagnostics, "no_safe_path_improvement", v3_output, v3_indices, v3_plan)
-
-        final_loss, final_components, selected, plan, d_efficiency, swaps = best
-        if not set(locked.tolist()).issubset(set(selected.tolist())):
-            raise RuntimeError("CertVID V7 removed a locked V3 anchor")
+        source_frames = torch.arange(frame_count, device=selected.device).repeat_interleave(tokens_per_frame)
+        anchor_frames = source_frames[selected]
+        assigned_frames = anchor_frames[plan.assignment_indices]
+        assignment_frame_delta = (source_frames.unsqueeze(1) - assigned_frames).abs()
+        diagnostics.update(
+            {
+                "cross_frame_assignment_count": int((assignment_frame_delta > 0).sum().item()),
+                "unsafe_assignment_count": int((assignment_frame_delta > 1).sum().item()),
+                "max_assignment_frame_delta": int(assignment_frame_delta.max().item()),
+            }
+        )
         output = apply_certvid_plan(video_features.reshape(-1, video_features.shape[-1]), plan)
+        changed = int((~torch.isin(selected, v3_indices)).sum().item())
+        diagnostics.update(
+            {
+                "fallback_reason": None,
+                "base_coverage": base_coverage,
+                "final_coverage": final_coverage,
+                "changed_anchor_count": changed,
+                "selection_change_ratio": float(changed / max(1, budget)),
+            }
+        )
         config._certvid_plan = plan
         config.vision_token_length = int(output.shape[0])
         config.visual_token_length = int(output.shape[0])
         config.llm_token_length = None
         config.last_adapter_variant = "certvid_v7"
-        config.last_adapter_raw_tokens = float(video_features.shape[0] * video_features.shape[1])
+        config.last_adapter_raw_tokens = float(frame_count * tokens_per_frame)
         config.last_adapter_output_tokens = float(output.shape[0])
-        diagnostics.update(
-            {
-                "fallback_reason": None,
-                "final_path_loss": final_loss,
-                "final_path_components": final_components,
-                "path_improvement": base_loss - final_loss,
-                "swap_count": int(swaps),
-                "modified_ratio": float(swaps / max(1, budget)),
-                "d_efficiency": float(d_efficiency),
-            }
-        )
         _store_diagnostics(config, diagnostics)
         return output, selected
     except (RuntimeError, ValueError, IndexError) as error:

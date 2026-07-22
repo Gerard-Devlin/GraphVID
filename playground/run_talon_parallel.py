@@ -219,26 +219,32 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--certv6_query_per_atom_max",
             str(args.certv6_query_per_atom_max),
             "--certv7_min_duration_seconds", str(args.certv7_min_duration_seconds),
-            "--certv7_min_path_residual", str(args.certv7_min_path_residual),
-            "--certv7_max_skip_units", str(args.certv7_max_skip_units),
-            "--certv7_transition_ridge", str(args.certv7_transition_ridge),
-            "--certv7_match_similarity", str(args.certv7_match_similarity),
-            "--certv7_match_spatial_radius", str(args.certv7_match_spatial_radius),
-            "--certv7_node_weight", str(args.certv7_node_weight),
-            "--certv7_local_edge_weight", str(args.certv7_local_edge_weight),
-            "--certv7_skip_edge_weight", str(args.certv7_skip_edge_weight),
-            "--certv7_query_edge_weight", str(args.certv7_query_edge_weight),
+            "--certv7_transport_spatial_bins", str(args.certv7_transport_spatial_bins),
+            "--certv7_transport_epsilon", str(args.certv7_transport_epsilon),
+            "--certv7_transport_steps", str(args.certv7_transport_steps),
+            "--certv7_transport_spatial_weight", str(args.certv7_transport_spatial_weight),
+            "--certv7_frame_floor_ratio", str(args.certv7_frame_floor_ratio),
+            "--certv7_frame_cap_ratio", str(args.certv7_frame_cap_ratio),
+            "--certv7_budget_temperature", str(args.certv7_budget_temperature),
+            "--certv7_uniqueness_weight", str(args.certv7_uniqueness_weight),
+            "--certv7_transport_weight", str(args.certv7_transport_weight),
+            "--certv7_event_weight", str(args.certv7_event_weight),
+            "--certv7_query_weight", str(args.certv7_query_weight),
+            "--certv7_relay_ratio", str(args.certv7_relay_ratio),
+            "--certv7_relay_query_share", str(args.certv7_relay_query_share),
             "--certv7_query_peaks_per_atom", str(args.certv7_query_peaks_per_atom),
             "--certv7_query_min_frame_gap", str(args.certv7_query_min_frame_gap),
-            "--certv7_max_swap_ratio", str(args.certv7_max_swap_ratio),
-            "--certv7_add_pool", str(args.certv7_add_pool),
-            "--certv7_remove_pool", str(args.certv7_remove_pool),
+            "--certv7_query_peak_threshold", str(args.certv7_query_peak_threshold),
+            "--certv7_facility_quality_mix", str(args.certv7_facility_quality_mix),
+            "--certv7_min_reallocation_ratio", str(args.certv7_min_reallocation_ratio),
             "--certv7_d_efficiency_floor", str(args.certv7_d_efficiency_floor),
             "--certv7_assignment_topk", str(args.certv7_assignment_topk),
             "--certv7_assignment_temperature", str(args.certv7_assignment_temperature),
-            "--certv7_assignment_max_seconds", str(args.certv7_assignment_max_seconds),
-            "--certv7_cross_time_similarity", str(args.certv7_cross_time_similarity),
-            "--certv7_path_margin", str(args.certv7_path_margin),
+            "--certv7_cross_frame_cost_quantile", str(args.certv7_cross_frame_cost_quantile),
+            "--certv7_cross_frame_similarity", str(args.certv7_cross_frame_similarity),
+            "--certv7_cross_frame_max_seconds", str(args.certv7_cross_frame_max_seconds),
+            "--certv7_component_bonus", str(args.certv7_component_bonus),
+            "--certv7_design_protect_ratio", str(args.certv7_design_protect_ratio),
             "--certv7_debug", _str_bool(args.certv7_debug),
             "--certhr_horizon_gap_seconds",
             str(args.certhr_horizon_gap_seconds),
@@ -1020,26 +1026,32 @@ def main() -> None:
     parser.add_argument("--certv6_continuity_high", type=float, default=0.80)
     parser.add_argument("--certv6_query_per_atom_max", type=int, default=3)
     parser.add_argument("--certv7_min_duration_seconds", type=float, default=120.0)
-    parser.add_argument("--certv7_min_path_residual", type=float, default=0.02)
-    parser.add_argument("--certv7_max_skip_units", type=int, default=8)
-    parser.add_argument("--certv7_transition_ridge", type=float, default=0.10)
-    parser.add_argument("--certv7_match_similarity", type=float, default=0.30)
-    parser.add_argument("--certv7_match_spatial_radius", type=float, default=0.60)
-    parser.add_argument("--certv7_node_weight", type=float, default=0.20)
-    parser.add_argument("--certv7_local_edge_weight", type=float, default=0.35)
-    parser.add_argument("--certv7_skip_edge_weight", type=float, default=0.25)
-    parser.add_argument("--certv7_query_edge_weight", type=float, default=0.20)
-    parser.add_argument("--certv7_query_peaks_per_atom", type=int, default=3)
-    parser.add_argument("--certv7_query_min_frame_gap", type=int, default=2)
-    parser.add_argument("--certv7_max_swap_ratio", type=float, default=0.30)
-    parser.add_argument("--certv7_add_pool", type=int, default=96)
-    parser.add_argument("--certv7_remove_pool", type=int, default=96)
-    parser.add_argument("--certv7_d_efficiency_floor", type=float, default=0.97)
+    parser.add_argument("--certv7_transport_spatial_bins", type=int, default=4)
+    parser.add_argument("--certv7_transport_epsilon", type=float, default=0.08)
+    parser.add_argument("--certv7_transport_steps", type=int, default=8)
+    parser.add_argument("--certv7_transport_spatial_weight", type=float, default=0.20)
+    parser.add_argument("--certv7_frame_floor_ratio", type=float, default=0.55)
+    parser.add_argument("--certv7_frame_cap_ratio", type=float, default=2.0)
+    parser.add_argument("--certv7_budget_temperature", type=float, default=0.30)
+    parser.add_argument("--certv7_uniqueness_weight", type=float, default=0.25)
+    parser.add_argument("--certv7_transport_weight", type=float, default=0.35)
+    parser.add_argument("--certv7_event_weight", type=float, default=0.20)
+    parser.add_argument("--certv7_query_weight", type=float, default=0.20)
+    parser.add_argument("--certv7_relay_ratio", type=float, default=0.10)
+    parser.add_argument("--certv7_relay_query_share", type=float, default=0.40)
+    parser.add_argument("--certv7_query_peaks_per_atom", type=int, default=2)
+    parser.add_argument("--certv7_query_min_frame_gap", type=int, default=3)
+    parser.add_argument("--certv7_query_peak_threshold", type=float, default=0.70)
+    parser.add_argument("--certv7_facility_quality_mix", type=float, default=0.18)
+    parser.add_argument("--certv7_min_reallocation_ratio", type=float, default=0.02)
+    parser.add_argument("--certv7_d_efficiency_floor", type=float, default=0.90)
     parser.add_argument("--certv7_assignment_topk", type=int, default=2)
     parser.add_argument("--certv7_assignment_temperature", type=float, default=0.07)
-    parser.add_argument("--certv7_assignment_max_seconds", type=float, default=12.0)
-    parser.add_argument("--certv7_cross_time_similarity", type=float, default=0.20)
-    parser.add_argument("--certv7_path_margin", type=float, default=1e-4)
+    parser.add_argument("--certv7_cross_frame_cost_quantile", type=float, default=0.45)
+    parser.add_argument("--certv7_cross_frame_similarity", type=float, default=0.82)
+    parser.add_argument("--certv7_cross_frame_max_seconds", type=float, default=12.0)
+    parser.add_argument("--certv7_component_bonus", type=float, default=0.08)
+    parser.add_argument("--certv7_design_protect_ratio", type=float, default=0.15)
     parser.add_argument("--certv7_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
     parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)

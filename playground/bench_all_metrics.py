@@ -168,26 +168,32 @@ class BenchmarkArgs:
     certv6_continuity_high: float = field(default=0.80)
     certv6_query_per_atom_max: int = field(default=3)
     certv7_min_duration_seconds: float = field(default=120.0)
-    certv7_min_path_residual: float = field(default=0.02)
-    certv7_max_skip_units: int = field(default=8)
-    certv7_transition_ridge: float = field(default=0.10)
-    certv7_match_similarity: float = field(default=0.30)
-    certv7_match_spatial_radius: float = field(default=0.60)
-    certv7_node_weight: float = field(default=0.20)
-    certv7_local_edge_weight: float = field(default=0.35)
-    certv7_skip_edge_weight: float = field(default=0.25)
-    certv7_query_edge_weight: float = field(default=0.20)
-    certv7_query_peaks_per_atom: int = field(default=3)
-    certv7_query_min_frame_gap: int = field(default=2)
-    certv7_max_swap_ratio: float = field(default=0.30)
-    certv7_add_pool: int = field(default=96)
-    certv7_remove_pool: int = field(default=96)
-    certv7_d_efficiency_floor: float = field(default=0.97)
+    certv7_transport_spatial_bins: int = field(default=4)
+    certv7_transport_epsilon: float = field(default=0.08)
+    certv7_transport_steps: int = field(default=8)
+    certv7_transport_spatial_weight: float = field(default=0.20)
+    certv7_frame_floor_ratio: float = field(default=0.55)
+    certv7_frame_cap_ratio: float = field(default=2.0)
+    certv7_budget_temperature: float = field(default=0.30)
+    certv7_uniqueness_weight: float = field(default=0.25)
+    certv7_transport_weight: float = field(default=0.35)
+    certv7_event_weight: float = field(default=0.20)
+    certv7_query_weight: float = field(default=0.20)
+    certv7_relay_ratio: float = field(default=0.10)
+    certv7_relay_query_share: float = field(default=0.40)
+    certv7_query_peaks_per_atom: int = field(default=2)
+    certv7_query_min_frame_gap: int = field(default=3)
+    certv7_query_peak_threshold: float = field(default=0.70)
+    certv7_facility_quality_mix: float = field(default=0.18)
+    certv7_min_reallocation_ratio: float = field(default=0.02)
+    certv7_d_efficiency_floor: float = field(default=0.90)
     certv7_assignment_topk: int = field(default=2)
     certv7_assignment_temperature: float = field(default=0.07)
-    certv7_assignment_max_seconds: float = field(default=12.0)
-    certv7_cross_time_similarity: float = field(default=0.20)
-    certv7_path_margin: float = field(default=1e-4)
+    certv7_cross_frame_cost_quantile: float = field(default=0.45)
+    certv7_cross_frame_similarity: float = field(default=0.82)
+    certv7_cross_frame_max_seconds: float = field(default=12.0)
+    certv7_component_bonus: float = field(default=0.08)
+    certv7_design_protect_ratio: float = field(default=0.15)
     certv7_debug: bool = field(default=False)
     certhr_horizon_gap_seconds: float = field(default=4.0)
     certhr_chunk_max_seconds: float = field(default=60.0)
@@ -2670,26 +2676,32 @@ def _apply_ours(model, args: BenchmarkArgs, backend: str):
         certv6_continuity_high=args.certv6_continuity_high,
         certv6_query_per_atom_max=args.certv6_query_per_atom_max,
         certv7_min_duration_seconds=args.certv7_min_duration_seconds,
-        certv7_min_path_residual=args.certv7_min_path_residual,
-        certv7_max_skip_units=args.certv7_max_skip_units,
-        certv7_transition_ridge=args.certv7_transition_ridge,
-        certv7_match_similarity=args.certv7_match_similarity,
-        certv7_match_spatial_radius=args.certv7_match_spatial_radius,
-        certv7_node_weight=args.certv7_node_weight,
-        certv7_local_edge_weight=args.certv7_local_edge_weight,
-        certv7_skip_edge_weight=args.certv7_skip_edge_weight,
-        certv7_query_edge_weight=args.certv7_query_edge_weight,
+        certv7_transport_spatial_bins=args.certv7_transport_spatial_bins,
+        certv7_transport_epsilon=args.certv7_transport_epsilon,
+        certv7_transport_steps=args.certv7_transport_steps,
+        certv7_transport_spatial_weight=args.certv7_transport_spatial_weight,
+        certv7_frame_floor_ratio=args.certv7_frame_floor_ratio,
+        certv7_frame_cap_ratio=args.certv7_frame_cap_ratio,
+        certv7_budget_temperature=args.certv7_budget_temperature,
+        certv7_uniqueness_weight=args.certv7_uniqueness_weight,
+        certv7_transport_weight=args.certv7_transport_weight,
+        certv7_event_weight=args.certv7_event_weight,
+        certv7_query_weight=args.certv7_query_weight,
+        certv7_relay_ratio=args.certv7_relay_ratio,
+        certv7_relay_query_share=args.certv7_relay_query_share,
         certv7_query_peaks_per_atom=args.certv7_query_peaks_per_atom,
         certv7_query_min_frame_gap=args.certv7_query_min_frame_gap,
-        certv7_max_swap_ratio=args.certv7_max_swap_ratio,
-        certv7_add_pool=args.certv7_add_pool,
-        certv7_remove_pool=args.certv7_remove_pool,
+        certv7_query_peak_threshold=args.certv7_query_peak_threshold,
+        certv7_facility_quality_mix=args.certv7_facility_quality_mix,
+        certv7_min_reallocation_ratio=args.certv7_min_reallocation_ratio,
         certv7_d_efficiency_floor=args.certv7_d_efficiency_floor,
         certv7_assignment_topk=args.certv7_assignment_topk,
         certv7_assignment_temperature=args.certv7_assignment_temperature,
-        certv7_assignment_max_seconds=args.certv7_assignment_max_seconds,
-        certv7_cross_time_similarity=args.certv7_cross_time_similarity,
-        certv7_path_margin=args.certv7_path_margin,
+        certv7_cross_frame_cost_quantile=args.certv7_cross_frame_cost_quantile,
+        certv7_cross_frame_similarity=args.certv7_cross_frame_similarity,
+        certv7_cross_frame_max_seconds=args.certv7_cross_frame_max_seconds,
+        certv7_component_bonus=args.certv7_component_bonus,
+        certv7_design_protect_ratio=args.certv7_design_protect_ratio,
         certv7_debug=args.certv7_debug,
         certhr_horizon_gap_seconds=args.certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=args.certhr_chunk_max_seconds,
