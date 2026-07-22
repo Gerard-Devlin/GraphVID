@@ -141,20 +141,27 @@ class FlashVidConfig:
     certhr_remove_pool: int = field(default=24)
     certhr_debug: bool = field(default=False)
 
-    # CertVID-SB: V3 semantic anchors with explicit temporal/coverage budgets.
-    certsb_semantic_ratio: float = field(default=-1.0)
-    certsb_temporal_ratio: float = field(default=-1.0)
-    certsb_coverage_ratio: float = field(default=-1.0)
-    certsb_temporal_bins: int = field(default=16)
-    certsb_local_radius: int = field(default=1)
-    certsb_change_low_quantile: float = field(default=0.50)
-    certsb_change_peak_quantile: float = field(default=0.75)
-    certsb_change_high_quantile: float = field(default=0.90)
-    certsb_scene_quantile: float = field(default=0.90)
-    certsb_scene_suppression: float = field(default=0.65)
-    certsb_temporal_query_weight: float = field(default=0.15)
-    certsb_protect_structured: bool = field(default=True)
-    certsb_debug: bool = field(default=False)
+    # CertVID-LH: long-horizon temporal allocation and evidence-chain relays.
+    certlh_min_duration_seconds: float = field(default=120.0)
+    certlh_horizon_gap_seconds: float = field(default=4.0)
+    certlh_gate_threshold: float = field(default=0.55)
+    certlh_min_groups: int = field(default=4)
+    certlh_max_groups: int = field(default=8)
+    certlh_min_group_units: int = field(default=2)
+    certlh_max_group_units: int = field(default=8)
+    certlh_event_quantile: float = field(default=0.80)
+    certlh_event_floor: float = field(default=0.08)
+    certlh_group_floor_ratio: float = field(default=0.50)
+    certlh_budget_temperature: float = field(default=0.25)
+    certlh_query_weight: float = field(default=0.35)
+    certlh_relay_ratio: float = field(default=0.10)
+    certlh_query_peaks_per_atom: int = field(default=2)
+    certlh_query_peak_quantile: float = field(default=0.90)
+    certlh_query_peak_floor: float = field(default=0.75)
+    certlh_query_min_group_distance: int = field(default=2)
+    certlh_cross_group_similarity: float = field(default=0.90)
+    certlh_cross_group_max_seconds: float = field(default=8.0)
+    certlh_debug: bool = field(default=False)
 
     # CertVID V4: verifiable budget-constrained D-optimal evidence design.
     certv4_budget_mode: str = field(default="layer_average")
@@ -257,7 +264,7 @@ class FlashVidConfig:
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
-    # "certvid_sb": V3-compatible structured evidence budget.
+    # "certvid_lh": V3-preserving long-horizon allocation and relay path.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

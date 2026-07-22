@@ -223,19 +223,26 @@ def flashvid(
     certhr_add_pool: int = 32,
     certhr_remove_pool: int = 24,
     certhr_debug: bool = False,
-    certsb_semantic_ratio: float = -1.0,
-    certsb_temporal_ratio: float = -1.0,
-    certsb_coverage_ratio: float = -1.0,
-    certsb_temporal_bins: int = 16,
-    certsb_local_radius: int = 1,
-    certsb_change_low_quantile: float = 0.50,
-    certsb_change_peak_quantile: float = 0.75,
-    certsb_change_high_quantile: float = 0.90,
-    certsb_scene_quantile: float = 0.90,
-    certsb_scene_suppression: float = 0.65,
-    certsb_temporal_query_weight: float = 0.15,
-    certsb_protect_structured: bool = True,
-    certsb_debug: bool = False,
+    certlh_min_duration_seconds: float = 120.0,
+    certlh_horizon_gap_seconds: float = 4.0,
+    certlh_gate_threshold: float = 0.55,
+    certlh_min_groups: int = 4,
+    certlh_max_groups: int = 8,
+    certlh_min_group_units: int = 2,
+    certlh_max_group_units: int = 8,
+    certlh_event_quantile: float = 0.80,
+    certlh_event_floor: float = 0.08,
+    certlh_group_floor_ratio: float = 0.50,
+    certlh_budget_temperature: float = 0.25,
+    certlh_query_weight: float = 0.35,
+    certlh_relay_ratio: float = 0.10,
+    certlh_query_peaks_per_atom: int = 2,
+    certlh_query_peak_quantile: float = 0.90,
+    certlh_query_peak_floor: float = 0.75,
+    certlh_query_min_group_distance: int = 2,
+    certlh_cross_group_similarity: float = 0.90,
+    certlh_cross_group_max_seconds: float = 8.0,
+    certlh_debug: bool = False,
     certv4_budget_mode: str = "layer_average",
     certv4_attention_policy: str = "validated",
     certv4_attention_eps: float = 1e-6,
@@ -548,7 +555,7 @@ def flashvid(
             "certvid_v3" selects a certified regularized D-optimal evidence design;
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
-            "certvid_sb" allocates the V3 budget across semantic, temporal, and coverage evidence;
+            "certvid_lh" keeps V3 for short videos and adds long-horizon allocation and relays;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
             "faithvid" preserves merged-token attention mass and constrains RoPE phase dispersion;
@@ -676,10 +683,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_sb", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_sb|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -805,19 +812,26 @@ def flashvid(
         certhr_add_pool=certhr_add_pool,
         certhr_remove_pool=certhr_remove_pool,
         certhr_debug=certhr_debug,
-        certsb_semantic_ratio=certsb_semantic_ratio,
-        certsb_temporal_ratio=certsb_temporal_ratio,
-        certsb_coverage_ratio=certsb_coverage_ratio,
-        certsb_temporal_bins=certsb_temporal_bins,
-        certsb_local_radius=certsb_local_radius,
-        certsb_change_low_quantile=certsb_change_low_quantile,
-        certsb_change_peak_quantile=certsb_change_peak_quantile,
-        certsb_change_high_quantile=certsb_change_high_quantile,
-        certsb_scene_quantile=certsb_scene_quantile,
-        certsb_scene_suppression=certsb_scene_suppression,
-        certsb_temporal_query_weight=certsb_temporal_query_weight,
-        certsb_protect_structured=certsb_protect_structured,
-        certsb_debug=certsb_debug,
+        certlh_min_duration_seconds=certlh_min_duration_seconds,
+        certlh_horizon_gap_seconds=certlh_horizon_gap_seconds,
+        certlh_gate_threshold=certlh_gate_threshold,
+        certlh_min_groups=certlh_min_groups,
+        certlh_max_groups=certlh_max_groups,
+        certlh_min_group_units=certlh_min_group_units,
+        certlh_max_group_units=certlh_max_group_units,
+        certlh_event_quantile=certlh_event_quantile,
+        certlh_event_floor=certlh_event_floor,
+        certlh_group_floor_ratio=certlh_group_floor_ratio,
+        certlh_budget_temperature=certlh_budget_temperature,
+        certlh_query_weight=certlh_query_weight,
+        certlh_relay_ratio=certlh_relay_ratio,
+        certlh_query_peaks_per_atom=certlh_query_peaks_per_atom,
+        certlh_query_peak_quantile=certlh_query_peak_quantile,
+        certlh_query_peak_floor=certlh_query_peak_floor,
+        certlh_query_min_group_distance=certlh_query_min_group_distance,
+        certlh_cross_group_similarity=certlh_cross_group_similarity,
+        certlh_cross_group_max_seconds=certlh_cross_group_max_seconds,
+        certlh_debug=certlh_debug,
         certv4_budget_mode=certv4_budget_mode,
         certv4_attention_policy=certv4_attention_policy,
         certv4_attention_eps=certv4_attention_eps,
