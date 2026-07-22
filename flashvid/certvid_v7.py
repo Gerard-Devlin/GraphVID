@@ -1,12 +1,11 @@
-"""CertVID V7: transport-aware temporal budgeting with local coverage.
+"""CertVID V7: relation-preserving compression for long-horizon video.
 
-V7 keeps CertVID V3 as an exact fallback, but replaces the previous
-post-hoc transition-operator repair.  For reliable long-horizon inputs it
-estimates adjacent-frame transport difficulty on compact spatial prototypes,
-allocates the fixed token budget across time, and solves a weighted facility
-location problem inside every frame.  A small in-budget relay set preserves
-query peaks and hard event boundaries.  Residual fusion is restricted to the
-same frame or a demonstrably safe adjacent-frame transition.
+Short or untimed inputs return the exact CertVID V3 result. For reliable
+long-horizon inputs, V7 keeps only a small V3 certificate subset and spends a
+fixed in-budget relation reserve on query context, transition endpoint pairs,
+and persistent trajectory chains. The remaining tokens are selected by
+temporally balanced per-frame facility location. Residual fusion is restricted
+to the same frame or a demonstrably safe adjacent-frame transition.
 """
 
 from __future__ import annotations
@@ -42,6 +41,13 @@ class _V3Analysis:
     frame_ids: torch.Tensor
     temporal_ids: torch.Tensor
     ridge: float
+
+
+@dataclass(frozen=True)
+class _RelayGroup:
+    score: float
+    tokens: Tuple[int, ...]
+    kind: str
 
 
 def _analysis_from_sink(sink: Dict[str, Any]) -> _V3Analysis:
@@ -89,6 +95,74 @@ def _normalize_frame_times(
     if mapped.numel() > 1 and bool(torch.any(mapped[1:] < mapped[:-1])):
         return None, "nonmonotonic_timestamps"
     return mapped.float(), None
+
+
+def _effective_ratio(config: Any) -> float:
+    ratio = _cfg_float(config, "retention_ratio", 0.10)
+    if bool(getattr(config, "certv3_budget_uses_expansion", True)):
+        ratio *= _cfg_float(config, "expansion", 1.0)
+    return min(1.0, max(0.0, ratio))
+
+
+def _long_horizon_budget(
+    frame_count: int,
+    tokens_per_frame: int,
+    config: Any,
+) -> Tuple[int, int, str]:
+    """Return target, native V3 budget, and the applied rounding policy."""
+
+    total_tokens = int(frame_count * tokens_per_frame)
+    ratio = _effective_ratio(config)
+    native_budget = max(1, min(total_tokens, int(round(total_tokens * ratio))))
+    mode = str(getattr(config, "certv7_budget_rounding", "per_frame_ceil")).strip().lower()
+    if mode == "global_round":
+        return native_budget, native_budget, mode
+    if mode != "per_frame_ceil":
+        raise ValueError(
+            f"unsupported certv7_budget_rounding={mode!r}; expected per_frame_ceil|global_round"
+        )
+    per_frame = max(1, min(tokens_per_frame, int(math.ceil(tokens_per_frame * ratio))))
+    return frame_count * per_frame, native_budget, mode
+
+
+def _v3_with_target_budget(
+    video_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    config: Any,
+    question_features: Optional[torch.Tensor],
+    analysis_sink: Optional[Dict[str, Any]],
+    target_budget: int,
+    native_budget: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    if target_budget == native_budget:
+        return certvid_v3_compression(
+            video_features,
+            cls_attention,
+            config,
+            question_features,
+            analysis_sink=analysis_sink,
+        )
+
+    total_tokens = int(video_features.shape[0] * video_features.shape[1])
+    expansion = (
+        _cfg_float(config, "expansion", 1.0)
+        if bool(getattr(config, "certv3_budget_uses_expansion", True))
+        else 1.0
+    )
+    if expansion <= 0.0:
+        raise ValueError("expansion must be positive when matching a per-frame token budget")
+    original_ratio = getattr(config, "retention_ratio", 0.10)
+    config.retention_ratio = (target_budget / max(1, total_tokens)) / expansion
+    try:
+        return certvid_v3_compression(
+            video_features,
+            cls_attention,
+            config,
+            question_features,
+            analysis_sink=analysis_sink,
+        )
+    finally:
+        config.retention_ratio = original_ratio
 
 
 def _spatial_prototypes(
@@ -243,18 +317,20 @@ def _frame_query_signal(analysis: _V3Analysis, frame_count: int, tokens_per_fram
     return _minmax(relevance.amax(dim=(0, 2)), dim=0)
 
 
-def _query_relay_candidates(
+def _query_relay_groups(
     analysis: _V3Analysis,
+    metric_frames: torch.Tensor,
     frame_count: int,
     tokens_per_frame: int,
     *,
     peaks_per_atom: int,
     min_frame_gap: int,
     threshold: float,
-) -> list[int]:
+    context_radius: int,
+) -> list[_RelayGroup]:
     if analysis.query_relevance.numel() == 0 or analysis.query_confidence <= 1e-6:
         return []
-    candidates: list[tuple[float, int]] = []
+    groups: list[_RelayGroup] = []
     relevance = analysis.query_relevance.reshape(-1, frame_count, tokens_per_frame)
     for atom_scores in relevance:
         frame_scores, local_tokens = atom_scores.max(dim=1)
@@ -265,81 +341,288 @@ def _query_relay_candidates(
                 continue
             if any(abs(frame - previous) < max(1, int(min_frame_gap)) for previous in chosen_frames):
                 continue
-            token = frame * tokens_per_frame + int(local_tokens[frame].item())
-            candidates.append((float(frame_scores[frame].item()), token))
+            local = int(local_tokens[frame].item())
+            tokens = [frame * tokens_per_frame + local]
+            radius = max(0, int(context_radius))
+            for offset in range(-radius, radius + 1):
+                neighbor = frame + offset
+                if offset == 0 or not 0 <= neighbor < frame_count:
+                    continue
+                similarity = metric_frames[neighbor].float() @ metric_frames[frame, local].float()
+                neighbor_local = int(torch.argmax(similarity).item())
+                tokens.append(neighbor * tokens_per_frame + neighbor_local)
+            groups.append(
+                _RelayGroup(
+                    score=float(frame_scores[frame].item()),
+                    tokens=tuple(sorted(set(tokens))),
+                    kind="query",
+                )
+            )
             chosen_frames.append(frame)
             if len(chosen_frames) >= max(1, int(peaks_per_atom)):
                 break
-    candidates.sort(key=lambda item: (-item[0], item[1]))
-    return list(dict.fromkeys(token for _, token in candidates))
+    groups.sort(key=lambda group: (-group.score, group.tokens))
+    deduplicated: list[_RelayGroup] = []
+    seen: set[Tuple[int, ...]] = set()
+    for group in groups:
+        if group.tokens not in seen:
+            deduplicated.append(group)
+            seen.add(group.tokens)
+    return deduplicated
 
 
-def _boundary_relay_candidates(
+def _transition_relay_groups(
+    metric_frames: torch.Tensor,
+    demand_frames: torch.Tensor,
     novelty: torch.Tensor,
     pair_costs: torch.Tensor,
-) -> list[int]:
+    *,
+    pairs_per_boundary: int,
+    min_similarity: float,
+) -> list[_RelayGroup]:
     frame_count, tokens_per_frame = novelty.shape
     if frame_count <= 1:
         return []
     stress = _minmax(pair_costs, dim=0) if pair_costs.numel() else novelty.new_zeros((frame_count - 1,))
-    offers: list[tuple[float, int]] = []
+    groups: list[_RelayGroup] = []
     for pair in range(frame_count - 1):
-        scale = 0.50 + 0.50 * float(stress[pair].item())
-        for frame in (pair, pair + 1):
-            scores = novelty[frame]
-            count = min(8, tokens_per_frame)
-            for local in torch.topk(scores, k=count, largest=True, sorted=True).indices.tolist():
-                offers.append((scale * float(scores[local].item()), frame * tokens_per_frame + int(local)))
-    offers.sort(key=lambda item: (-item[0], item[1]))
-    return list(dict.fromkeys(token for _, token in offers))
+        similarity = metric_frames[pair].float() @ metric_frames[pair + 1].float().transpose(0, 1)
+        right_similarity, right_index = similarity.max(dim=1)
+        left_index = similarity.argmax(dim=0)
+        mutual = left_index[right_index] == torch.arange(tokens_per_frame, device=similarity.device)
+        right_novelty = novelty[pair + 1, right_index]
+        right_demand = _minmax(demand_frames[pair + 1], dim=0)[right_index]
+        state_change = 0.5 * (1.0 - right_similarity.clamp(-1.0, 1.0))
+        score = (
+            0.30 * novelty[pair]
+            + 0.30 * right_novelty
+            + 0.20 * state_change
+            + 0.10 * _minmax(demand_frames[pair], dim=0)
+            + 0.10 * right_demand
+            + 0.08 * mutual.float()
+        )
+        score *= 0.35 + 0.65 * stress[pair]
+        score = score.masked_fill(right_similarity < float(min_similarity), float("-inf"))
+        count = min(max(1, int(pairs_per_boundary)), tokens_per_frame)
+        values, left_tokens = torch.topk(score, k=count, largest=True, sorted=True)
+        for value, left_local in zip(values.tolist(), left_tokens.tolist()):
+            if not math.isfinite(float(value)):
+                continue
+            right_local = int(right_index[left_local].item())
+            groups.append(
+                _RelayGroup(
+                    score=float(value),
+                    tokens=(
+                        pair * tokens_per_frame + int(left_local),
+                        (pair + 1) * tokens_per_frame + right_local,
+                    ),
+                    kind="transition",
+                )
+            )
+    groups.sort(key=lambda group: (-group.score, group.tokens))
+    return groups
+
+
+def _trajectory_relay_groups(
+    analysis: _V3Analysis,
+    novelty: torch.Tensor,
+    frame_count: int,
+    tokens_per_frame: int,
+    *,
+    min_span: int,
+    points_per_track: int,
+) -> list[_RelayGroup]:
+    component_ids = analysis.component_ids.detach().cpu().tolist()
+    metric_cpu = analysis.metric_flat.detach().float().cpu()
+    demand_cpu = analysis.demand_weight.detach().float().cpu().tolist()
+    query_cpu = analysis.query_score.detach().float().cpu().tolist()
+    novelty_cpu = novelty.reshape(-1).detach().float().cpu().tolist()
+    buckets: dict[int, list[int]] = {}
+    for token, component in enumerate(component_ids):
+        buckets.setdefault(int(component), []).append(token)
+
+    groups: list[_RelayGroup] = []
+    required_span = max(2, int(min_span))
+    point_limit = max(2, int(points_per_track))
+    for members in buckets.values():
+        by_frame: dict[int, list[int]] = {}
+        for token in members:
+            by_frame.setdefault(token // tokens_per_frame, []).append(token)
+        ordered_frames = sorted(by_frame)
+        if len(ordered_frames) < 2 or ordered_frames[-1] - ordered_frames[0] + 1 < required_span:
+            continue
+
+        representatives: list[int] = []
+        for frame in ordered_frames:
+            representative = max(
+                by_frame[frame],
+                key=lambda token: (
+                    0.45 * demand_cpu[token]
+                    + 0.30 * novelty_cpu[token]
+                    + 0.25 * query_cpu[token],
+                    -token,
+                ),
+            )
+            representatives.append(representative)
+
+        chosen = [representatives[0], representatives[-1]]
+        if point_limit > 2 and len(representatives) > 2:
+            interior = representatives[1:-1]
+            interior.sort(
+                key=lambda token: (
+                    -(0.45 * novelty_cpu[token] + 0.30 * query_cpu[token] + 0.25 * demand_cpu[token]),
+                    token,
+                )
+            )
+            chosen.extend(interior[: point_limit - 2])
+        chosen = sorted(set(chosen))
+        first, last = chosen[0], chosen[-1]
+        endpoint_change = 0.5 * (
+            1.0 - float(torch.sum(metric_cpu[first] * metric_cpu[last]).clamp(-1.0, 1.0).item())
+        )
+        span = (last // tokens_per_frame - first // tokens_per_frame) / max(1, frame_count - 1)
+        evidence = max(0.45 * novelty_cpu[token] + 0.30 * query_cpu[token] + 0.25 * demand_cpu[token] for token in chosen)
+        groups.append(
+            _RelayGroup(
+                score=0.45 * float(span) + 0.30 * endpoint_change + 0.25 * evidence,
+                tokens=tuple(chosen),
+                kind="trajectory",
+            )
+        )
+    groups.sort(key=lambda group: (-group.score, group.tokens))
+    return groups
+
+
+def _v3_certificate_candidates(
+    v3_plan: CertVidPlan,
+    analysis: _V3Analysis,
+) -> list[int]:
+    protected = v3_plan.anchor_indices[v3_plan.fusion_alpha <= 1e-12]
+    if protected.numel() == 0:
+        return []
+    leverage = _minmax(analysis.design[protected].float().square().sum(dim=1), dim=0)
+    score = (
+        0.45 * leverage
+        + 0.25 * _minmax(analysis.demand_weight[protected], dim=0)
+        + 0.18 * analysis.query_score[protected]
+        + 0.12 * analysis.attention[protected]
+    )
+    order = torch.argsort(score, descending=True, stable=True)
+    return [int(token) for token in protected[order].tolist()]
 
 
 def _compose_mandatory(
     v3_plan: CertVidPlan,
-    query_candidates: list[int],
-    boundary_candidates: list[int],
+    analysis: _V3Analysis,
+    query_groups: list[_RelayGroup],
+    transition_groups: list[_RelayGroup],
+    trajectory_groups: list[_RelayGroup],
     *,
     budget: int,
+    frame_count: int,
+    tokens_per_frame: int,
+    frame_capacity: int,
+    v3_certificate_ratio: float,
     relay_ratio: float,
     query_share: float,
-) -> Tuple[list[int], int, int, int]:
-    protected = [
-        int(token)
-        for token, alpha in zip(v3_plan.anchor_indices.tolist(), v3_plan.fusion_alpha.tolist())
-        if float(alpha) <= 1e-12
-    ]
-    mandatory = list(dict.fromkeys(protected))[:budget]
+    transition_share: float,
+) -> Tuple[list[int], Dict[str, int]]:
+    certificate_ratio = min(0.25, max(0.0, float(v3_certificate_ratio)))
+    certificate_limit = min(budget, max(0, int(round(budget * certificate_ratio))))
+    frame_capacity = min(tokens_per_frame, max(1, int(frame_capacity)))
+    frame_load = [0 for _ in range(frame_count)]
+    certificates: list[int] = []
+    for token in _v3_certificate_candidates(v3_plan, analysis):
+        frame = token // tokens_per_frame
+        if not 0 <= frame < frame_count or frame_load[frame] >= frame_capacity:
+            continue
+        certificates.append(token)
+        frame_load[frame] += 1
+        if len(certificates) >= certificate_limit:
+            break
+    mandatory = list(certificates)
     mandatory_set = set(mandatory)
     relay_limit = min(
         max(0, budget - len(mandatory)),
-        max(0, int(round(budget * min(0.50, max(0.0, float(relay_ratio)))))),
+        max(0, int(round(budget * min(0.60, max(0.0, float(relay_ratio)))))),
     )
-    query_limit = min(relay_limit, int(round(relay_limit * min(1.0, max(0.0, float(query_share))))))
-    query_added = 0
-    for token in query_candidates:
-        if query_added >= query_limit or len(mandatory) >= budget:
+    query_share = min(1.0, max(0.0, float(query_share)))
+    transition_share = min(1.0 - query_share, max(0.0, float(transition_share)))
+    trajectory_share = max(0.0, 1.0 - query_share - transition_share)
+    categories = {
+        "query": query_groups,
+        "transition": transition_groups,
+        "trajectory": trajectory_groups,
+    }
+    quotas = {
+        "query": int(round(relay_limit * query_share)),
+        "transition": int(round(relay_limit * transition_share)),
+    }
+    quotas["trajectory"] = max(0, relay_limit - quotas["query"] - quotas["transition"])
+    if trajectory_share <= 0.0:
+        quotas["transition"] += quotas["trajectory"]
+        quotas["trajectory"] = 0
+
+    admitted = {name: 0 for name in categories}
+    cursors = {name: 0 for name in categories}
+
+    def admit(group: _RelayGroup, room: int) -> int:
+        fresh = list(dict.fromkeys(token for token in group.tokens if token not in mandatory_set))
+        if not fresh or len(fresh) > room or len(mandatory) + len(fresh) > budget:
+            return 0
+        increments: Dict[int, int] = {}
+        for token in fresh:
+            frame = token // tokens_per_frame
+            if not 0 <= frame < frame_count:
+                return 0
+            increments[frame] = increments.get(frame, 0) + 1
+        if any(frame_load[frame] + count > frame_capacity for frame, count in increments.items()):
+            return 0
+        mandatory.extend(fresh)
+        mandatory_set.update(fresh)
+        for frame, count in increments.items():
+            frame_load[frame] += count
+        return len(fresh)
+
+    for name, groups in categories.items():
+        room = quotas[name]
+        while cursors[name] < len(groups) and room > 0:
+            group = groups[cursors[name]]
+            cursors[name] += 1
+            used = admit(group, room)
+            room -= used
+            admitted[name] += used
+
+    remaining = relay_limit - sum(admitted.values())
+    while remaining > 0:
+        progressed = False
+        for name, groups in categories.items():
+            while cursors[name] < len(groups):
+                group = groups[cursors[name]]
+                cursors[name] += 1
+                used = admit(group, remaining)
+                if used > 0:
+                    admitted[name] += used
+                    remaining -= used
+                    progressed = True
+                    break
+            if remaining <= 0:
+                break
+        if not progressed:
             break
-        if token not in mandatory_set:
-            mandatory.append(token)
-            mandatory_set.add(token)
-            query_added += 1
-    boundary_added = 0
-    for token in boundary_candidates:
-        if query_added + boundary_added >= relay_limit or len(mandatory) >= budget:
-            break
-        if token not in mandatory_set:
-            mandatory.append(token)
-            mandatory_set.add(token)
-            boundary_added += 1
-    # Unused boundary capacity can be reclaimed by additional query peaks.
-    for token in query_candidates:
-        if query_added + boundary_added >= relay_limit or len(mandatory) >= budget:
-            break
-        if token not in mandatory_set:
-            mandatory.append(token)
-            mandatory_set.add(token)
-            query_added += 1
-    return mandatory, len(protected), query_added, boundary_added
+
+    diagnostics = {
+        "v3_certificate_count": len(certificates),
+        "query_relay_count": admitted["query"],
+        "transition_relay_count": admitted["transition"],
+        "trajectory_relay_count": admitted["trajectory"],
+        "query_group_offered": len(query_groups),
+        "transition_group_offered": len(transition_groups),
+        "trajectory_group_offered": len(trajectory_groups),
+        "mandatory_frame_cap": frame_capacity,
+        "mandatory_frame_max": max(frame_load, default=0),
+    }
+    return mandatory, diagnostics
 
 
 def _allocate_frame_budget(
@@ -450,7 +733,6 @@ def _facility_select_frame(
 
 def _select_anchors(
     analysis: _V3Analysis,
-    v3_indices: torch.Tensor,
     mandatory: list[int],
     quotas: torch.Tensor,
     novelty: torch.Tensor,
@@ -464,9 +746,6 @@ def _select_anchors(
     demand_frames = analysis.demand_weight.reshape(frame_count, tokens_per_frame)
     attention_frames = analysis.attention.reshape(frame_count, tokens_per_frame)
     query_frames = analysis.query_score.reshape(frame_count, tokens_per_frame)
-    v3_mask = torch.zeros(analysis.metric_flat.shape[0], dtype=torch.float32, device=analysis.metric_flat.device)
-    v3_mask[v3_indices] = 1.0
-    v3_mask = v3_mask.reshape(frame_count, tokens_per_frame)
     mandatory_by_frame: list[list[int]] = [[] for _ in range(frame_count)]
     for token in mandatory:
         mandatory_by_frame[token // tokens_per_frame].append(token % tokens_per_frame)
@@ -475,10 +754,9 @@ def _select_anchors(
     for frame in range(frame_count):
         local_priority = (
             0.34 * _minmax(demand_frames[frame], dim=0)
-            + 0.20 * attention_frames[frame]
-            + 0.18 * novelty[frame]
-            + 0.16 * query_frames[frame] * frame_query[frame]
-            + 0.12 * v3_mask[frame]
+            + 0.18 * attention_frames[frame]
+            + 0.30 * novelty[frame]
+            + 0.18 * query_frames[frame] * frame_query[frame]
         )
         local = _facility_select_frame(
             metric_frames[frame],
@@ -574,7 +852,7 @@ def _build_local_plan(
     weights[selected, 0] = 1.0
 
     source_mass = (0.5 + 0.5 * analysis.demand_weight * total_tokens).clamp(0.25, 2.0)
-    alpha_value = min(0.75, max(0.0, _cfg_float(config, "certv3_fusion_alpha", 0.12)))
+    alpha_value = min(0.25, max(0.0, _cfg_float(config, "certv7_long_fusion_alpha", 0.04)))
     alpha = torch.full((budget,), alpha_value, dtype=torch.float32, device=selected.device)
     protected = torch.zeros(budget, dtype=torch.bool, device=selected.device)
     if mandatory:
@@ -606,9 +884,16 @@ def _store_diagnostics(config: Any, diagnostics: Dict[str, Any]) -> None:
     config.last_certv7_frame_budget_min = int(diagnostics.get("frame_budget_min", 0))
     config.last_certv7_frame_budget_max = int(diagnostics.get("frame_budget_max", 0))
     config.last_certv7_frame_budget_sum = int(diagnostics.get("frame_budget_sum", 0))
-    config.last_certv7_protected_count = int(diagnostics.get("protected_count", 0))
+    config.last_certv7_budget_rounding = diagnostics.get("budget_rounding", "global_round")
+    config.last_certv7_native_v3_tokens = int(diagnostics.get("native_v3_budget", 0))
+    config.last_certv7_target_tokens = int(diagnostics.get("target_budget", 0))
+    config.last_certv7_protected_count = int(diagnostics.get("v3_certificate_count", 0))
+    config.last_certv7_v3_certificate_count = int(diagnostics.get("v3_certificate_count", 0))
     config.last_certv7_query_relay_count = int(diagnostics.get("query_relay_count", 0))
-    config.last_certv7_boundary_relay_count = int(diagnostics.get("boundary_relay_count", 0))
+    config.last_certv7_transition_relay_count = int(diagnostics.get("transition_relay_count", 0))
+    config.last_certv7_trajectory_relay_count = int(diagnostics.get("trajectory_relay_count", 0))
+    config.last_certv7_boundary_relay_count = int(diagnostics.get("transition_relay_count", 0))
+    config.last_certv7_v3_anchor_overlap_ratio = float(diagnostics.get("v3_anchor_overlap_ratio", 1.0))
     config.last_certv7_selection_change_ratio = float(diagnostics.get("selection_change_ratio", 0.0))
     config.last_certv7_d_efficiency = float(diagnostics.get("d_efficiency", 1.0))
     config.last_certv7_base_coverage = float(diagnostics.get("base_coverage", 0.0))
@@ -626,8 +911,10 @@ def _store_diagnostics(config: Any, diagnostics: Dict[str, Any]) -> None:
             f"duration={diagnostics.get('duration_seconds', 0.0):.1f}s "
             f"budget={diagnostics.get('frame_budget_min', 0)}-"
             f"{diagnostics.get('frame_budget_max', 0)} "
-            f"relay={diagnostics.get('query_relay_count', 0)}/"
-            f"{diagnostics.get('boundary_relay_count', 0)} "
+            f"relay=q{diagnostics.get('query_relay_count', 0)}/"
+            f"t{diagnostics.get('transition_relay_count', 0)}/"
+            f"r{diagnostics.get('trajectory_relay_count', 0)} "
+            f"v3-overlap={diagnostics.get('v3_anchor_overlap_ratio', 1.0):.3f} "
             f"coverage={diagnostics.get('base_coverage', 0.0):.4f}->"
             f"{diagnostics.get('final_coverage', 0.0):.4f}"
         )
@@ -658,7 +945,7 @@ def certvid_v7_compression(
     flashvid_config: Any,
     question_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Compress long videos with transport-aware temporal budget allocation."""
+    """Compress long videos with relation evidence and balanced local coverage."""
 
     if video_features.ndim != 3:
         raise ValueError(f"expected video_features [T, HW, D], got {tuple(video_features.shape)}")
@@ -685,13 +972,30 @@ def certvid_v7_compression(
         and duration >= _cfg_float(config, "certv7_min_duration_seconds", 120.0)
         and frame_count > 1
     )
+    target_budget, native_budget, budget_rounding = _long_horizon_budget(
+        frame_count,
+        tokens_per_frame,
+        config,
+    )
+    if not can_analyze:
+        target_budget = native_budget
+        budget_rounding = "global_round"
+    diagnostics.update(
+        {
+            "budget_rounding": budget_rounding,
+            "native_v3_budget": native_budget,
+            "target_budget": target_budget,
+        }
+    )
     sink: Optional[Dict[str, Any]] = {} if can_analyze else None
-    v3_output, v3_indices = certvid_v3_compression(
+    v3_output, v3_indices = _v3_with_target_budget(
         video_features,
         cls_attention,
         config,
         question_features,
-        analysis_sink=sink,
+        sink,
+        target_budget,
+        native_budget,
     )
     v3_plan = getattr(config, "_certvid_plan", None)
     if v3_plan is None:
@@ -753,35 +1057,71 @@ def certvid_v7_compression(
             dim=0,
         )
 
-        query_candidates = _query_relay_candidates(
+        query_groups = _query_relay_groups(
             analysis,
+            metric_frames,
             frame_count,
             tokens_per_frame,
             peaks_per_atom=_cfg_int(config, "certv7_query_peaks_per_atom", 2),
             min_frame_gap=_cfg_int(config, "certv7_query_min_frame_gap", 3),
             threshold=_cfg_float(config, "certv7_query_peak_threshold", 0.70),
+            context_radius=_cfg_int(config, "certv7_query_context_radius", 1),
         )
-        boundary_candidates = _boundary_relay_candidates(novelty, pair_costs)
-        mandatory, protected_count, query_relays, boundary_relays = _compose_mandatory(
+        transition_groups = _transition_relay_groups(
+            metric_frames,
+            demand_frames,
+            novelty,
+            pair_costs,
+            pairs_per_boundary=_cfg_int(config, "certv7_transition_pairs_per_boundary", 2),
+            min_similarity=_cfg_float(config, "certv7_transition_min_similarity", 0.30),
+        )
+        trajectory_groups = _trajectory_relay_groups(
+            analysis,
+            novelty,
+            frame_count,
+            tokens_per_frame,
+            min_span=_cfg_int(config, "certv7_trajectory_min_span", 3),
+            points_per_track=_cfg_int(config, "certv7_trajectory_points", 3),
+        )
+        mandatory, relation_diagnostics = _compose_mandatory(
             v3_plan,
-            query_candidates,
-            boundary_candidates,
+            analysis,
+            query_groups,
+            transition_groups,
+            trajectory_groups,
             budget=budget,
-            relay_ratio=_cfg_float(config, "certv7_relay_ratio", 0.10),
-            query_share=_cfg_float(config, "certv7_relay_query_share", 0.40),
+            frame_count=frame_count,
+            tokens_per_frame=tokens_per_frame,
+            frame_capacity=min(
+                tokens_per_frame,
+                max(
+                    1,
+                    int(
+                        math.ceil(
+                            (budget / max(1, frame_count))
+                            * max(1.0, _cfg_float(config, "certv7_frame_cap_ratio", 1.0))
+                        )
+                    ),
+                ),
+            ),
+            v3_certificate_ratio=_cfg_float(config, "certv7_v3_certificate_ratio", 0.05),
+            relay_ratio=_cfg_float(config, "certv7_relay_ratio", 0.25),
+            query_share=_cfg_float(config, "certv7_relay_query_share", 0.25),
+            transition_share=_cfg_float(config, "certv7_transition_relay_share", 0.45),
         )
         quotas = _allocate_frame_budget(
             budget,
             tokens_per_frame,
             mandatory,
             importance,
-            floor_ratio=_cfg_float(config, "certv7_frame_floor_ratio", 0.55),
-            cap_ratio=_cfg_float(config, "certv7_frame_cap_ratio", 2.0),
-            temperature=_cfg_float(config, "certv7_budget_temperature", 0.30),
+            floor_ratio=_cfg_float(config, "certv7_frame_floor_ratio", 1.0),
+            cap_ratio=_cfg_float(config, "certv7_frame_cap_ratio", 1.0),
+            temperature=_cfg_float(config, "certv7_budget_temperature", 0.50),
         )
         v3_counts = torch.bincount(v3_indices // tokens_per_frame, minlength=frame_count)
         quota_shift = 0.5 * torch.abs(quotas - v3_counts).sum().float() / max(1, budget)
-        relay_tensor = torch.tensor(mandatory[protected_count:], dtype=torch.long, device=v3_indices.device)
+        certificate_count = relation_diagnostics["v3_certificate_count"]
+        relay_tensor = torch.tensor(mandatory[certificate_count:], dtype=torch.long, device=v3_indices.device)
         relay_deficit = (
             float((~torch.isin(relay_tensor, v3_indices)).sum().item()) / max(1, budget)
             if relay_tensor.numel()
@@ -798,9 +1138,7 @@ def certvid_v7_compression(
                 "v3_frame_budgets": v3_counts.detach().cpu().tolist(),
                 "quota_shift_ratio": float(quota_shift.item()),
                 "relay_deficit_ratio": relay_deficit,
-                "protected_count": protected_count,
-                "query_relay_count": query_relays,
-                "boundary_relay_count": boundary_relays,
+                **relation_diagnostics,
             }
         )
         min_change = _cfg_float(config, "certv7_min_reallocation_ratio", 0.02)
@@ -809,7 +1147,6 @@ def certvid_v7_compression(
 
         selected = _select_anchors(
             analysis,
-            v3_indices,
             mandatory,
             quotas,
             novelty,
@@ -823,7 +1160,7 @@ def certvid_v7_compression(
             analysis.ridge,
         )
         diagnostics["d_efficiency"] = d_efficiency
-        if d_efficiency + 1e-12 < _cfg_float(config, "certv7_d_efficiency_floor", 0.90):
+        if d_efficiency + 1e-12 < _cfg_float(config, "certv7_d_efficiency_floor", 0.80):
             return _fallback(config, diagnostics, "design_guard", v3_output, v3_indices, v3_plan)
 
         base_coverage = _coverage_score(analysis.metric_flat, v3_indices, analysis.demand_weight)
@@ -851,6 +1188,7 @@ def certvid_v7_compression(
         )
         output = apply_certvid_plan(video_features.reshape(-1, video_features.shape[-1]), plan)
         changed = int((~torch.isin(selected, v3_indices)).sum().item())
+        overlap = budget - changed
         diagnostics.update(
             {
                 "fallback_reason": None,
@@ -858,6 +1196,8 @@ def certvid_v7_compression(
                 "final_coverage": final_coverage,
                 "changed_anchor_count": changed,
                 "selection_change_ratio": float(changed / max(1, budget)),
+                "v3_anchor_overlap_count": overlap,
+                "v3_anchor_overlap_ratio": float(overlap / max(1, budget)),
             }
         )
         config._certvid_plan = plan

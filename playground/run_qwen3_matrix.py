@@ -523,11 +523,19 @@ def _build_command(
                 "--certv7_transport_weight", str(args.certv7_transport_weight),
                 "--certv7_event_weight", str(args.certv7_event_weight),
                 "--certv7_query_weight", str(args.certv7_query_weight),
+                "--certv7_budget_rounding", str(args.certv7_budget_rounding),
+                "--certv7_v3_certificate_ratio", str(args.certv7_v3_certificate_ratio),
                 "--certv7_relay_ratio", str(args.certv7_relay_ratio),
                 "--certv7_relay_query_share", str(args.certv7_relay_query_share),
+                "--certv7_transition_relay_share", str(args.certv7_transition_relay_share),
                 "--certv7_query_peaks_per_atom", str(args.certv7_query_peaks_per_atom),
                 "--certv7_query_min_frame_gap", str(args.certv7_query_min_frame_gap),
                 "--certv7_query_peak_threshold", str(args.certv7_query_peak_threshold),
+                "--certv7_query_context_radius", str(args.certv7_query_context_radius),
+                "--certv7_transition_pairs_per_boundary", str(args.certv7_transition_pairs_per_boundary),
+                "--certv7_transition_min_similarity", str(args.certv7_transition_min_similarity),
+                "--certv7_trajectory_min_span", str(args.certv7_trajectory_min_span),
+                "--certv7_trajectory_points", str(args.certv7_trajectory_points),
                 "--certv7_facility_quality_mix", str(args.certv7_facility_quality_mix),
                 "--certv7_min_reallocation_ratio", str(args.certv7_min_reallocation_ratio),
                 "--certv7_d_efficiency_floor", str(args.certv7_d_efficiency_floor),
@@ -538,6 +546,7 @@ def _build_command(
                 "--certv7_cross_frame_max_seconds", str(args.certv7_cross_frame_max_seconds),
                 "--certv7_component_bonus", str(args.certv7_component_bonus),
                 "--certv7_design_protect_ratio", str(args.certv7_design_protect_ratio),
+                "--certv7_long_fusion_alpha", str(args.certv7_long_fusion_alpha),
                 "--certv7_debug" if args.certv7_debug else "--no-certv7_debug",
                 "--certhr_horizon_gap_seconds",
                 str(args.certhr_horizon_gap_seconds),
@@ -951,21 +960,33 @@ def main() -> None:
     parser.add_argument("--certv7_transport_epsilon", type=float, default=0.08)
     parser.add_argument("--certv7_transport_steps", type=int, default=8)
     parser.add_argument("--certv7_transport_spatial_weight", type=float, default=0.20)
-    parser.add_argument("--certv7_frame_floor_ratio", type=float, default=0.55)
-    parser.add_argument("--certv7_frame_cap_ratio", type=float, default=2.0)
-    parser.add_argument("--certv7_budget_temperature", type=float, default=0.30)
+    parser.add_argument("--certv7_frame_floor_ratio", type=float, default=1.0)
+    parser.add_argument("--certv7_frame_cap_ratio", type=float, default=1.0)
+    parser.add_argument("--certv7_budget_temperature", type=float, default=0.50)
     parser.add_argument("--certv7_uniqueness_weight", type=float, default=0.25)
     parser.add_argument("--certv7_transport_weight", type=float, default=0.35)
     parser.add_argument("--certv7_event_weight", type=float, default=0.20)
     parser.add_argument("--certv7_query_weight", type=float, default=0.20)
-    parser.add_argument("--certv7_relay_ratio", type=float, default=0.10)
-    parser.add_argument("--certv7_relay_query_share", type=float, default=0.40)
+    parser.add_argument(
+        "--certv7_budget_rounding",
+        choices=["per_frame_ceil", "global_round"],
+        default="per_frame_ceil",
+    )
+    parser.add_argument("--certv7_v3_certificate_ratio", type=float, default=0.05)
+    parser.add_argument("--certv7_relay_ratio", type=float, default=0.25)
+    parser.add_argument("--certv7_relay_query_share", type=float, default=0.25)
+    parser.add_argument("--certv7_transition_relay_share", type=float, default=0.45)
     parser.add_argument("--certv7_query_peaks_per_atom", type=int, default=2)
     parser.add_argument("--certv7_query_min_frame_gap", type=int, default=3)
     parser.add_argument("--certv7_query_peak_threshold", type=float, default=0.70)
+    parser.add_argument("--certv7_query_context_radius", type=int, default=1)
+    parser.add_argument("--certv7_transition_pairs_per_boundary", type=int, default=2)
+    parser.add_argument("--certv7_transition_min_similarity", type=float, default=0.30)
+    parser.add_argument("--certv7_trajectory_min_span", type=int, default=3)
+    parser.add_argument("--certv7_trajectory_points", type=int, default=3)
     parser.add_argument("--certv7_facility_quality_mix", type=float, default=0.18)
     parser.add_argument("--certv7_min_reallocation_ratio", type=float, default=0.02)
-    parser.add_argument("--certv7_d_efficiency_floor", type=float, default=0.90)
+    parser.add_argument("--certv7_d_efficiency_floor", type=float, default=0.80)
     parser.add_argument("--certv7_assignment_topk", type=int, default=2)
     parser.add_argument("--certv7_assignment_temperature", type=float, default=0.07)
     parser.add_argument("--certv7_cross_frame_cost_quantile", type=float, default=0.45)
@@ -973,6 +994,7 @@ def main() -> None:
     parser.add_argument("--certv7_cross_frame_max_seconds", type=float, default=12.0)
     parser.add_argument("--certv7_component_bonus", type=float, default=0.08)
     parser.add_argument("--certv7_design_protect_ratio", type=float, default=0.15)
+    parser.add_argument("--certv7_long_fusion_alpha", type=float, default=0.04)
     parser.add_argument("--certv7_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
     parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)
