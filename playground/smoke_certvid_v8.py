@@ -57,6 +57,7 @@ def _active_config(frames: int) -> FlashVidConfig:
     config.certv8_frame_floor_ratio = 0.95
     config.certv8_frame_cap_ratio = 1.0
     config.certv8_max_swap_ratio = 0.50
+    config.certv8_concentration_preserve_ratio = 0.0
     config.certv8_query_weight = 0.0
     config.certv8_event_weight = 0.0
     config.certv8_balance_weight = 0.60
@@ -77,8 +78,11 @@ def _active_config(frames: int) -> FlashVidConfig:
 def main() -> None:
     defaults = _config("certvid_v8")
     assert defaults.certv8_intent_router is True
-    assert defaults.certv8_max_swap_ratio == 0.30
-    assert defaults.certv8_frame_floor_ratio == 0.45
+    assert defaults.certv8_max_swap_ratio == 0.09
+    assert defaults.certv8_frame_floor_ratio == 0.30
+    assert defaults.certv8_frame_cap_ratio == 2.30
+    assert defaults.certv8_concentration_preserve_ratio == 0.70
+    assert defaults.certv8_d_efficiency_floor == 0.98
     assert defaults.certv8_query_peak_count == 2
 
     torch.manual_seed(8)
@@ -174,6 +178,12 @@ def main() -> None:
         >= 1.0 - active.certv8_max_swap_ratio - 1e-8
     )
     assert active.last_certv8_d_efficiency >= active.certv8_d_efficiency_floor
+    base_cv = active.last_certv8_diagnostics["v3_frame_distribution"]["cv"]
+    final_cv = active.last_certv8_diagnostics["final_frame_distribution"]["cv"]
+    assert (
+        final_cv + 1e-8
+        >= active.certv8_concentration_preserve_ratio * base_cv
+    )
     assert active.last_certv8_diagnostics["final_deficit"] <= (
         active.last_certv8_diagnostics["base_deficit"] + 1e-8
     )

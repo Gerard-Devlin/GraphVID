@@ -62,6 +62,7 @@ def _nested(record: Any, *paths: str) -> Any:
 def _sample_id(record: dict[str, Any]) -> Optional[str]:
     value = _nested(
         record,
+        "lvb_acc.id",
         "sample_id",
         "doc_id",
         "id",
@@ -105,6 +106,7 @@ def _correctness(record: dict[str, Any]) -> Optional[bool]:
     prediction = _choice_letter(
         _nested(
             record,
+            "lvb_acc.parsed_pred",
             "parsed_pred",
             "prediction",
             "filtered_resps",
@@ -114,6 +116,7 @@ def _correctness(record: dict[str, Any]) -> Optional[bool]:
     )
     answer = _nested(
         record,
+        "lvb_acc.answer",
         "answer",
         "target",
         "doc.answer",
