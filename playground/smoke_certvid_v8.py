@@ -78,11 +78,11 @@ def _active_config(frames: int) -> FlashVidConfig:
 def main() -> None:
     defaults = _config("certvid_v8")
     assert defaults.certv8_intent_router is True
-    assert defaults.certv8_max_swap_ratio == 0.09
-    assert defaults.certv8_frame_floor_ratio == 0.30
-    assert defaults.certv8_frame_cap_ratio == 2.30
-    assert defaults.certv8_concentration_preserve_ratio == 0.70
-    assert defaults.certv8_d_efficiency_floor == 0.98
+    assert defaults.certv8_max_swap_ratio == 0.12
+    assert defaults.certv8_frame_floor_ratio == 0.35
+    assert defaults.certv8_frame_cap_ratio == 2.20
+    assert defaults.certv8_concentration_preserve_ratio == 0.55
+    assert defaults.certv8_d_efficiency_floor == 0.97
     assert defaults.certv8_query_peak_count == 2
 
     torch.manual_seed(8)

@@ -160,15 +160,15 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
 
     base_floor = min(
         0.95,
-        max(0.0, _cfg_float(config, "certv8_frame_floor_ratio", 0.30)),
+        max(0.0, _cfg_float(config, "certv8_frame_floor_ratio", 0.35)),
     )
     base_cap = max(
         1.0,
-        _cfg_float(config, "certv8_frame_cap_ratio", 2.30),
+        _cfg_float(config, "certv8_frame_cap_ratio", 2.20),
     )
     base_swap = min(
         0.50,
-        max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.09)),
+        max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.12)),
     )
     base_query = min(
         0.50,
@@ -180,36 +180,36 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
     )
     base_balance = min(
         0.60,
-        max(0.0, _cfg_float(config, "certv8_balance_weight", 0.18)),
+        max(0.0, _cfg_float(config, "certv8_balance_weight", 0.22)),
     )
     base_floor_eff = min(
         1.0,
-        max(0.0, _cfg_float(config, "certv8_d_efficiency_floor", 0.98)),
+        max(0.0, _cfg_float(config, "certv8_d_efficiency_floor", 0.97)),
     )
     base_peaks = max(1, _cfg_int(config, "certv8_query_peak_count", 2))
 
     if _matches_any(text, _SEQUENCE_PATTERNS):
         name = "sequence"
-        target = (0.62, 3, 0.38, 2.10, 0.09, 0.18, 0.32, 0.24, 0.98)
+        target = (0.62, 3, 0.38, 2.10, 0.10, 0.18, 0.32, 0.24, 0.98)
     elif _matches_any(text, _CHANGE_PATTERNS):
         name = "attribute_change"
-        target = (0.55, 2, 0.36, 2.15, 0.09, 0.32, 0.30, 0.22, 0.98)
+        target = (0.70, 2, 0.46, 1.95, 0.12, 0.32, 0.30, 0.28, 0.965)
     elif _matches_any(text, _TRACKING_PATTERNS):
         name = "object_tracking"
-        target = (0.55, 2, 0.36, 2.15, 0.09, 0.34, 0.24, 0.20, 0.98)
+        target = (0.62, 2, 0.42, 2.05, 0.11, 0.34, 0.24, 0.24, 0.975)
     elif _matches_any(text, _TEMPORAL_PATTERNS):
         name = "temporal_relation"
         target = (0.55, 2, 0.36, 2.15, 0.09, 0.28, 0.32, 0.22, 0.98)
     elif _matches_any(text, _RETRIEVAL_PATTERNS):
         name = "referred_retrieval"
-        target = (0.42, 1, 0.30, 2.35, 0.08, 0.36, 0.20, 0.16, 0.99)
+        target = (0.52, 1, 0.36, 2.20, 0.12, 0.36, 0.20, 0.21, 0.975)
     elif text:
         name = "generic_question"
-        target = (0.30, 1, 0.25, 2.50, 0.06, 0.24, 0.22, 0.12, 0.99)
+        target = (0.38, 1, 0.30, 2.40, 0.10, 0.24, 0.22, 0.16, 0.98)
     else:
         name = "embedding_only"
         inferred = 0.35 + 0.30 * min(1.0, float(analysis.query_confidence))
-        target = (inferred, 1, 0.25, 2.50, 0.06, 0.24, 0.22, 0.12, 0.99)
+        target = (inferred, 1, 0.30, 2.40, 0.10, 0.24, 0.22, 0.16, 0.98)
 
     (
         repair_strength,
@@ -401,7 +401,6 @@ def _target_frame_counts(
     frame_quality: torch.Tensor,
     frame_event: torch.Tensor,
     query_demand: torch.Tensor,
-    query_confidence: float,
     tokens_per_frame: int,
     route: _IntentRoute,
 ) -> torch.Tensor:
@@ -423,12 +422,10 @@ def _target_frame_counts(
     if int(capacity.sum().item()) < budget:
         capacity = torch.full_like(base_counts, tokens_per_frame)
 
-    # Flat query similarities should not be promoted into full-strength temporal
-    # peaks merely because per-atom min-max normalization spans [0, 1].
-    query_weight = min(
-        0.60,
-        route.query_weight * min(1.0, max(0.0, float(query_confidence))),
-    )
+    # Query confidence already controls atom construction in the V3 analysis.
+    # Multiplying it here again systematically underweights otherwise valid
+    # long-range evidence.
+    query_weight = min(0.60, route.query_weight)
     event_weight = min(0.50, route.event_weight)
     visual_weight = max(0.0, 1.0 - query_weight - event_weight)
     evidence = (
@@ -1209,7 +1206,6 @@ def certvid_v8_compression(
             frame_quality,
             frame_event,
             query_demand,
-            analysis.query_confidence,
             tokens_per_frame,
             route,
         )
@@ -1238,11 +1234,22 @@ def certvid_v8_compression(
 
         hard_swap_cap = min(
             0.50,
-            max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.09)),
+            max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.12)),
+        )
+        # Grow the trust region with measured deficit, but saturate before
+        # large, uncertain deficits trigger destructive wholesale rewrites.
+        deficit_swap_cap = min(
+            hard_swap_cap,
+            0.07 + 0.40 * min(0.125, max(0.0, base_deficit)),
         )
         swap_limit = min(
             budget,
-            int(math.ceil(min(route.max_swap_ratio, hard_swap_cap) * budget)),
+            int(
+                math.ceil(
+                    min(route.max_swap_ratio, hard_swap_cap, deficit_swap_cap)
+                    * budget
+                )
+            ),
         )
         additions, removals = _propose_swaps(
             v3_indices,
@@ -1292,7 +1299,7 @@ def certvid_v8_compression(
                 _cfg_float(
                     config,
                     "certv8_concentration_preserve_ratio",
-                    0.70,
+                    0.55,
                 ),
             ),
         )
@@ -1306,12 +1313,13 @@ def certvid_v8_compression(
                 1.0,
                 max(
                     0.0,
-                    _cfg_float(config, "certv8_d_efficiency_floor", 0.98),
+                    _cfg_float(config, "certv8_d_efficiency_floor", 0.97),
                 ),
             ),
         )
         diagnostics["query_confidence"] = float(analysis.query_confidence)
         diagnostics["hard_swap_cap"] = hard_swap_cap
+        diagnostics["deficit_swap_cap"] = deficit_swap_cap
         diagnostics["hard_d_efficiency_floor"] = hard_efficiency_floor
         diagnostics["minimum_trial_frame_cv"] = minimum_trial_cv
         while count > 0:
