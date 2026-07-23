@@ -164,12 +164,25 @@ class FlashVidConfig:
     certv7_long_fusion_alpha: float = field(default=0.04)
     certv7_debug: bool = field(default=False)
 
-    # CertVID V8: V3-stable relation-witness repair for actions and long range.
+    # CertVID V8: fixed-budget semantic/local complementary coreset.
     certv8_enabled: bool = field(default=True)
+    certv8_local_mix: float = field(default=0.55)
+    certv8_local_uniformity: float = field(default=0.80)
+    certv8_local_diversity_weight: float = field(default=0.28)
+    certv8_min_horizon_gap_seconds: float = field(default=4.0)
+    certv8_min_disagreement_ratio: float = field(default=0.08)
+    certv8_complementarity_weight: float = field(default=0.30)
+    certv8_local_quality_weight: float = field(default=0.35)
+    certv8_v3_coverage_weight: float = field(default=0.58)
+    certv8_min_joint_gain: float = field(default=0.001)
+    certv8_swap_margin: float = field(default=-0.02)
+    certv8_structural_attention_weight: float = field(default=0.25)
+    certv8_structural_novelty_weight: float = field(default=0.35)
+    certv8_structural_detail_weight: float = field(default=0.25)
     certv8_gate_threshold: float = field(default=0.18)
     certv8_min_relation_deficit: float = field(default=0.04)
     certv8_short_max_swap_ratio: float = field(default=0.12)
-    certv8_long_max_swap_ratio: float = field(default=0.06)
+    certv8_long_max_swap_ratio: float = field(default=0.20)
     certv8_long_duration_seconds: float = field(default=120.0)
     certv8_relation_lags: str = field(default="1,2,4")
     certv8_pairs_per_boundary: int = field(default=4)
@@ -177,12 +190,12 @@ class FlashVidConfig:
     certv8_match_min_similarity: float = field(default=0.25)
     certv8_relation_coverage_threshold: float = field(default=0.88)
     certv8_min_relation_gain: float = field(default=0.002)
-    certv8_d_efficiency_floor: float = field(default=0.98)
-    certv8_long_d_efficiency_floor: float = field(default=0.98)
+    certv8_d_efficiency_floor: float = field(default=0.95)
+    certv8_long_d_efficiency_floor: float = field(default=0.95)
     certv8_frame_shape_gate: float = field(default=0.08)
     certv8_frame_floor_ratio: float = field(default=0.88)
     certv8_frame_cap_ratio: float = field(default=1.18)
-    certv8_design_protect_ratio: float = field(default=0.10)
+    certv8_design_protect_ratio: float = field(default=0.08)
     certv8_relation_protect_ratio: float = field(default=0.05)
     certv8_query_weight: float = field(default=0.15)
     certv8_assignment_topk: int = field(default=2)
@@ -334,7 +347,7 @@ class FlashVidConfig:
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
     # "certvid_lh": V3-preserving long-horizon allocation and relay path.
     # "certvid_v7": long-horizon relation evidence and balanced local coverage.
-    # "certvid_v8": V3-stable relation witnesses with guarded local repair.
+    # "certvid_v8": agreement-calibrated semantic/local complementary coreset.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

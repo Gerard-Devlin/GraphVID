@@ -48,44 +48,47 @@ def _v3_reference(features, attention, question):
 
 def main() -> None:
     defaults = _config("certvid_v8")
-    assert defaults.certv8_long_max_swap_ratio == 0.06
-    assert defaults.certv8_long_d_efficiency_floor == 0.98
+    assert defaults.certv8_long_max_swap_ratio == 0.20
+    assert defaults.certv8_long_d_efficiency_floor == 0.95
+    assert defaults.certv8_local_mix == 0.55
 
     torch.manual_seed(8)
     frames, tokens, dimension = 8, 16, 32
     base = torch.randn(tokens, dimension)
-    static = base.unsqueeze(0).repeat(frames, 1, 1)
     attention = torch.randn(frames, tokens)
     question = torch.randn(4, dimension)
 
-    v3_output, v3_indices, v3_plan = _v3_reference(static, attention, question)
-    static_config = _config("certvid_v8")
-    static_output, static_indices = certvid_v8_compression(
-        static,
-        attention,
-        static_config,
-        question,
-    )
-    assert static_config.last_certv8_fallback_reason == "weak_relation_signal"
-    assert torch.equal(static_output, v3_output)
-    assert torch.equal(static_indices, v3_indices)
-    _assert_plan_equal(static_config._certvid_plan, v3_plan)
-
     dynamic_frames = []
     for frame in range(frames):
-        current = base + 0.01 * torch.randn(tokens, dimension)
-        if frame >= 3:
-            current[:5] = current[:5] + 1.8 * torch.randn(5, dimension)
-        if frame >= 6:
-            current[5:10] = current[5:10] - 1.5 * torch.randn(5, dimension)
+        current = base + 0.02 * torch.randn(tokens, dimension)
+        current = current.roll(shifts=frame % 4, dims=0)
+        if frame >= 2:
+            current[:5] += (0.5 + 0.3 * frame) * torch.randn(5, dimension)
+        if frame >= 5:
+            current[7:12] -= 1.6 * torch.randn(5, dimension)
         dynamic_frames.append(current)
     dynamic = torch.stack(dynamic_frames)
 
-    disabled_v3_output, disabled_v3_indices, disabled_v3_plan = _v3_reference(
+    v3_output, v3_indices, v3_plan = _v3_reference(
         dynamic,
         attention,
         question,
     )
+
+    short = _config("certvid_v8")
+    short._certvid_frame_times_sec = torch.linspace(0.0, 7.0, frames)
+    short._certvid_frame_times_source = "smoke"
+    short_output, short_indices = certvid_v8_compression(
+        dynamic,
+        attention,
+        short,
+        question,
+    )
+    assert short.last_certv8_fallback_reason == "short_horizon"
+    assert torch.equal(short_output, v3_output)
+    assert torch.equal(short_indices, v3_indices)
+    _assert_plan_equal(short._certvid_plan, v3_plan)
+
     disabled = _config("certvid_v8")
     disabled.certv8_enabled = False
     disabled_output, disabled_indices = certvid_v8_compression(
@@ -95,16 +98,19 @@ def main() -> None:
         question,
     )
     assert disabled.last_certv8_fallback_reason == "disabled"
-    assert torch.equal(disabled_output, disabled_v3_output)
-    assert torch.equal(disabled_indices, disabled_v3_indices)
-    _assert_plan_equal(disabled._certvid_plan, disabled_v3_plan)
+    assert torch.equal(disabled_output, v3_output)
+    assert torch.equal(disabled_indices, v3_indices)
+    _assert_plan_equal(disabled._certvid_plan, v3_plan)
 
     active = _config("certvid_v8")
-    active.certv8_gate_threshold = 0.0
-    active.certv8_min_relation_deficit = 0.0
-    active.certv8_min_relation_gain = 0.0
-    active.certv8_d_efficiency_floor = 0.0
-    active.certv8_short_max_swap_ratio = 0.20
+    active.certv8_local_mix = 1.0
+    active.certv8_min_disagreement_ratio = 0.0
+    active.certv8_min_joint_gain = 0.0
+    active.certv8_v3_coverage_weight = 0.10
+    active.certv8_long_d_efficiency_floor = 0.0
+    active.certv8_long_max_swap_ratio = 0.50
+    active.certv8_design_protect_ratio = 0.0
+    active.certv8_swap_margin = -1.0
     active._certvid_frame_times_sec = torch.linspace(0.0, 420.0, frames)
     active._certvid_frame_times_source = "smoke"
     output, indices = flashvid_compression(
@@ -122,10 +128,13 @@ def main() -> None:
     assert torch.isfinite(output).all()
     assert active.last_certv8_swap_count > 0
     assert active.last_certv8_modified_ratio <= active.certv8_long_max_swap_ratio + 1e-8
-    assert active.last_certv8_v3_overlap_ratio >= 1.0 - active.certv8_long_max_swap_ratio - 1e-8
     assert (
-        active.last_certv8_final_relation_coverage
-        >= active.last_certv8_base_relation_coverage
+        active.last_certv8_v3_overlap_ratio
+        >= 1.0 - active.certv8_long_max_swap_ratio - 1e-8
+    )
+    assert (
+        active.last_certv8_final_joint_coverage
+        >= active.last_certv8_base_joint_coverage
     )
     assert active.last_certv8_unsafe_assignment_count == 0
 
@@ -137,11 +146,14 @@ def main() -> None:
 
     repeat = _config("certvid_v8")
     for name in (
-        "certv8_gate_threshold",
-        "certv8_min_relation_deficit",
-        "certv8_min_relation_gain",
-        "certv8_d_efficiency_floor",
-        "certv8_short_max_swap_ratio",
+        "certv8_local_mix",
+        "certv8_min_disagreement_ratio",
+        "certv8_min_joint_gain",
+        "certv8_v3_coverage_weight",
+        "certv8_long_d_efficiency_floor",
+        "certv8_long_max_swap_ratio",
+        "certv8_design_protect_ratio",
+        "certv8_swap_margin",
         "_certvid_frame_times_sec",
         "_certvid_frame_times_source",
     ):
@@ -161,7 +173,7 @@ def main() -> None:
     assert len(compressed) == len(deepstack)
     assert all(layer.shape == (budget, dimension) for layer in compressed)
     assert all(torch.isfinite(layer).all() for layer in compressed)
-    print("CertVID V8 relation-witness smoke passed")
+    print("CertVID V8 complementary-coreset smoke passed")
 
 
 if __name__ == "__main__":

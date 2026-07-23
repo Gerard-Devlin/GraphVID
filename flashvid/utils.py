@@ -212,7 +212,7 @@ def flashvid_compression(
         return certvid_v8_compression(
             video_features=video_features,
             cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
+            config=flashvid_config,
             question_features=question_features,
         )
     if compression_variant == "certvid_hr":
