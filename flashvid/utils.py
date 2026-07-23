@@ -1,6 +1,7 @@
 from typing import Optional, Tuple, Union, List, Iterable
 
 import math
+import os
 import torch
 from torch.nn import functional as F
 from .configuration_flashvid import FlashVidConfig
@@ -205,6 +206,15 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
+    if compression_variant == "certvid_v8":
+        from .certvid_v8 import certvid_v8_compression
+
+        return certvid_v8_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
     if compression_variant == "certvid_hr":
         from .certvid_hr import certvid_hr_compression
 
@@ -272,7 +282,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -326,12 +336,28 @@ def flashvid_compression(
 
     sorted_indices = final_global_indices.argsort()
     sorted_tokens = final_tokens[sorted_indices]  # Sort by global indices.
+    sorted_global_indices = final_global_indices[sorted_indices]
+    frame_counts = torch.bincount(
+        sorted_global_indices // max(1, num_visual_tokens),
+        minlength=num_frames,
+    )
+    flashvid_config.last_flashvid_frame_counts = [
+        int(value) for value in frame_counts.detach().cpu().tolist()
+    ]
+    if os.environ.get("FLASHVID_DEBUG_DISTRIBUTION", "0") == "1":
+        print(
+            "[flashvid-distribution] "
+            f"sample={getattr(flashvid_config, '_debug_sample_id', 'unknown')} "
+            f"segments={[int(value) for value in segment_lengths.detach().cpu().tolist()]} "
+            f"tokens={int(sorted_tokens.shape[0])} "
+            f"frame_counts={flashvid_config.last_flashvid_frame_counts}"
+        )
     # Store the final token length in the `flashvid_config`.
     flashvid_config.vision_token_length = int(sorted_tokens.shape[0])
     flashvid_config.llm_token_length = None
     flashvid_config.visual_token_length = sorted_tokens.shape[0]
     # print(f"#Visual Tokens After Vision-Side Compression : {flashvid_config.visual_token_length}")
-    return sorted_tokens, final_global_indices[sorted_indices]
+    return sorted_tokens, sorted_global_indices
 
 
 def segment_compression(

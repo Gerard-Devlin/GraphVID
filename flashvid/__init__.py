@@ -246,6 +246,33 @@ def flashvid(
     certv7_design_protect_ratio: float = 0.15,
     certv7_long_fusion_alpha: float = 0.04,
     certv7_debug: bool = False,
+    certv8_enabled: bool = True,
+    certv8_gate_threshold: float = 0.18,
+    certv8_min_relation_deficit: float = 0.04,
+    certv8_short_max_swap_ratio: float = 0.12,
+    certv8_long_max_swap_ratio: float = 0.06,
+    certv8_long_duration_seconds: float = 120.0,
+    certv8_relation_lags: str = "1,2,4",
+    certv8_pairs_per_boundary: int = 4,
+    certv8_match_spatial_penalty: float = 0.08,
+    certv8_match_min_similarity: float = 0.25,
+    certv8_relation_coverage_threshold: float = 0.88,
+    certv8_min_relation_gain: float = 0.002,
+    certv8_d_efficiency_floor: float = 0.98,
+    certv8_long_d_efficiency_floor: float = 0.98,
+    certv8_frame_shape_gate: float = 0.08,
+    certv8_frame_floor_ratio: float = 0.88,
+    certv8_frame_cap_ratio: float = 1.18,
+    certv8_design_protect_ratio: float = 0.10,
+    certv8_relation_protect_ratio: float = 0.05,
+    certv8_query_weight: float = 0.15,
+    certv8_assignment_topk: int = 2,
+    certv8_assignment_temperature: float = 0.07,
+    certv8_cross_frame_similarity: float = 0.88,
+    certv8_cross_frame_max_seconds: float = 8.0,
+    certv8_component_bonus: float = 0.08,
+    certv8_fusion_alpha: float = 0.10,
+    certv8_debug: bool = False,
     certhr_horizon_gap_seconds: float = 4.0,
     certhr_chunk_max_seconds: float = 60.0,
     certhr_chunk_max_units: int = 4,
@@ -592,6 +619,7 @@ def flashvid(
             "certvid_v3" selects a certified regularized D-optimal evidence design;
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_v7" preserves long-horizon relations with transition and trajectory evidence;
+            "certvid_v8" preserves the V3 core and repairs uncovered relation witnesses;
             "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
             "certvid_lh" keeps V3 for short videos and adds long-horizon allocation and relays;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
@@ -721,10 +749,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -873,6 +901,33 @@ def flashvid(
         certv7_design_protect_ratio=certv7_design_protect_ratio,
         certv7_long_fusion_alpha=certv7_long_fusion_alpha,
         certv7_debug=certv7_debug,
+        certv8_enabled=certv8_enabled,
+        certv8_gate_threshold=certv8_gate_threshold,
+        certv8_min_relation_deficit=certv8_min_relation_deficit,
+        certv8_short_max_swap_ratio=certv8_short_max_swap_ratio,
+        certv8_long_max_swap_ratio=certv8_long_max_swap_ratio,
+        certv8_long_duration_seconds=certv8_long_duration_seconds,
+        certv8_relation_lags=certv8_relation_lags,
+        certv8_pairs_per_boundary=certv8_pairs_per_boundary,
+        certv8_match_spatial_penalty=certv8_match_spatial_penalty,
+        certv8_match_min_similarity=certv8_match_min_similarity,
+        certv8_relation_coverage_threshold=certv8_relation_coverage_threshold,
+        certv8_min_relation_gain=certv8_min_relation_gain,
+        certv8_d_efficiency_floor=certv8_d_efficiency_floor,
+        certv8_long_d_efficiency_floor=certv8_long_d_efficiency_floor,
+        certv8_frame_shape_gate=certv8_frame_shape_gate,
+        certv8_frame_floor_ratio=certv8_frame_floor_ratio,
+        certv8_frame_cap_ratio=certv8_frame_cap_ratio,
+        certv8_design_protect_ratio=certv8_design_protect_ratio,
+        certv8_relation_protect_ratio=certv8_relation_protect_ratio,
+        certv8_query_weight=certv8_query_weight,
+        certv8_assignment_topk=certv8_assignment_topk,
+        certv8_assignment_temperature=certv8_assignment_temperature,
+        certv8_cross_frame_similarity=certv8_cross_frame_similarity,
+        certv8_cross_frame_max_seconds=certv8_cross_frame_max_seconds,
+        certv8_component_bonus=certv8_component_bonus,
+        certv8_fusion_alpha=certv8_fusion_alpha,
+        certv8_debug=certv8_debug,
         certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=certhr_chunk_max_seconds,
         certhr_chunk_max_units=certhr_chunk_max_units,

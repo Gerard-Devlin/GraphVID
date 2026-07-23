@@ -961,7 +961,7 @@ def _publish_certhr_timing(model: Any, timing: tuple[list[float], str] | None) -
         return None
     config._certvid_frame_times_sec = None
     config._certvid_frame_times_source = "missing"
-    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_hr", "certvid_lh", "certvid_v7"} and timing is not None:
+    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_hr", "certvid_lh", "certvid_v7", "certvid_v8"} and timing is not None:
         config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
     return config
 
@@ -3383,6 +3383,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v6-active][ours]"
         elif variant_name == "certvid_v7":
             ours_prefix = "[certvid-v7-active][ours]"
+        elif variant_name == "certvid_v8":
+            ours_prefix = "[certvid-v8-active][ours]"
         elif variant_name == "certvid_hr":
             ours_prefix = "[certvid-hr-active][ours]"
         elif variant_name == "certvid_lh":
