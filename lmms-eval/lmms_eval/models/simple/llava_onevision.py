@@ -87,6 +87,43 @@ def _clear_certhr_timing(config) -> None:
         config._certvid_frame_times_source = "missing"
 
 
+def _doc_value(doc, *names):
+    if not isinstance(doc, dict):
+        return None
+    for name in names:
+        value = doc.get(name)
+        if value is not None and str(value).strip():
+            return value
+    return None
+
+
+def _publish_certvid_sample(config, doc, doc_id, context, task):
+    if config is None:
+        return
+    sample_id = _doc_value(doc, "id", "question_id", "uid", "video_id")
+    question = _doc_value(doc, "question", "query", "instruction", "input")
+    category = _doc_value(
+        doc,
+        "question_category",
+        "question_type",
+        "category",
+        "duration",
+    )
+    config._debug_sample_id = str(sample_id if sample_id is not None else doc_id)
+    config._certvid_query_text = str(question if question is not None else context)
+    config._certvid_eval_category = None if category is None else str(category)
+    config._certvid_task_name = str(task)
+
+
+def _clear_certvid_sample(config) -> None:
+    if config is None:
+        return
+    config._debug_sample_id = "unknown"
+    config._certvid_query_text = ""
+    config._certvid_eval_category = None
+    config._certvid_task_name = None
+
+
 @register_model("llava_onevision")
 class Llava_OneVision(lmms):
     """
@@ -229,44 +266,24 @@ class Llava_OneVision(lmms):
         certv7_debug: bool = False,
         # CertVID V8 parameters
         certv8_enabled: bool = True,
-        certv8_local_mix: float = 0.55,
-        certv8_local_uniformity: float = 0.80,
-        certv8_local_diversity_weight: float = 0.28,
+        certv8_intent_router: bool = True,
+        certv8_intent_strength: float = 0.75,
         certv8_min_horizon_gap_seconds: float = 4.0,
-        certv8_min_disagreement_ratio: float = 0.08,
-        certv8_complementarity_weight: float = 0.30,
-        certv8_local_quality_weight: float = 0.35,
-        certv8_v3_coverage_weight: float = 0.58,
-        certv8_min_joint_gain: float = 0.001,
-        certv8_swap_margin: float = -0.02,
-        certv8_structural_attention_weight: float = 0.25,
-        certv8_structural_novelty_weight: float = 0.35,
-        certv8_structural_detail_weight: float = 0.25,
-        certv8_gate_threshold: float = 0.18,
-        certv8_min_relation_deficit: float = 0.04,
-        certv8_short_max_swap_ratio: float = 0.12,
-        certv8_long_max_swap_ratio: float = 0.20,
-        certv8_long_duration_seconds: float = 120.0,
-        certv8_relation_lags: str = "1,2,4",
-        certv8_pairs_per_boundary: int = 4,
-        certv8_match_spatial_penalty: float = 0.08,
-        certv8_match_min_similarity: float = 0.25,
-        certv8_relation_coverage_threshold: float = 0.88,
-        certv8_min_relation_gain: float = 0.002,
-        certv8_d_efficiency_floor: float = 0.95,
-        certv8_long_d_efficiency_floor: float = 0.95,
-        certv8_frame_shape_gate: float = 0.08,
-        certv8_frame_floor_ratio: float = 0.88,
-        certv8_frame_cap_ratio: float = 1.18,
+        certv8_min_deficit: float = 0.04,
+        certv8_frame_floor_ratio: float = 0.45,
+        certv8_frame_cap_ratio: float = 2.00,
+        certv8_max_swap_ratio: float = 0.30,
+        certv8_query_peak_count: int = 2,
+        certv8_query_peak_separation: int = 2,
+        certv8_query_weight: float = 0.30,
+        certv8_event_weight: float = 0.25,
+        certv8_balance_weight: float = 0.30,
         certv8_design_protect_ratio: float = 0.08,
-        certv8_relation_protect_ratio: float = 0.05,
-        certv8_query_weight: float = 0.15,
-        certv8_assignment_topk: int = 2,
-        certv8_assignment_temperature: float = 0.07,
+        certv8_query_protect_ratio: float = 0.05,
+        certv8_d_efficiency_floor: float = 0.95,
+        certv8_min_objective_gain: float = 0.001,
         certv8_cross_frame_similarity: float = 0.88,
         certv8_cross_frame_max_seconds: float = 8.0,
-        certv8_component_bonus: float = 0.08,
-        certv8_fusion_alpha: float = 0.10,
         certv8_debug: bool = False,
         # CertVID-HR parameters
         certhr_horizon_gap_seconds: float = 4.0,
@@ -554,44 +571,24 @@ class Llava_OneVision(lmms):
                 certv7_long_fusion_alpha=certv7_long_fusion_alpha,
                 certv7_debug=certv7_debug,
                 certv8_enabled=certv8_enabled,
-                certv8_local_mix=certv8_local_mix,
-                certv8_local_uniformity=certv8_local_uniformity,
-                certv8_local_diversity_weight=certv8_local_diversity_weight,
+                certv8_intent_router=certv8_intent_router,
+                certv8_intent_strength=certv8_intent_strength,
                 certv8_min_horizon_gap_seconds=certv8_min_horizon_gap_seconds,
-                certv8_min_disagreement_ratio=certv8_min_disagreement_ratio,
-                certv8_complementarity_weight=certv8_complementarity_weight,
-                certv8_local_quality_weight=certv8_local_quality_weight,
-                certv8_v3_coverage_weight=certv8_v3_coverage_weight,
-                certv8_min_joint_gain=certv8_min_joint_gain,
-                certv8_swap_margin=certv8_swap_margin,
-                certv8_structural_attention_weight=certv8_structural_attention_weight,
-                certv8_structural_novelty_weight=certv8_structural_novelty_weight,
-                certv8_structural_detail_weight=certv8_structural_detail_weight,
-                certv8_gate_threshold=certv8_gate_threshold,
-                certv8_min_relation_deficit=certv8_min_relation_deficit,
-                certv8_short_max_swap_ratio=certv8_short_max_swap_ratio,
-                certv8_long_max_swap_ratio=certv8_long_max_swap_ratio,
-                certv8_long_duration_seconds=certv8_long_duration_seconds,
-                certv8_relation_lags=certv8_relation_lags,
-                certv8_pairs_per_boundary=certv8_pairs_per_boundary,
-                certv8_match_spatial_penalty=certv8_match_spatial_penalty,
-                certv8_match_min_similarity=certv8_match_min_similarity,
-                certv8_relation_coverage_threshold=certv8_relation_coverage_threshold,
-                certv8_min_relation_gain=certv8_min_relation_gain,
-                certv8_d_efficiency_floor=certv8_d_efficiency_floor,
-                certv8_long_d_efficiency_floor=certv8_long_d_efficiency_floor,
-                certv8_frame_shape_gate=certv8_frame_shape_gate,
+                certv8_min_deficit=certv8_min_deficit,
                 certv8_frame_floor_ratio=certv8_frame_floor_ratio,
                 certv8_frame_cap_ratio=certv8_frame_cap_ratio,
-                certv8_design_protect_ratio=certv8_design_protect_ratio,
-                certv8_relation_protect_ratio=certv8_relation_protect_ratio,
+                certv8_max_swap_ratio=certv8_max_swap_ratio,
+                certv8_query_peak_count=certv8_query_peak_count,
+                certv8_query_peak_separation=certv8_query_peak_separation,
                 certv8_query_weight=certv8_query_weight,
-                certv8_assignment_topk=certv8_assignment_topk,
-                certv8_assignment_temperature=certv8_assignment_temperature,
+                certv8_event_weight=certv8_event_weight,
+                certv8_balance_weight=certv8_balance_weight,
+                certv8_design_protect_ratio=certv8_design_protect_ratio,
+                certv8_query_protect_ratio=certv8_query_protect_ratio,
+                certv8_d_efficiency_floor=certv8_d_efficiency_floor,
+                certv8_min_objective_gain=certv8_min_objective_gain,
                 certv8_cross_frame_similarity=certv8_cross_frame_similarity,
                 certv8_cross_frame_max_seconds=certv8_cross_frame_max_seconds,
-                certv8_component_bonus=certv8_component_bonus,
-                certv8_fusion_alpha=certv8_fusion_alpha,
                 certv8_debug=certv8_debug,
                 certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
                 certhr_chunk_max_seconds=certhr_chunk_max_seconds,
@@ -1003,7 +1000,6 @@ class Llava_OneVision(lmms):
             split = batched_split[0]
             sample_doc = self.task_dict[task][split][batched_doc_id[0]]
             sample_identifier = sample_doc.get("id", batched_doc_id[0])
-            self._config._debug_sample_id = str(sample_identifier)
             if os.environ.get("FLASHVID_DEBUG_SAMPLE_ID", "0") == "1":
                 print(
                     "[flashvid-sample] "
@@ -1153,6 +1149,13 @@ class Llava_OneVision(lmms):
                 self.model,
                 getattr(self, "_pending_certhr_timing", None),
             )
+            _publish_certvid_sample(
+                runtime_config,
+                sample_doc,
+                batched_doc_id[0],
+                batched_contexts[0],
+                task,
+            )
             try:
                 with torch.inference_mode():
                     cont = self.model.generate(
@@ -1169,6 +1172,7 @@ class Llava_OneVision(lmms):
             except Exception as e:
                 raise e
             finally:
+                _clear_certvid_sample(runtime_config)
                 _clear_certhr_timing(runtime_config)
                 self._pending_certhr_timing = None
 
@@ -1218,6 +1222,7 @@ class Llava_OneVision(lmms):
             ) = zip(*chunk)
             task = batched_task[0]
             split = batched_split[0]
+            sample_doc = self.task_dict[task][split][batched_doc_id[0]]
             batched_visuals = [batched_doc_to_visual[0](self.task_dict[task][split][ids]) for ids in batched_doc_id]  # [B, N]
             assert len(batched_visuals) == 1
 
@@ -1399,6 +1404,13 @@ class Llava_OneVision(lmms):
                     self.model,
                     getattr(self, "_pending_certhr_timing", None),
                 )
+                _publish_certvid_sample(
+                    runtime_config,
+                    sample_doc,
+                    batched_doc_id[0],
+                    batched_contexts[0],
+                    task,
+                )
                 try:
                     with torch.inference_mode():
                         cont = self.model.generate(
@@ -1415,6 +1427,7 @@ class Llava_OneVision(lmms):
                 except Exception as e:
                     raise e
                 finally:
+                    _clear_certvid_sample(runtime_config)
                     _clear_certhr_timing(runtime_config)
                     self._pending_certhr_timing = None
 
