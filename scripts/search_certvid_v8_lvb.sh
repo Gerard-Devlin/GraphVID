@@ -12,6 +12,9 @@ GPUS="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5}"
 PROCESSES="${NUM_PROCESSES:-6}"
 PORT="${MAIN_PROCESS_PORT:-18950}"
 OFFLINE="${OFFLINE:-1}"
+SOURCE_DATASETS_CACHE="${HF_DATASETS_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/datasets}"
+LOCAL_DATASETS_CACHE="${LOCAL_DATASETS_CACHE:-/tmp/${USER:-graphvid}/graphvid_hf_datasets}"
+LVB_CACHE_NAME="longvideobench___long_video_bench"
 
 if [[ ! -f "$SAMPLE_IDS_FILE" ]]; then
   echo "Sample-id file not found: $SAMPLE_IDS_FILE" >&2
@@ -20,6 +23,17 @@ fi
 
 mkdir -p "$OUTPUT_ROOT"
 cp "$SAMPLE_IDS_FILE" "$OUTPUT_ROOT/selected_sample_ids.txt"
+
+# Gluster file locks can fail when all ranks initialize the cached dataset.
+# Keep videos on shared storage, but copy the small Arrow dataset cache locally.
+if [[ ! -d "$SOURCE_DATASETS_CACHE/$LVB_CACHE_NAME" ]]; then
+  echo "LongVideoBench dataset cache not found: $SOURCE_DATASETS_CACHE/$LVB_CACHE_NAME" >&2
+  exit 1
+fi
+mkdir -p "$LOCAL_DATASETS_CACHE/$LVB_CACHE_NAME"
+cp -a "$SOURCE_DATASETS_CACHE/$LVB_CACHE_NAME/." \
+  "$LOCAL_DATASETS_CACHE/$LVB_CACHE_NAME/"
+echo "Using node-local datasets cache: $LOCAL_DATASETS_CACHE"
 
 case "$STAGE" in
   baseline)
@@ -65,6 +79,12 @@ while IFS=$'\t' read -r \
 do
   [[ -n "$name" ]] || continue
   run_dir="$OUTPUT_ROOT/search_$name"
+  if find "$run_dir" -type f -name '*_results.json' -print -quit 2>/dev/null \
+    | grep -q .; then
+    echo "[$(date)] skipping completed configuration: $name"
+    PORT=$((PORT + 1))
+    continue
+  fi
   echo "================================================================"
   echo "[$(date)] $name"
   echo "samples=$SAMPLE_IDS_FILE output=$run_dir"
@@ -77,6 +97,7 @@ do
     HF_HUB_OFFLINE="$OFFLINE" \
     HF_DATASETS_OFFLINE="$OFFLINE" \
     TRANSFORMERS_OFFLINE="$OFFLINE" \
+    HF_DATASETS_CACHE="$LOCAL_DATASETS_CACHE" \
     PRETRAINED="$MODEL" \
     METHODS=certvid_v8 \
     TASKS=longvideobench_val_v \
