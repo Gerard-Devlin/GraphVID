@@ -276,6 +276,18 @@ def flashvid(
     certv8_stratified_d_efficiency_floor: float = 0.82,
     certv8_stratified_query_tolerance: float = 0.01,
     certv8_debug: bool = False,
+    certg_enabled: bool = True,
+    certg_locator_checkpoint: str = "",
+    certg_min_duration_seconds: float = 120.0,
+    certg_confidence_threshold: float = 0.55,
+    certg_max_tilt: float = 2.0,
+    certg_peak_count: int = 2,
+    certg_peak_separation: int = 3,
+    certg_window_radius: int = 2,
+    certg_min_question_words: int = 6,
+    certg_subtitle_fallback: bool = True,
+    certg_disable_v3_query_when_active: bool = True,
+    certg_debug: bool = False,
     certhr_horizon_gap_seconds: float = 4.0,
     certhr_chunk_max_seconds: float = 60.0,
     certhr_chunk_max_units: int = 4,
@@ -623,6 +635,7 @@ def flashvid(
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_v7" preserves long-horizon relations with transition and trajectory evidence;
             "certvid_v8" preserves V3 anchors and repairs temporal/query evidence deficits;
+            "certvid_g" gates native SigLIP frame localization over the V3 design;
             "certvid_hr" conservatively repairs verified long-horizon V3 evidence gaps;
             "certvid_lh" keeps V3 for short videos and adds long-horizon allocation and relays;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
@@ -752,10 +765,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_g", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_g|certvid_hr|certvid_lh|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -934,6 +947,18 @@ def flashvid(
         certv8_stratified_d_efficiency_floor=certv8_stratified_d_efficiency_floor,
         certv8_stratified_query_tolerance=certv8_stratified_query_tolerance,
         certv8_debug=certv8_debug,
+        certg_enabled=certg_enabled,
+        certg_locator_checkpoint=certg_locator_checkpoint,
+        certg_min_duration_seconds=certg_min_duration_seconds,
+        certg_confidence_threshold=certg_confidence_threshold,
+        certg_max_tilt=certg_max_tilt,
+        certg_peak_count=certg_peak_count,
+        certg_peak_separation=certg_peak_separation,
+        certg_window_radius=certg_window_radius,
+        certg_min_question_words=certg_min_question_words,
+        certg_subtitle_fallback=certg_subtitle_fallback,
+        certg_disable_v3_query_when_active=certg_disable_v3_query_when_active,
+        certg_debug=certg_debug,
         certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
         certhr_chunk_max_seconds=certhr_chunk_max_seconds,
         certhr_chunk_max_units=certhr_chunk_max_units,
@@ -1270,5 +1295,10 @@ def flashvid(
     for module in model.modules():
         if isinstance(module, (Qwen2Attention, Qwen2_5_VLAttention, Qwen3VLTextAttention)):
             setattr(module, "flashvid_config", flashvid_config)
+
+    if variant == "certvid_g" and type(model) is LlavaQwenForCausalLM:
+        from .siglip_locator import install_siglip_locator
+
+        install_siglip_locator(model, flashvid_config)
 
     return model

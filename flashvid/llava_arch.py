@@ -18,6 +18,7 @@ from .utils import extract_question_features, flashvid_compression
 def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch.Tensor):
     vision_outputs = self.get_model().get_vision_tower()(images)
     attention_source = "missing"
+    siglip_frame_embeddings = None
 
     # Compatible with multiple vision tower output formats:
     # 1) tensor: image_features
@@ -29,6 +30,11 @@ def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch
     elif isinstance(vision_outputs, (tuple, list)):
         image_features = vision_outputs[0]
         cls_attentions = vision_outputs[1] if len(vision_outputs) > 1 and torch.is_tensor(vision_outputs[1]) else None
+        siglip_frame_embeddings = (
+            vision_outputs[2]
+            if len(vision_outputs) > 2 and torch.is_tensor(vision_outputs[2])
+            else None
+        )
         if cls_attentions is not None:
             attention_source = "manual_qk"
     elif hasattr(vision_outputs, "last_hidden_state"):
@@ -63,7 +69,11 @@ def LlavaMetaForCausalLM_encode_images(self: LlavaMetaForCausalLM, images: torch
             cls_attentions = image_features.float().norm(dim=-1)
             attention_source = "feature_norm"
 
+    runtime_config = getattr(self, "flashvid_config", None)
+    if str(getattr(runtime_config, "compression_variant", "")).lower() != "certvid_g":
+        siglip_frame_embeddings = None
     setattr(self, "_flashvid_attention_source", attention_source)
+    setattr(self, "_flashvid_siglip_frame_embeddings", siglip_frame_embeddings)
     return image_features, cls_attentions.to(image_features.dtype)
 
 
@@ -106,6 +116,13 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
         concat_images = torch.cat([image for image in images_list], dim=0)
         split_sizes = [image.shape[0] for image in images_list]
         encoded_image_features, cls_attentions = self.encode_images(concat_images)
+        raw_siglip_frames = getattr(self, "_flashvid_siglip_frame_embeddings", None)
+        split_siglip_frames = (
+            torch.split(raw_siglip_frames, split_sizes)
+            if torch.is_tensor(raw_siglip_frames)
+            and raw_siglip_frames.shape[0] == sum(split_sizes)
+            else [None] * len(split_sizes)
+        )
         # image_features,all_faster_video_features = self.encode_multimodals(concat_images, video_idx_in_batch, split_sizes)
 
         # This is a list, each element is [num_images, patch * patch, dim]
@@ -141,6 +158,32 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                     attention_mask=attention_mask,
                     invalid_token_ids=[IMAGE_TOKEN_INDEX],
                 )
+                setattr(flashvid_config, "_certg_frame_scores", None)
+                setattr(flashvid_config, "_certg_score_source", "missing")
+                setattr(flashvid_config, "_certg_locator_runtime_error", None)
+                if str(getattr(flashvid_config, "compression_variant", "")).lower() == "certvid_g":
+                    from .siglip_locator import compute_siglip_frame_scores
+
+                    try:
+                        frame_scores, score_source, prompt_count = compute_siglip_frame_scores(
+                            self,
+                            str(getattr(flashvid_config, "_certvid_query_text", "") or ""),
+                            split_siglip_frames[idx],
+                        )
+                    except Exception as error:
+                        frame_scores = None
+                        prompt_count = 0
+                        score_source = f"locator_error:{type(error).__name__}"
+                        setattr(
+                            flashvid_config,
+                            "_certg_locator_runtime_error",
+                            f"{type(error).__name__}: {error}",
+                        )
+                    finally:
+                        setattr(self, "_flashvid_siglip_frame_embeddings", None)
+                    setattr(flashvid_config, "_certg_frame_scores", frame_scores)
+                    setattr(flashvid_config, "_certg_score_source", score_source)
+                    setattr(flashvid_config, "_certg_prompt_count", prompt_count)
                 compressed_visual_tokens, keep_visual_indices = flashvid_compression(
                     video_features=pooled_image_feature,
                     cls_attention=pooled_cls_attentions,

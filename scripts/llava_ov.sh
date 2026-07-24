@@ -187,6 +187,20 @@ CERTV8_DEBUG="${CERTV8_DEBUG:-True}"
 CERTV8_DIAGNOSTICS_DETAIL="${CERTV8_DIAGNOSTICS_DETAIL:-summary}"
 FLASHVID_DIAGNOSTICS_DETAIL="${FLASHVID_DIAGNOSTICS_DETAIL:-summary}"
 
+CERTG_TOKEN_SELECTION_METHOD="${CERTG_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
+CERTG_ENABLED="${CERTG_ENABLED:-True}"
+CERTG_LOCATOR_CHECKPOINT="${CERTG_LOCATOR_CHECKPOINT:-google/siglip-so400m-patch14-384}"
+CERTG_MIN_DURATION_SECONDS="${CERTG_MIN_DURATION_SECONDS:-120.0}"
+CERTG_CONFIDENCE_THRESHOLD="${CERTG_CONFIDENCE_THRESHOLD:-0.55}"
+CERTG_MAX_TILT="${CERTG_MAX_TILT:-2.0}"
+CERTG_PEAK_COUNT="${CERTG_PEAK_COUNT:-2}"
+CERTG_PEAK_SEPARATION="${CERTG_PEAK_SEPARATION:-3}"
+CERTG_WINDOW_RADIUS="${CERTG_WINDOW_RADIUS:-2}"
+CERTG_MIN_QUESTION_WORDS="${CERTG_MIN_QUESTION_WORDS:-6}"
+CERTG_SUBTITLE_FALLBACK="${CERTG_SUBTITLE_FALLBACK:-True}"
+CERTG_DISABLE_V3_QUERY_WHEN_ACTIVE="${CERTG_DISABLE_V3_QUERY_WHEN_ACTIVE:-True}"
+CERTG_DEBUG="${CERTG_DEBUG:-True}"
+
 CERTHR_TOKEN_SELECTION_METHOD="${CERTHR_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
 CERTHR_HORIZON_GAP_SECONDS="${CERTHR_HORIZON_GAP_SECONDS:-4.0}"
 CERTHR_CHUNK_MAX_SECONDS="${CERTHR_CHUNK_MAX_SECONDS:-60.0}"
@@ -364,6 +378,12 @@ method_args() {
       printf ',certv8_enabled=%s,certv8_intent_router=%s,certv8_intent_strength=%s,certv8_min_horizon_gap_seconds=%s,certv8_min_deficit=%s,certv8_frame_floor_ratio=%s,certv8_frame_cap_ratio=%s,certv8_max_swap_ratio=%s,certv8_concentration_preserve_ratio=%s,certv8_query_peak_count=%s,certv8_query_peak_separation=%s,certv8_query_weight=%s,certv8_event_weight=%s,certv8_balance_weight=%s,certv8_design_protect_ratio=%s,certv8_query_protect_ratio=%s,certv8_d_efficiency_floor=%s,certv8_min_objective_gain=%s,certv8_cross_frame_similarity=%s,certv8_cross_frame_max_seconds=%s,certv8_stratified_enabled=%s,certv8_stratified_temporal_strength=%s,certv8_stratified_retrieval_strength=%s,certv8_stratified_generic_strength=%s,certv8_stratified_min_question_words=%s,certv8_stratified_v3_keep_ratio=%s,certv8_stratified_max_duration_seconds=%s,certv8_stratified_d_efficiency_floor=%s,certv8_stratified_query_tolerance=%s,certv8_debug=%s' \
         "$CERTV8_ENABLED" "$CERTV8_INTENT_ROUTER" "$CERTV8_INTENT_STRENGTH" "$CERTV8_MIN_HORIZON_GAP_SECONDS" "$CERTV8_MIN_DEFICIT" "$CERTV8_FRAME_FLOOR_RATIO" "$CERTV8_FRAME_CAP_RATIO" "$CERTV8_MAX_SWAP_RATIO" "$CERTV8_CONCENTRATION_PRESERVE_RATIO" "$CERTV8_QUERY_PEAK_COUNT" "$CERTV8_QUERY_PEAK_SEPARATION" "$CERTV8_QUERY_WEIGHT" "$CERTV8_EVENT_WEIGHT" "$CERTV8_BALANCE_WEIGHT" "$CERTV8_DESIGN_PROTECT_RATIO" "$CERTV8_QUERY_PROTECT_RATIO" "$CERTV8_D_EFFICIENCY_FLOOR" "$CERTV8_MIN_OBJECTIVE_GAIN" "$CERTV8_CROSS_FRAME_SIMILARITY" "$CERTV8_CROSS_FRAME_MAX_SECONDS" "$CERTV8_STRATIFIED_ENABLED" "$CERTV8_STRATIFIED_TEMPORAL_STRENGTH" "$CERTV8_STRATIFIED_RETRIEVAL_STRENGTH" "$CERTV8_STRATIFIED_GENERIC_STRENGTH" "$CERTV8_STRATIFIED_MIN_QUESTION_WORDS" "$CERTV8_STRATIFIED_V3_KEEP_RATIO" "$CERTV8_STRATIFIED_MAX_DURATION_SECONDS" "$CERTV8_STRATIFIED_D_EFFICIENCY_FLOOR" "$CERTV8_STRATIFIED_QUERY_TOLERANCE" "$CERTV8_DEBUG"
       ;;
+    certvid_g)
+      printf 'compression_variant=certvid_g,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
+        "$CERTG_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
+      printf ',certg_enabled=%s,certg_locator_checkpoint=%s,certg_min_duration_seconds=%s,certg_confidence_threshold=%s,certg_max_tilt=%s,certg_peak_count=%s,certg_peak_separation=%s,certg_window_radius=%s,certg_min_question_words=%s,certg_subtitle_fallback=%s,certg_disable_v3_query_when_active=%s,certg_debug=%s' \
+        "$CERTG_ENABLED" "$CERTG_LOCATOR_CHECKPOINT" "$CERTG_MIN_DURATION_SECONDS" "$CERTG_CONFIDENCE_THRESHOLD" "$CERTG_MAX_TILT" "$CERTG_PEAK_COUNT" "$CERTG_PEAK_SEPARATION" "$CERTG_WINDOW_RADIUS" "$CERTG_MIN_QUESTION_WORDS" "$CERTG_SUBTITLE_FALLBACK" "$CERTG_DISABLE_V3_QUERY_WHEN_ACTIVE" "$CERTG_DEBUG"
+      ;;
     certvid_hr)
       printf 'compression_variant=certvid_hr,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certhr_horizon_gap_seconds=%s,certhr_chunk_max_seconds=%s,certhr_chunk_max_units=%s,certhr_semantic_quantile=%s,certhr_semantic_floor=%s,certhr_coverage_floor=%s,certhr_deficit_threshold=%s,certhr_query_peak_quantile=%s,certhr_query_peak_floor=%s,certhr_max_swap_ratio=%s,certhr_d_efficiency_floor=%s,certhr_add_pool=%s,certhr_remove_pool=%s,certhr_debug=%s' \
         "$CERTHR_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTHR_HORIZON_GAP_SECONDS" "$CERTHR_CHUNK_MAX_SECONDS" "$CERTHR_CHUNK_MAX_UNITS" "$CERTHR_SEMANTIC_QUANTILE" "$CERTHR_SEMANTIC_FLOOR" "$CERTHR_COVERAGE_FLOOR" "$CERTHR_DEFICIT_THRESHOLD" "$CERTHR_QUERY_PEAK_QUANTILE" "$CERTHR_QUERY_PEAK_FLOOR" "$CERTHR_MAX_SWAP_RATIO" "$CERTHR_D_EFFICIENCY_FLOOR" "$CERTHR_ADD_POOL" "$CERTHR_REMOVE_POOL" "$CERTHR_DEBUG"
@@ -430,6 +450,12 @@ for method in $(split_csv "$METHODS"); do
         env \
           CERTV8_DIAGNOSTICS_JSONL="$diagnostics_path" \
           CERTV8_DIAGNOSTICS_DETAIL="$CERTV8_DIAGNOSTICS_DETAIL" \
+          "${cmd[@]}"
+      elif [[ "$method" == "certvid_g" ]]; then
+        diagnostics_path="${CERTG_DIAGNOSTICS_JSONL:-$run_output/certvid_g_diagnostics.jsonl}"
+        printf '[certvid-g] diagnostics=%s\n' "$diagnostics_path"
+        env \
+          CERTG_DIAGNOSTICS_JSONL="$diagnostics_path" \
           "${cmd[@]}"
       elif [[ "$method" == "flashvid" ]]; then
         diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$run_output/flashvid_diagnostics.jsonl}"

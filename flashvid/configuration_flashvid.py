@@ -196,6 +196,20 @@ class FlashVidConfig:
     certv8_stratified_query_tolerance: float = field(default=0.01)
     certv8_debug: bool = field(default=False)
 
+    # CertVID-G: confidence-gated native SigLIP query localization over V3.
+    certg_enabled: bool = field(default=True)
+    certg_locator_checkpoint: str = field(default="")
+    certg_min_duration_seconds: float = field(default=120.0)
+    certg_confidence_threshold: float = field(default=0.55)
+    certg_max_tilt: float = field(default=2.0)
+    certg_peak_count: int = field(default=2)
+    certg_peak_separation: int = field(default=3)
+    certg_window_radius: int = field(default=2)
+    certg_min_question_words: int = field(default=6)
+    certg_subtitle_fallback: bool = field(default=True)
+    certg_disable_v3_query_when_active: bool = field(default=True)
+    certg_debug: bool = field(default=False)
+
     # CertVID-HR: V3-preserving long-horizon evidence repair.
     certhr_horizon_gap_seconds: float = field(default=4.0)
     certhr_chunk_max_seconds: float = field(default=60.0)

@@ -587,6 +587,26 @@ def certvid_v3_compression(
             whitening_strength=_cfg_float(flashvid_config, "certv3_whitening_strength", 0.50),
             quality_floor=_cfg_float(flashvid_config, "certv3_quality_floor", 0.15),
         )
+        design_mass = getattr(
+            flashvid_config,
+            "_certvid_design_mass_multiplier",
+            None,
+        )
+        if design_mass is not None:
+            design_mass = torch.as_tensor(
+                design_mass,
+                dtype=torch.float32,
+                device=design.device,
+            ).flatten()
+            if design_mass.numel() != total_tokens:
+                raise ValueError(
+                    "CertVID design mass must contain one value per visual token"
+                )
+            if not bool(torch.isfinite(design_mass).all()) or bool(
+                (design_mass <= 0).any()
+            ):
+                raise ValueError("CertVID design mass must be finite and positive")
+            design = design * design_mass.sqrt().unsqueeze(1)
         ridge = _cfg_float(flashvid_config, "certv3_ridge", 0.50)
         selected = _d_optimal_greedy(
             design=design,

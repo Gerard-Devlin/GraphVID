@@ -76,7 +76,7 @@ def _publish_certhr_timing(model, timing):
         return None
     config._certvid_frame_times_sec = None
     config._certvid_frame_times_source = "missing"
-    if str(getattr(config, "compression_variant", "")).strip().lower() in {"flashvid", "certvid_hr", "certvid_lh", "certvid_v7", "certvid_v8"} and timing is not None:
+    if str(getattr(config, "compression_variant", "")).strip().lower() in {"flashvid", "certvid_hr", "certvid_lh", "certvid_v7", "certvid_v8", "certvid_g"} and timing is not None:
         config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
     return config
 
@@ -122,6 +122,9 @@ def _clear_certvid_sample(config) -> None:
     config._certvid_query_text = ""
     config._certvid_eval_category = None
     config._certvid_task_name = None
+    config._certg_frame_scores = None
+    config._certg_score_source = "missing"
+    config._certg_locator_runtime_error = None
 
 
 @register_model("llava_onevision")
@@ -295,6 +298,19 @@ class Llava_OneVision(lmms):
         certv8_stratified_d_efficiency_floor: float = 0.82,
         certv8_stratified_query_tolerance: float = 0.01,
         certv8_debug: bool = False,
+        # CertVID-G parameters
+        certg_enabled: bool = True,
+        certg_locator_checkpoint: str = "",
+        certg_min_duration_seconds: float = 120.0,
+        certg_confidence_threshold: float = 0.55,
+        certg_max_tilt: float = 2.0,
+        certg_peak_count: int = 2,
+        certg_peak_separation: int = 3,
+        certg_window_radius: int = 2,
+        certg_min_question_words: int = 6,
+        certg_subtitle_fallback: bool = True,
+        certg_disable_v3_query_when_active: bool = True,
+        certg_debug: bool = False,
         # CertVID-HR parameters
         certhr_horizon_gap_seconds: float = 4.0,
         certhr_chunk_max_seconds: float = 60.0,
@@ -610,6 +626,18 @@ class Llava_OneVision(lmms):
                 certv8_stratified_d_efficiency_floor=certv8_stratified_d_efficiency_floor,
                 certv8_stratified_query_tolerance=certv8_stratified_query_tolerance,
                 certv8_debug=certv8_debug,
+                certg_enabled=certg_enabled,
+                certg_locator_checkpoint=certg_locator_checkpoint,
+                certg_min_duration_seconds=certg_min_duration_seconds,
+                certg_confidence_threshold=certg_confidence_threshold,
+                certg_max_tilt=certg_max_tilt,
+                certg_peak_count=certg_peak_count,
+                certg_peak_separation=certg_peak_separation,
+                certg_window_radius=certg_window_radius,
+                certg_min_question_words=certg_min_question_words,
+                certg_subtitle_fallback=certg_subtitle_fallback,
+                certg_disable_v3_query_when_active=certg_disable_v3_query_when_active,
+                certg_debug=certg_debug,
                 certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
                 certhr_chunk_max_seconds=certhr_chunk_max_seconds,
                 certhr_chunk_max_units=certhr_chunk_max_units,
