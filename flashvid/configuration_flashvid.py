@@ -198,6 +198,30 @@ class FlashVidConfig:
     certv8_stratified_query_tolerance: float = field(default=0.01)
     certv8_debug: bool = field(default=False)
 
+    # CertVID V9: V3-preserving state completion and trustworthy fusion.
+    certv9_enabled: bool = field(default=True)
+    certv9_merge_threshold: float = field(default=0.80)
+    certv9_uncovered_mass_threshold: float = field(default=0.05)
+    certv9_max_swap_ratio: float = field(default=0.15)
+    certv9_d_efficiency_floor: float = field(default=0.98)
+    certv9_min_objective_gain: float = field(default=1e-4)
+    certv9_state_distance_threshold: float = field(default=0.15)
+    certv9_state_min_bin_span: int = field(default=2)
+    certv9_query_max_peaks: int = field(default=3)
+    certv9_query_peak_separation: int = field(default=2)
+    certv9_event_quantile: float = field(default=0.85)
+    certv9_event_floor: float = field(default=0.10)
+    certv9_cross_segment_similarity: float = field(default=0.92)
+    certv9_cross_segment_max_seconds: float = field(default=8.0)
+    certv9_full_pool_repair_enabled: bool = field(default=True)
+    certv9_merge_rejection_enabled: bool = field(default=True)
+    certv9_event_mask_enabled: bool = field(default=True)
+    certv9_state_pair_enabled: bool = field(default=True)
+    certv9_multi_peak_enabled: bool = field(default=True)
+    certv9_repair_pool: int = field(default=128)
+    certv9_remove_pool: int = field(default=64)
+    certv9_debug: bool = field(default=False)
+
     # CertVID V4: verifiable budget-constrained D-optimal evidence design.
     certv4_budget_mode: str = field(default="layer_average")
     certv4_attention_policy: str = field(default="validated")
@@ -301,6 +325,7 @@ class FlashVidConfig:
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
     # "certvid_v7": long-horizon relation evidence and balanced local coverage.
     # "certvid_v8": gated relation-aware stratified coreset over a V3 fallback.
+    # "certvid_v9": V3 state completion with reject-or-promote fusion.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

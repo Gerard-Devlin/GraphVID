@@ -278,6 +278,28 @@ def flashvid(
     certv8_stratified_d_efficiency_floor: float = 0.82,
     certv8_stratified_query_tolerance: float = 0.01,
     certv8_debug: bool = False,
+    certv9_enabled: bool = True,
+    certv9_merge_threshold: float = 0.80,
+    certv9_uncovered_mass_threshold: float = 0.05,
+    certv9_max_swap_ratio: float = 0.15,
+    certv9_d_efficiency_floor: float = 0.98,
+    certv9_min_objective_gain: float = 1e-4,
+    certv9_state_distance_threshold: float = 0.15,
+    certv9_state_min_bin_span: int = 2,
+    certv9_query_max_peaks: int = 3,
+    certv9_query_peak_separation: int = 2,
+    certv9_event_quantile: float = 0.85,
+    certv9_event_floor: float = 0.10,
+    certv9_cross_segment_similarity: float = 0.92,
+    certv9_cross_segment_max_seconds: float = 8.0,
+    certv9_full_pool_repair_enabled: bool = True,
+    certv9_merge_rejection_enabled: bool = True,
+    certv9_event_mask_enabled: bool = True,
+    certv9_state_pair_enabled: bool = True,
+    certv9_multi_peak_enabled: bool = True,
+    certv9_repair_pool: int = 128,
+    certv9_remove_pool: int = 64,
+    certv9_debug: bool = False,
     certv4_budget_mode: str = "layer_average",
     certv4_attention_policy: str = "validated",
     certv4_attention_eps: float = 1e-6,
@@ -591,6 +613,7 @@ def flashvid(
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_v7" preserves long-horizon relations with transition and trajectory evidence;
             "certvid_v8" preserves V3 anchors and repairs temporal/query evidence deficits;
+            "certvid_v9" repairs missing states and rejects untrustworthy residual fusion;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
             "faithvid" preserves merged-token attention mass and constrains RoPE phase dispersion;
@@ -718,10 +741,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -902,6 +925,28 @@ def flashvid(
         certv8_stratified_d_efficiency_floor=certv8_stratified_d_efficiency_floor,
         certv8_stratified_query_tolerance=certv8_stratified_query_tolerance,
         certv8_debug=certv8_debug,
+        certv9_enabled=certv9_enabled,
+        certv9_merge_threshold=certv9_merge_threshold,
+        certv9_uncovered_mass_threshold=certv9_uncovered_mass_threshold,
+        certv9_max_swap_ratio=certv9_max_swap_ratio,
+        certv9_d_efficiency_floor=certv9_d_efficiency_floor,
+        certv9_min_objective_gain=certv9_min_objective_gain,
+        certv9_state_distance_threshold=certv9_state_distance_threshold,
+        certv9_state_min_bin_span=certv9_state_min_bin_span,
+        certv9_query_max_peaks=certv9_query_max_peaks,
+        certv9_query_peak_separation=certv9_query_peak_separation,
+        certv9_event_quantile=certv9_event_quantile,
+        certv9_event_floor=certv9_event_floor,
+        certv9_cross_segment_similarity=certv9_cross_segment_similarity,
+        certv9_cross_segment_max_seconds=certv9_cross_segment_max_seconds,
+        certv9_full_pool_repair_enabled=certv9_full_pool_repair_enabled,
+        certv9_merge_rejection_enabled=certv9_merge_rejection_enabled,
+        certv9_event_mask_enabled=certv9_event_mask_enabled,
+        certv9_state_pair_enabled=certv9_state_pair_enabled,
+        certv9_multi_peak_enabled=certv9_multi_peak_enabled,
+        certv9_repair_pool=certv9_repair_pool,
+        certv9_remove_pool=certv9_remove_pool,
+        certv9_debug=certv9_debug,
         certv4_budget_mode=certv4_budget_mode,
         certv4_attention_policy=certv4_attention_policy,
         certv4_attention_eps=certv4_attention_eps,

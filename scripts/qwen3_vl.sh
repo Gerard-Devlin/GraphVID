@@ -260,6 +260,29 @@ CERTV8_STRATIFIED_D_EFFICIENCY_FLOOR="${CERTV8_STRATIFIED_D_EFFICIENCY_FLOOR:-0.
 CERTV8_STRATIFIED_QUERY_TOLERANCE="${CERTV8_STRATIFIED_QUERY_TOLERANCE:-0.01}"
 CERTV8_DEBUG="${CERTV8_DEBUG:-True}"
 CERTV8_DIAGNOSTICS_DETAIL="${CERTV8_DIAGNOSTICS_DETAIL:-summary}"
+CERTV9_TOKEN_SELECTION_METHOD="${CERTV9_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
+CERTV9_ENABLED="${CERTV9_ENABLED:-True}"
+CERTV9_MERGE_THRESHOLD="${CERTV9_MERGE_THRESHOLD:-0.80}"
+CERTV9_UNCOVERED_MASS_THRESHOLD="${CERTV9_UNCOVERED_MASS_THRESHOLD:-0.05}"
+CERTV9_MAX_SWAP_RATIO="${CERTV9_MAX_SWAP_RATIO:-0.15}"
+CERTV9_D_EFFICIENCY_FLOOR="${CERTV9_D_EFFICIENCY_FLOOR:-0.98}"
+CERTV9_MIN_OBJECTIVE_GAIN="${CERTV9_MIN_OBJECTIVE_GAIN:-0.0001}"
+CERTV9_STATE_DISTANCE_THRESHOLD="${CERTV9_STATE_DISTANCE_THRESHOLD:-0.15}"
+CERTV9_STATE_MIN_BIN_SPAN="${CERTV9_STATE_MIN_BIN_SPAN:-2}"
+CERTV9_QUERY_MAX_PEAKS="${CERTV9_QUERY_MAX_PEAKS:-3}"
+CERTV9_QUERY_PEAK_SEPARATION="${CERTV9_QUERY_PEAK_SEPARATION:-2}"
+CERTV9_EVENT_QUANTILE="${CERTV9_EVENT_QUANTILE:-0.85}"
+CERTV9_EVENT_FLOOR="${CERTV9_EVENT_FLOOR:-0.10}"
+CERTV9_CROSS_SEGMENT_SIMILARITY="${CERTV9_CROSS_SEGMENT_SIMILARITY:-0.92}"
+CERTV9_CROSS_SEGMENT_MAX_SECONDS="${CERTV9_CROSS_SEGMENT_MAX_SECONDS:-8.0}"
+CERTV9_FULL_POOL_REPAIR_ENABLED="${CERTV9_FULL_POOL_REPAIR_ENABLED:-True}"
+CERTV9_MERGE_REJECTION_ENABLED="${CERTV9_MERGE_REJECTION_ENABLED:-True}"
+CERTV9_EVENT_MASK_ENABLED="${CERTV9_EVENT_MASK_ENABLED:-True}"
+CERTV9_STATE_PAIR_ENABLED="${CERTV9_STATE_PAIR_ENABLED:-True}"
+CERTV9_MULTI_PEAK_ENABLED="${CERTV9_MULTI_PEAK_ENABLED:-True}"
+CERTV9_REPAIR_POOL="${CERTV9_REPAIR_POOL:-128}"
+CERTV9_REMOVE_POOL="${CERTV9_REMOVE_POOL:-64}"
+CERTV9_DEBUG="${CERTV9_DEBUG:-False}"
 FLASHVID_DIAGNOSTICS_DETAIL="${FLASHVID_DIAGNOSTICS_DETAIL:-summary}"
 
 CERTV4_TOKEN_SELECTION_METHOD="${CERTV4_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
@@ -490,6 +513,12 @@ method_flash_args() {
       printf ',certv8_enabled=%s,certv8_intent_router=%s,certv8_intent_strength=%s,certv8_min_horizon_gap_seconds=%s,certv8_min_deficit=%s,certv8_frame_floor_ratio=%s,certv8_frame_cap_ratio=%s,certv8_max_swap_ratio=%s,certv8_concentration_preserve_ratio=%s,certv8_query_peak_count=%s,certv8_query_peak_separation=%s,certv8_query_weight=%s,certv8_event_weight=%s,certv8_balance_weight=%s,certv8_design_protect_ratio=%s,certv8_query_protect_ratio=%s,certv8_d_efficiency_floor=%s,certv8_min_objective_gain=%s,certv8_cross_frame_similarity=%s,certv8_cross_frame_max_seconds=%s,certv8_localized_event_boost=%s,certv8_attribute_query_boost=%s,certv8_stratified_enabled=%s,certv8_stratified_temporal_strength=%s,certv8_stratified_retrieval_strength=%s,certv8_stratified_generic_strength=%s,certv8_stratified_min_question_words=%s,certv8_stratified_v3_keep_ratio=%s,certv8_stratified_max_duration_seconds=%s,certv8_stratified_d_efficiency_floor=%s,certv8_stratified_query_tolerance=%s,certv8_debug=%s' \
         "$CERTV8_ENABLED" "$CERTV8_INTENT_ROUTER" "$CERTV8_INTENT_STRENGTH" "$CERTV8_MIN_HORIZON_GAP_SECONDS" "$CERTV8_MIN_DEFICIT" "$CERTV8_FRAME_FLOOR_RATIO" "$CERTV8_FRAME_CAP_RATIO" "$CERTV8_MAX_SWAP_RATIO" "$CERTV8_CONCENTRATION_PRESERVE_RATIO" "$CERTV8_QUERY_PEAK_COUNT" "$CERTV8_QUERY_PEAK_SEPARATION" "$CERTV8_QUERY_WEIGHT" "$CERTV8_EVENT_WEIGHT" "$CERTV8_BALANCE_WEIGHT" "$CERTV8_DESIGN_PROTECT_RATIO" "$CERTV8_QUERY_PROTECT_RATIO" "$CERTV8_D_EFFICIENCY_FLOOR" "$CERTV8_MIN_OBJECTIVE_GAIN" "$CERTV8_CROSS_FRAME_SIMILARITY" "$CERTV8_CROSS_FRAME_MAX_SECONDS" "$CERTV8_LOCALIZED_EVENT_BOOST" "$CERTV8_ATTRIBUTE_QUERY_BOOST" "$CERTV8_STRATIFIED_ENABLED" "$CERTV8_STRATIFIED_TEMPORAL_STRENGTH" "$CERTV8_STRATIFIED_RETRIEVAL_STRENGTH" "$CERTV8_STRATIFIED_GENERIC_STRENGTH" "$CERTV8_STRATIFIED_MIN_QUESTION_WORDS" "$CERTV8_STRATIFIED_V3_KEEP_RATIO" "$CERTV8_STRATIFIED_MAX_DURATION_SECONDS" "$CERTV8_STRATIFIED_D_EFFICIENCY_FLOOR" "$CERTV8_STRATIFIED_QUERY_TOLERANCE" "$CERTV8_DEBUG"
       ;;
+    certvid_v9)
+      printf 'compression_variant=certvid_v9,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
+        "$CERTV9_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
+      printf ',certv9_enabled=%s,certv9_merge_threshold=%s,certv9_uncovered_mass_threshold=%s,certv9_max_swap_ratio=%s,certv9_d_efficiency_floor=%s,certv9_min_objective_gain=%s,certv9_state_distance_threshold=%s,certv9_state_min_bin_span=%s,certv9_query_max_peaks=%s,certv9_query_peak_separation=%s,certv9_event_quantile=%s,certv9_event_floor=%s,certv9_cross_segment_similarity=%s,certv9_cross_segment_max_seconds=%s,certv9_full_pool_repair_enabled=%s,certv9_merge_rejection_enabled=%s,certv9_event_mask_enabled=%s,certv9_state_pair_enabled=%s,certv9_multi_peak_enabled=%s,certv9_repair_pool=%s,certv9_remove_pool=%s,certv9_debug=%s' \
+        "$CERTV9_ENABLED" "$CERTV9_MERGE_THRESHOLD" "$CERTV9_UNCOVERED_MASS_THRESHOLD" "$CERTV9_MAX_SWAP_RATIO" "$CERTV9_D_EFFICIENCY_FLOOR" "$CERTV9_MIN_OBJECTIVE_GAIN" "$CERTV9_STATE_DISTANCE_THRESHOLD" "$CERTV9_STATE_MIN_BIN_SPAN" "$CERTV9_QUERY_MAX_PEAKS" "$CERTV9_QUERY_PEAK_SEPARATION" "$CERTV9_EVENT_QUANTILE" "$CERTV9_EVENT_FLOOR" "$CERTV9_CROSS_SEGMENT_SIMILARITY" "$CERTV9_CROSS_SEGMENT_MAX_SECONDS" "$CERTV9_FULL_POOL_REPAIR_ENABLED" "$CERTV9_MERGE_REJECTION_ENABLED" "$CERTV9_EVENT_MASK_ENABLED" "$CERTV9_STATE_PAIR_ENABLED" "$CERTV9_MULTI_PEAK_ENABLED" "$CERTV9_REPAIR_POOL" "$CERTV9_REMOVE_POOL" "$CERTV9_DEBUG"
+      ;;
     certvid_v4)
       printf 'compression_variant=certvid_v4,token_selection_method=%s,certv4_budget_mode=%s,certv4_attention_policy=%s,certv4_attention_eps=%s,certv4_certificate_budget_ratio=%s,certv4_query_mode=%s,certv4_design_protect_ratio=%s,certv4_query_atoms=%s,certv4_temporal_bins=%s,certv4_spatial_bins=%s,certv4_candidate_multiplier=%s,certv4_track_threshold=%s,certv4_spatial_penalty=%s,certv4_metric_dim=%s,certv4_frame_coverage_ratio=%s,certv4_cell_coverage_ratio=%s,certv4_query_threshold=%s,certv4_query_per_atom=%s,certv4_structural_weight=%s,certv4_whitening_strength=%s,certv4_quality_floor=%s,certv4_ridge=%s,certv4_swap_steps=%s,certv4_swap_pool=%s,certv4_swap_margin=%s,certv4_fusion_alpha=%s,certv4_assignment_temperature=%s,certv4_debug=%s' \
         "$CERTV4_TOKEN_SELECTION_METHOD" "$CERTV4_BUDGET_MODE" "$CERTV4_ATTENTION_POLICY" "$CERTV4_ATTENTION_EPS" "$CERTV4_CERTIFICATE_BUDGET_RATIO" "$CERTV4_QUERY_MODE" "$CERTV4_DESIGN_PROTECT_RATIO" "$CERTV4_QUERY_ATOMS" "$CERTV4_TEMPORAL_BINS" "$CERTV4_SPATIAL_BINS" "$CERTV4_CANDIDATE_MULTIPLIER" "$CERTV4_TRACK_THRESHOLD" "$CERTV4_SPATIAL_PENALTY" "$CERTV4_METRIC_DIM" "$CERTV4_FRAME_COVERAGE_RATIO" "$CERTV4_CELL_COVERAGE_RATIO" "$CERTV4_QUERY_THRESHOLD" "$CERTV4_QUERY_PER_ATOM" "$CERTV4_STRUCTURAL_WEIGHT" "$CERTV4_WHITENING_STRENGTH" "$CERTV4_QUALITY_FLOOR" "$CERTV4_RIDGE" "$CERTV4_SWAP_STEPS" "$CERTV4_SWAP_POOL" "$CERTV4_SWAP_MARGIN" "$CERTV4_FUSION_ALPHA" "$CERTV4_ASSIGNMENT_TEMPERATURE" "$CERTV4_DEBUG"
@@ -555,6 +584,13 @@ for method in $(split_csv "$METHODS"); do
             CERTV8_DIAGNOSTICS_JSONL="$diagnostics_path" \
             CERTV8_DIAGNOSTICS_DETAIL="$CERTV8_DIAGNOSTICS_DETAIL" \
             "${cmd[@]}"
+        elif [[ "$method" == "certvid_v9" ]]; then
+          diagnostics_path="${CERTV9_DIAGNOSTICS_JSONL:-}"
+          if [[ -z "$diagnostics_path" ]]; then
+            diagnostics_path="$OUTPUT_PATH/certvid_v9_r${retention_ratio}_${task}_rank{rank}.jsonl"
+          fi
+          echo "[certvid-v9] diagnostics=$diagnostics_path"
+          env CERTV9_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
         elif [[ "$method" == "flashvid" ]]; then
           diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$OUTPUT_PATH/flashvid_r${retention_ratio}_${task}.jsonl}"
           echo "[flashvid] diagnostics=$diagnostics_path detail=$FLASHVID_DIAGNOSTICS_DETAIL"

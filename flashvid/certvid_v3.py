@@ -659,6 +659,7 @@ def certvid_v3_compression(
                     "component_ids": component_ids,
                     "frame_ids": frame_ids,
                     "temporal_ids": temporal_ids,
+                    "candidate_indices": candidate_indices,
                     "ridge": float(ridge),
                 }
             )
