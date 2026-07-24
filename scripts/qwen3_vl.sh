@@ -262,44 +262,6 @@ CERTV8_DEBUG="${CERTV8_DEBUG:-True}"
 CERTV8_DIAGNOSTICS_DETAIL="${CERTV8_DIAGNOSTICS_DETAIL:-summary}"
 FLASHVID_DIAGNOSTICS_DETAIL="${FLASHVID_DIAGNOSTICS_DETAIL:-summary}"
 
-CERTHR_TOKEN_SELECTION_METHOD="${CERTHR_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
-CERTHR_HORIZON_GAP_SECONDS="${CERTHR_HORIZON_GAP_SECONDS:-4.0}"
-CERTHR_CHUNK_MAX_SECONDS="${CERTHR_CHUNK_MAX_SECONDS:-60.0}"
-CERTHR_CHUNK_MAX_UNITS="${CERTHR_CHUNK_MAX_UNITS:-4}"
-CERTHR_SEMANTIC_QUANTILE="${CERTHR_SEMANTIC_QUANTILE:-0.85}"
-CERTHR_SEMANTIC_FLOOR="${CERTHR_SEMANTIC_FLOOR:-0.10}"
-CERTHR_COVERAGE_FLOOR="${CERTHR_COVERAGE_FLOOR:-0.70}"
-CERTHR_DEFICIT_THRESHOLD="${CERTHR_DEFICIT_THRESHOLD:-0.05}"
-CERTHR_QUERY_PEAK_QUANTILE="${CERTHR_QUERY_PEAK_QUANTILE:-0.90}"
-CERTHR_QUERY_PEAK_FLOOR="${CERTHR_QUERY_PEAK_FLOOR:-0.75}"
-CERTHR_MAX_SWAP_RATIO="${CERTHR_MAX_SWAP_RATIO:-0.05}"
-CERTHR_D_EFFICIENCY_FLOOR="${CERTHR_D_EFFICIENCY_FLOOR:-0.995}"
-CERTHR_ADD_POOL="${CERTHR_ADD_POOL:-32}"
-CERTHR_REMOVE_POOL="${CERTHR_REMOVE_POOL:-24}"
-CERTHR_DEBUG="${CERTHR_DEBUG:-False}"
-
-CERTLH_TOKEN_SELECTION_METHOD="${CERTLH_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
-CERTLH_MIN_DURATION_SECONDS="${CERTLH_MIN_DURATION_SECONDS:-120.0}"
-CERTLH_HORIZON_GAP_SECONDS="${CERTLH_HORIZON_GAP_SECONDS:-4.0}"
-CERTLH_GATE_THRESHOLD="${CERTLH_GATE_THRESHOLD:-0.55}"
-CERTLH_MIN_GROUPS="${CERTLH_MIN_GROUPS:-4}"
-CERTLH_MAX_GROUPS="${CERTLH_MAX_GROUPS:-8}"
-CERTLH_MIN_GROUP_UNITS="${CERTLH_MIN_GROUP_UNITS:-2}"
-CERTLH_MAX_GROUP_UNITS="${CERTLH_MAX_GROUP_UNITS:-8}"
-CERTLH_EVENT_QUANTILE="${CERTLH_EVENT_QUANTILE:-0.80}"
-CERTLH_EVENT_FLOOR="${CERTLH_EVENT_FLOOR:-0.08}"
-CERTLH_GROUP_FLOOR_RATIO="${CERTLH_GROUP_FLOOR_RATIO:-0.50}"
-CERTLH_BUDGET_TEMPERATURE="${CERTLH_BUDGET_TEMPERATURE:-0.25}"
-CERTLH_QUERY_WEIGHT="${CERTLH_QUERY_WEIGHT:-0.35}"
-CERTLH_RELAY_RATIO="${CERTLH_RELAY_RATIO:-0.10}"
-CERTLH_QUERY_PEAKS_PER_ATOM="${CERTLH_QUERY_PEAKS_PER_ATOM:-2}"
-CERTLH_QUERY_PEAK_QUANTILE="${CERTLH_QUERY_PEAK_QUANTILE:-0.90}"
-CERTLH_QUERY_PEAK_FLOOR="${CERTLH_QUERY_PEAK_FLOOR:-0.75}"
-CERTLH_QUERY_MIN_GROUP_DISTANCE="${CERTLH_QUERY_MIN_GROUP_DISTANCE:-2}"
-CERTLH_CROSS_GROUP_SIMILARITY="${CERTLH_CROSS_GROUP_SIMILARITY:-0.90}"
-CERTLH_CROSS_GROUP_MAX_SECONDS="${CERTLH_CROSS_GROUP_MAX_SECONDS:-8.0}"
-CERTLH_DEBUG="${CERTLH_DEBUG:-False}"
-
 CERTV4_TOKEN_SELECTION_METHOD="${CERTV4_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
 CERTV4_EXPANSION="${CERTV4_EXPANSION:-$EXPANSION}"
 CERTV4_PRUNING_LAYER="${CERTV4_PRUNING_LAYER:-28}"
@@ -527,14 +489,6 @@ method_flash_args() {
         "$CERTV8_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
       printf ',certv8_enabled=%s,certv8_intent_router=%s,certv8_intent_strength=%s,certv8_min_horizon_gap_seconds=%s,certv8_min_deficit=%s,certv8_frame_floor_ratio=%s,certv8_frame_cap_ratio=%s,certv8_max_swap_ratio=%s,certv8_concentration_preserve_ratio=%s,certv8_query_peak_count=%s,certv8_query_peak_separation=%s,certv8_query_weight=%s,certv8_event_weight=%s,certv8_balance_weight=%s,certv8_design_protect_ratio=%s,certv8_query_protect_ratio=%s,certv8_d_efficiency_floor=%s,certv8_min_objective_gain=%s,certv8_cross_frame_similarity=%s,certv8_cross_frame_max_seconds=%s,certv8_localized_event_boost=%s,certv8_attribute_query_boost=%s,certv8_stratified_enabled=%s,certv8_stratified_temporal_strength=%s,certv8_stratified_retrieval_strength=%s,certv8_stratified_generic_strength=%s,certv8_stratified_min_question_words=%s,certv8_stratified_v3_keep_ratio=%s,certv8_stratified_max_duration_seconds=%s,certv8_stratified_d_efficiency_floor=%s,certv8_stratified_query_tolerance=%s,certv8_debug=%s' \
         "$CERTV8_ENABLED" "$CERTV8_INTENT_ROUTER" "$CERTV8_INTENT_STRENGTH" "$CERTV8_MIN_HORIZON_GAP_SECONDS" "$CERTV8_MIN_DEFICIT" "$CERTV8_FRAME_FLOOR_RATIO" "$CERTV8_FRAME_CAP_RATIO" "$CERTV8_MAX_SWAP_RATIO" "$CERTV8_CONCENTRATION_PRESERVE_RATIO" "$CERTV8_QUERY_PEAK_COUNT" "$CERTV8_QUERY_PEAK_SEPARATION" "$CERTV8_QUERY_WEIGHT" "$CERTV8_EVENT_WEIGHT" "$CERTV8_BALANCE_WEIGHT" "$CERTV8_DESIGN_PROTECT_RATIO" "$CERTV8_QUERY_PROTECT_RATIO" "$CERTV8_D_EFFICIENCY_FLOOR" "$CERTV8_MIN_OBJECTIVE_GAIN" "$CERTV8_CROSS_FRAME_SIMILARITY" "$CERTV8_CROSS_FRAME_MAX_SECONDS" "$CERTV8_LOCALIZED_EVENT_BOOST" "$CERTV8_ATTRIBUTE_QUERY_BOOST" "$CERTV8_STRATIFIED_ENABLED" "$CERTV8_STRATIFIED_TEMPORAL_STRENGTH" "$CERTV8_STRATIFIED_RETRIEVAL_STRENGTH" "$CERTV8_STRATIFIED_GENERIC_STRENGTH" "$CERTV8_STRATIFIED_MIN_QUESTION_WORDS" "$CERTV8_STRATIFIED_V3_KEEP_RATIO" "$CERTV8_STRATIFIED_MAX_DURATION_SECONDS" "$CERTV8_STRATIFIED_D_EFFICIENCY_FLOOR" "$CERTV8_STRATIFIED_QUERY_TOLERANCE" "$CERTV8_DEBUG"
-      ;;
-    certvid_hr)
-      printf 'compression_variant=certvid_hr,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certhr_horizon_gap_seconds=%s,certhr_chunk_max_seconds=%s,certhr_chunk_max_units=%s,certhr_semantic_quantile=%s,certhr_semantic_floor=%s,certhr_coverage_floor=%s,certhr_deficit_threshold=%s,certhr_query_peak_quantile=%s,certhr_query_peak_floor=%s,certhr_max_swap_ratio=%s,certhr_d_efficiency_floor=%s,certhr_add_pool=%s,certhr_remove_pool=%s,certhr_debug=%s' \
-        "$CERTHR_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTHR_HORIZON_GAP_SECONDS" "$CERTHR_CHUNK_MAX_SECONDS" "$CERTHR_CHUNK_MAX_UNITS" "$CERTHR_SEMANTIC_QUANTILE" "$CERTHR_SEMANTIC_FLOOR" "$CERTHR_COVERAGE_FLOOR" "$CERTHR_DEFICIT_THRESHOLD" "$CERTHR_QUERY_PEAK_QUANTILE" "$CERTHR_QUERY_PEAK_FLOOR" "$CERTHR_MAX_SWAP_RATIO" "$CERTHR_D_EFFICIENCY_FLOOR" "$CERTHR_ADD_POOL" "$CERTHR_REMOVE_POOL" "$CERTHR_DEBUG"
-      ;;
-    certvid_lh)
-      printf 'compression_variant=certvid_lh,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certlh_min_duration_seconds=%s,certlh_horizon_gap_seconds=%s,certlh_gate_threshold=%s,certlh_min_groups=%s,certlh_max_groups=%s,certlh_min_group_units=%s,certlh_max_group_units=%s,certlh_event_quantile=%s,certlh_event_floor=%s,certlh_group_floor_ratio=%s,certlh_budget_temperature=%s,certlh_query_weight=%s,certlh_relay_ratio=%s,certlh_query_peaks_per_atom=%s,certlh_query_peak_quantile=%s,certlh_query_peak_floor=%s,certlh_query_min_group_distance=%s,certlh_cross_group_similarity=%s,certlh_cross_group_max_seconds=%s,certlh_debug=%s' \
-        "$CERTLH_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTLH_MIN_DURATION_SECONDS" "$CERTLH_HORIZON_GAP_SECONDS" "$CERTLH_GATE_THRESHOLD" "$CERTLH_MIN_GROUPS" "$CERTLH_MAX_GROUPS" "$CERTLH_MIN_GROUP_UNITS" "$CERTLH_MAX_GROUP_UNITS" "$CERTLH_EVENT_QUANTILE" "$CERTLH_EVENT_FLOOR" "$CERTLH_GROUP_FLOOR_RATIO" "$CERTLH_BUDGET_TEMPERATURE" "$CERTLH_QUERY_WEIGHT" "$CERTLH_RELAY_RATIO" "$CERTLH_QUERY_PEAKS_PER_ATOM" "$CERTLH_QUERY_PEAK_QUANTILE" "$CERTLH_QUERY_PEAK_FLOOR" "$CERTLH_QUERY_MIN_GROUP_DISTANCE" "$CERTLH_CROSS_GROUP_SIMILARITY" "$CERTLH_CROSS_GROUP_MAX_SECONDS" "$CERTLH_DEBUG"
       ;;
     certvid_v4)
       printf 'compression_variant=certvid_v4,token_selection_method=%s,certv4_budget_mode=%s,certv4_attention_policy=%s,certv4_attention_eps=%s,certv4_certificate_budget_ratio=%s,certv4_query_mode=%s,certv4_design_protect_ratio=%s,certv4_query_atoms=%s,certv4_temporal_bins=%s,certv4_spatial_bins=%s,certv4_candidate_multiplier=%s,certv4_track_threshold=%s,certv4_spatial_penalty=%s,certv4_metric_dim=%s,certv4_frame_coverage_ratio=%s,certv4_cell_coverage_ratio=%s,certv4_query_threshold=%s,certv4_query_per_atom=%s,certv4_structural_weight=%s,certv4_whitening_strength=%s,certv4_quality_floor=%s,certv4_ridge=%s,certv4_swap_steps=%s,certv4_swap_pool=%s,certv4_swap_margin=%s,certv4_fusion_alpha=%s,certv4_assignment_temperature=%s,certv4_debug=%s' \

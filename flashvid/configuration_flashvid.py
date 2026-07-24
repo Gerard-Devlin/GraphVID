@@ -198,58 +198,6 @@ class FlashVidConfig:
     certv8_stratified_query_tolerance: float = field(default=0.01)
     certv8_debug: bool = field(default=False)
 
-    # CertVID-G: confidence-gated native SigLIP query localization over V3.
-    certg_enabled: bool = field(default=True)
-    certg_locator_checkpoint: str = field(default="")
-    certg_min_duration_seconds: float = field(default=120.0)
-    certg_confidence_threshold: float = field(default=0.55)
-    certg_max_tilt: float = field(default=2.0)
-    certg_peak_count: int = field(default=2)
-    certg_peak_separation: int = field(default=3)
-    certg_window_radius: int = field(default=2)
-    certg_min_question_words: int = field(default=6)
-    certg_subtitle_fallback: bool = field(default=True)
-    certg_disable_v3_query_when_active: bool = field(default=True)
-    certg_debug: bool = field(default=False)
-
-    # CertVID-HR: V3-preserving long-horizon evidence repair.
-    certhr_horizon_gap_seconds: float = field(default=4.0)
-    certhr_chunk_max_seconds: float = field(default=60.0)
-    certhr_chunk_max_units: int = field(default=4)
-    certhr_semantic_quantile: float = field(default=0.85)
-    certhr_semantic_floor: float = field(default=0.10)
-    certhr_coverage_floor: float = field(default=0.70)
-    certhr_deficit_threshold: float = field(default=0.05)
-    certhr_query_peak_quantile: float = field(default=0.90)
-    certhr_query_peak_floor: float = field(default=0.75)
-    certhr_max_swap_ratio: float = field(default=0.05)
-    certhr_d_efficiency_floor: float = field(default=0.995)
-    certhr_add_pool: int = field(default=32)
-    certhr_remove_pool: int = field(default=24)
-    certhr_debug: bool = field(default=False)
-
-    # CertVID-LH: long-horizon temporal allocation and evidence-chain relays.
-    certlh_min_duration_seconds: float = field(default=120.0)
-    certlh_horizon_gap_seconds: float = field(default=4.0)
-    certlh_gate_threshold: float = field(default=0.55)
-    certlh_min_groups: int = field(default=4)
-    certlh_max_groups: int = field(default=8)
-    certlh_min_group_units: int = field(default=2)
-    certlh_max_group_units: int = field(default=8)
-    certlh_event_quantile: float = field(default=0.80)
-    certlh_event_floor: float = field(default=0.08)
-    certlh_group_floor_ratio: float = field(default=0.50)
-    certlh_budget_temperature: float = field(default=0.25)
-    certlh_query_weight: float = field(default=0.35)
-    certlh_relay_ratio: float = field(default=0.10)
-    certlh_query_peaks_per_atom: int = field(default=2)
-    certlh_query_peak_quantile: float = field(default=0.90)
-    certlh_query_peak_floor: float = field(default=0.75)
-    certlh_query_min_group_distance: int = field(default=2)
-    certlh_cross_group_similarity: float = field(default=0.90)
-    certlh_cross_group_max_seconds: float = field(default=8.0)
-    certlh_debug: bool = field(default=False)
-
     # CertVID V4: verifiable budget-constrained D-optimal evidence design.
     certv4_budget_mode: str = field(default="layer_average")
     certv4_attention_policy: str = field(default="validated")
@@ -351,7 +299,6 @@ class FlashVidConfig:
     # "flashvid": original ADTS + TSTM path.
     # "talon": transport-aligned low-rank + sparse innovation path.
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
-    # "certvid_lh": V3-preserving long-horizon allocation and relay path.
     # "certvid_v7": long-horizon relation evidence and balanced local coverage.
     # "certvid_v8": gated relation-aware stratified coreset over a V3 fallback.
     # "faithvid": mass-corrected functionally faithful merging path.

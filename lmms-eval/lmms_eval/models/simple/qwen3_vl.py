@@ -129,18 +129,18 @@ def _flashvid_runtime_config(model):
     return None
 
 
-def _publish_certhr_timing(model, timing):
+def _publish_frame_timing(model, timing):
     config = _flashvid_runtime_config(model)
     if config is None:
         return None
     config._certvid_frame_times_sec = None
     config._certvid_frame_times_source = "missing"
-    if str(getattr(config, "compression_variant", "")).strip().lower() in {"flashvid", "certvid_hr", "certvid_lh", "certvid_v7", "certvid_v8"} and timing is not None:
+    if str(getattr(config, "compression_variant", "")).strip().lower() in {"flashvid", "certvid_v7", "certvid_v8"} and timing is not None:
         config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
     return config
 
 
-def _clear_certhr_timing(config) -> None:
+def _clear_frame_timing(config) -> None:
     if config is not None:
         config._certvid_frame_times_sec = None
         config._certvid_frame_times_source = "missing"
@@ -429,40 +429,6 @@ class Qwen3_VL(lmms):
         certv8_stratified_d_efficiency_floor: float = 0.82,
         certv8_stratified_query_tolerance: float = 0.01,
         certv8_debug: bool = False,
-        certhr_horizon_gap_seconds: float = 4.0,
-        certhr_chunk_max_seconds: float = 60.0,
-        certhr_chunk_max_units: int = 4,
-        certhr_semantic_quantile: float = 0.85,
-        certhr_semantic_floor: float = 0.10,
-        certhr_coverage_floor: float = 0.70,
-        certhr_deficit_threshold: float = 0.05,
-        certhr_query_peak_quantile: float = 0.90,
-        certhr_query_peak_floor: float = 0.75,
-        certhr_max_swap_ratio: float = 0.05,
-        certhr_d_efficiency_floor: float = 0.995,
-        certhr_add_pool: int = 32,
-        certhr_remove_pool: int = 24,
-        certhr_debug: bool = False,
-        certlh_min_duration_seconds: float = 120.0,
-        certlh_horizon_gap_seconds: float = 4.0,
-        certlh_gate_threshold: float = 0.55,
-        certlh_min_groups: int = 4,
-        certlh_max_groups: int = 8,
-        certlh_min_group_units: int = 2,
-        certlh_max_group_units: int = 8,
-        certlh_event_quantile: float = 0.80,
-        certlh_event_floor: float = 0.08,
-        certlh_group_floor_ratio: float = 0.50,
-        certlh_budget_temperature: float = 0.25,
-        certlh_query_weight: float = 0.35,
-        certlh_relay_ratio: float = 0.10,
-        certlh_query_peaks_per_atom: int = 2,
-        certlh_query_peak_quantile: float = 0.90,
-        certlh_query_peak_floor: float = 0.75,
-        certlh_query_min_group_distance: int = 2,
-        certlh_cross_group_similarity: float = 0.90,
-        certlh_cross_group_max_seconds: float = 8.0,
-        certlh_debug: bool = False,
         certv4_budget_mode: str = "layer_average",
         certv4_attention_policy: str = "validated",
         certv4_attention_eps: float = 1e-6,
@@ -825,40 +791,6 @@ class Qwen3_VL(lmms):
                 certv8_stratified_d_efficiency_floor=certv8_stratified_d_efficiency_floor,
                 certv8_stratified_query_tolerance=certv8_stratified_query_tolerance,
                 certv8_debug=certv8_debug,
-                certhr_horizon_gap_seconds=certhr_horizon_gap_seconds,
-                certhr_chunk_max_seconds=certhr_chunk_max_seconds,
-                certhr_chunk_max_units=certhr_chunk_max_units,
-                certhr_semantic_quantile=certhr_semantic_quantile,
-                certhr_semantic_floor=certhr_semantic_floor,
-                certhr_coverage_floor=certhr_coverage_floor,
-                certhr_deficit_threshold=certhr_deficit_threshold,
-                certhr_query_peak_quantile=certhr_query_peak_quantile,
-                certhr_query_peak_floor=certhr_query_peak_floor,
-                certhr_max_swap_ratio=certhr_max_swap_ratio,
-                certhr_d_efficiency_floor=certhr_d_efficiency_floor,
-                certhr_add_pool=certhr_add_pool,
-                certhr_remove_pool=certhr_remove_pool,
-                certhr_debug=certhr_debug,
-                certlh_min_duration_seconds=certlh_min_duration_seconds,
-                certlh_horizon_gap_seconds=certlh_horizon_gap_seconds,
-                certlh_gate_threshold=certlh_gate_threshold,
-                certlh_min_groups=certlh_min_groups,
-                certlh_max_groups=certlh_max_groups,
-                certlh_min_group_units=certlh_min_group_units,
-                certlh_max_group_units=certlh_max_group_units,
-                certlh_event_quantile=certlh_event_quantile,
-                certlh_event_floor=certlh_event_floor,
-                certlh_group_floor_ratio=certlh_group_floor_ratio,
-                certlh_budget_temperature=certlh_budget_temperature,
-                certlh_query_weight=certlh_query_weight,
-                certlh_relay_ratio=certlh_relay_ratio,
-                certlh_query_peaks_per_atom=certlh_query_peaks_per_atom,
-                certlh_query_peak_quantile=certlh_query_peak_quantile,
-                certlh_query_peak_floor=certlh_query_peak_floor,
-                certlh_query_min_group_distance=certlh_query_min_group_distance,
-                certlh_cross_group_similarity=certlh_cross_group_similarity,
-                certlh_cross_group_max_seconds=certlh_cross_group_max_seconds,
-                certlh_debug=certlh_debug,
                 certv4_budget_mode=certv4_budget_mode,
                 certv4_attention_policy=certv4_attention_policy,
                 certv4_attention_eps=certv4_attention_eps,
@@ -1278,7 +1210,7 @@ class Qwen3_VL(lmms):
             current_gen_kwargs = self._build_current_gen_kwargs(gen_kwargs)
             pad_token_id = self.tokenizer.pad_token_id
 
-            runtime_config = _publish_certhr_timing(self.model, frame_timing)
+            runtime_config = _publish_frame_timing(self.model, frame_timing)
             _publish_certvid_sample(
                 runtime_config,
                 sample_doc,
@@ -1300,7 +1232,7 @@ class Qwen3_VL(lmms):
                 )
             finally:
                 _clear_certvid_sample(runtime_config)
-                _clear_certhr_timing(runtime_config)
+                _clear_frame_timing(runtime_config)
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
             answers = self.processor.batch_decode(

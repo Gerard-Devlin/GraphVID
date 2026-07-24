@@ -21,10 +21,7 @@ def SigLipVisionTower_forward(self: SigLipVisionTower, images: torch.Tensor):
     cls_attentions = image_forward_outs.attentions[-1].to(images.dtype)
     assert image_features.shape[-2] == 729
 
-    # LLaVA removes SigLIP's final encoder layer and replaces its pooling head
-    # with Identity. Return the pre-projector patches so CertVID-G can apply a
-    # separately restored native tail without another vision-tower forward.
-    return image_features, cls_attentions, image_features
+    return image_features, cls_attentions
 
 
 def SigLipAttention_forward(

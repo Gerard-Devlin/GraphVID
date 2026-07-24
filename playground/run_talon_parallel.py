@@ -255,34 +255,6 @@ def _append_common_talon_args(cmd: list[str], args: argparse.Namespace) -> None:
             "--certv7_design_protect_ratio", str(args.certv7_design_protect_ratio),
             "--certv7_long_fusion_alpha", str(args.certv7_long_fusion_alpha),
             "--certv7_debug", _str_bool(args.certv7_debug),
-            "--certhr_horizon_gap_seconds",
-            str(args.certhr_horizon_gap_seconds),
-            "--certhr_chunk_max_seconds",
-            str(args.certhr_chunk_max_seconds),
-            "--certhr_chunk_max_units",
-            str(args.certhr_chunk_max_units),
-            "--certhr_semantic_quantile",
-            str(args.certhr_semantic_quantile),
-            "--certhr_semantic_floor",
-            str(args.certhr_semantic_floor),
-            "--certhr_coverage_floor",
-            str(args.certhr_coverage_floor),
-            "--certhr_deficit_threshold",
-            str(args.certhr_deficit_threshold),
-            "--certhr_query_peak_quantile",
-            str(args.certhr_query_peak_quantile),
-            "--certhr_query_peak_floor",
-            str(args.certhr_query_peak_floor),
-            "--certhr_max_swap_ratio",
-            str(args.certhr_max_swap_ratio),
-            "--certhr_d_efficiency_floor",
-            str(args.certhr_d_efficiency_floor),
-            "--certhr_add_pool",
-            str(args.certhr_add_pool),
-            "--certhr_remove_pool",
-            str(args.certhr_remove_pool),
-            "--certhr_debug",
-            _str_bool(args.certhr_debug),
             "--certv4_budget_mode",
             str(args.certv4_budget_mode),
             "--certv4_attention_policy",
@@ -963,7 +935,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"])
     parser.add_argument("--pruning_layer", type=int, default=20)
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)
@@ -1075,20 +1047,6 @@ def main() -> None:
     parser.add_argument("--certv7_design_protect_ratio", type=float, default=0.15)
     parser.add_argument("--certv7_long_fusion_alpha", type=float, default=0.04)
     parser.add_argument("--certv7_debug", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
-    parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)
-    parser.add_argument("--certhr_chunk_max_units", type=int, default=4)
-    parser.add_argument("--certhr_semantic_quantile", type=float, default=0.85)
-    parser.add_argument("--certhr_semantic_floor", type=float, default=0.10)
-    parser.add_argument("--certhr_coverage_floor", type=float, default=0.70)
-    parser.add_argument("--certhr_deficit_threshold", type=float, default=0.05)
-    parser.add_argument("--certhr_query_peak_quantile", type=float, default=0.90)
-    parser.add_argument("--certhr_query_peak_floor", type=float, default=0.75)
-    parser.add_argument("--certhr_max_swap_ratio", type=float, default=0.05)
-    parser.add_argument("--certhr_d_efficiency_floor", type=float, default=0.995)
-    parser.add_argument("--certhr_add_pool", type=int, default=32)
-    parser.add_argument("--certhr_remove_pool", type=int, default=24)
-    parser.add_argument("--certhr_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--certv4_budget_mode", default="layer_average", choices=["layer_average", "outer_only"])
     parser.add_argument("--certv4_attention_policy", default="validated", choices=["validated", "strict", "off"])
     parser.add_argument("--certv4_attention_eps", type=float, default=1e-6)

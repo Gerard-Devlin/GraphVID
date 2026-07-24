@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_hr", "certvid_lh", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         return "ours"
     return method
 
@@ -548,33 +548,6 @@ def _build_command(
                 "--certv7_design_protect_ratio", str(args.certv7_design_protect_ratio),
                 "--certv7_long_fusion_alpha", str(args.certv7_long_fusion_alpha),
                 "--certv7_debug" if args.certv7_debug else "--no-certv7_debug",
-                "--certhr_horizon_gap_seconds",
-                str(args.certhr_horizon_gap_seconds),
-                "--certhr_chunk_max_seconds",
-                str(args.certhr_chunk_max_seconds),
-                "--certhr_chunk_max_units",
-                str(args.certhr_chunk_max_units),
-                "--certhr_semantic_quantile",
-                str(args.certhr_semantic_quantile),
-                "--certhr_semantic_floor",
-                str(args.certhr_semantic_floor),
-                "--certhr_coverage_floor",
-                str(args.certhr_coverage_floor),
-                "--certhr_deficit_threshold",
-                str(args.certhr_deficit_threshold),
-                "--certhr_query_peak_quantile",
-                str(args.certhr_query_peak_quantile),
-                "--certhr_query_peak_floor",
-                str(args.certhr_query_peak_floor),
-                "--certhr_max_swap_ratio",
-                str(args.certhr_max_swap_ratio),
-                "--certhr_d_efficiency_floor",
-                str(args.certhr_d_efficiency_floor),
-                "--certhr_add_pool",
-                str(args.certhr_add_pool),
-                "--certhr_remove_pool",
-                str(args.certhr_remove_pool),
-                "--certhr_debug" if args.certhr_debug else "--no-certhr_debug",
                 "--certv4_budget_mode",
                 str(args.certv4_budget_mode),
                 "--certv4_attention_policy",
@@ -836,7 +809,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_v8,certvid_hr,certvid_lh,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_v8,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -996,20 +969,6 @@ def main() -> None:
     parser.add_argument("--certv7_design_protect_ratio", type=float, default=0.15)
     parser.add_argument("--certv7_long_fusion_alpha", type=float, default=0.04)
     parser.add_argument("--certv7_debug", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--certhr_horizon_gap_seconds", type=float, default=4.0)
-    parser.add_argument("--certhr_chunk_max_seconds", type=float, default=60.0)
-    parser.add_argument("--certhr_chunk_max_units", type=int, default=4)
-    parser.add_argument("--certhr_semantic_quantile", type=float, default=0.85)
-    parser.add_argument("--certhr_semantic_floor", type=float, default=0.10)
-    parser.add_argument("--certhr_coverage_floor", type=float, default=0.70)
-    parser.add_argument("--certhr_deficit_threshold", type=float, default=0.05)
-    parser.add_argument("--certhr_query_peak_quantile", type=float, default=0.90)
-    parser.add_argument("--certhr_query_peak_floor", type=float, default=0.75)
-    parser.add_argument("--certhr_max_swap_ratio", type=float, default=0.05)
-    parser.add_argument("--certhr_d_efficiency_floor", type=float, default=0.995)
-    parser.add_argument("--certhr_add_pool", type=int, default=32)
-    parser.add_argument("--certhr_remove_pool", type=int, default=24)
-    parser.add_argument("--certhr_debug", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--certv4_expansion", type=float, default=1.25)
     parser.add_argument("--certv4_pruning_layer", type=int, default=28)
     parser.add_argument("--certv4_llm_retention_ratio", type=float, default=0.10)
