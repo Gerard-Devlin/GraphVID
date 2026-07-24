@@ -81,8 +81,22 @@ combo_e050_q050	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.
 EOF
 )
     ;;
+  budget)
+    CONFIGS=$(cat <<'EOF'
+budget_e115	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e120	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e1225	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e125	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e1275	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e130	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e1325	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e135	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+budget_e1375	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+EOF
+)
+    ;;
   *)
-    echo "Unknown STAGE=$STAGE (expected baseline, coarse, fine, or targeted)" >&2
+    echo "Unknown STAGE=$STAGE (expected baseline, coarse, fine, targeted, or budget)" >&2
     exit 1
     ;;
 esac
@@ -93,6 +107,36 @@ while IFS=$'\t' read -r \
   name intent floor cap swap peaks query event balance d_floor deficit min_gain cross_sim cross_seconds localized_event attribute_query
 do
   [[ -n "$name" ]] || continue
+  expansion="${EXPANSION:-1.30}"
+  llm_retention_ratio="${LLM_RETENTION_RATIO:-0.1923076923}"
+  if [[ "$STAGE" == "budget" ]]; then
+    case "$name" in
+      budget_e115)  expansion=1.15;  llm_retention_ratio=0.5434782609 ;;
+      budget_e120)  expansion=1.20;  llm_retention_ratio=0.4166666667 ;;
+      budget_e1225) expansion=1.225; llm_retention_ratio=0.3571428571 ;;
+      budget_e125)  expansion=1.25;  llm_retention_ratio=0.3000000000 ;;
+      budget_e1275) expansion=1.275; llm_retention_ratio=0.2450980392 ;;
+      budget_e130)  expansion=1.30;  llm_retention_ratio=0.1923076923 ;;
+      budget_e1325) expansion=1.325; llm_retention_ratio=0.1415094340 ;;
+      budget_e135)  expansion=1.35;  llm_retention_ratio=0.0925925926 ;;
+      budget_e1375) expansion=1.375; llm_retention_ratio=0.0454545455 ;;
+      *) echo "Missing budget pair for $name" >&2; exit 1 ;;
+    esac
+  fi
+
+  python - "$expansion" "$llm_retention_ratio" <<'PY'
+import sys
+
+expansion = float(sys.argv[1])
+retention = float(sys.argv[2])
+multiplier = expansion * (20.0 + 8.0 * retention) / 28.0
+if abs(multiplier - 1.0) > 1e-4:
+    raise SystemExit(
+        f"unfair layer-average budget: E={expansion}, r={retention}, "
+        f"multiplier={multiplier:.8f}"
+    )
+PY
+
   run_dir="$OUTPUT_ROOT/search_$name"
   if find "$run_dir" -type f -name '*_results.json' -print -quit 2>/dev/null \
     | grep -q .; then
@@ -103,6 +147,7 @@ do
   echo "================================================================"
   echo "[$(date)] $name"
   echo "samples=$SAMPLE_IDS_FILE output=$run_dir"
+  echo "budget_split: expansion=$expansion pruning_layer=20 llm_retention_ratio=$llm_retention_ratio"
   echo "================================================================"
 
   env \
@@ -117,9 +162,9 @@ do
     METHODS=certvid_v8 \
     TASKS=longvideobench_val_v \
     RATES=0.10 \
-    EXPANSION=1.30 \
+    EXPANSION="$expansion" \
     PRUNING_LAYER=20 \
-    LLM_RETENTION_RATIO=0.1923076923 \
+    LLM_RETENTION_RATIO="$llm_retention_ratio" \
     CERTV3_BUDGET_USES_EXPANSION=True \
     CERTV8_INTENT_STRENGTH="$intent" \
     CERTV8_FRAME_FLOOR_RATIO="$floor" \
