@@ -1,10 +1,10 @@
-"""CertVID V8: gated relation-aware stratified evidence coreset.
+"""CertVID V8: guarded stratified coreset over a proven V3 repair path.
 
 V8 always runs the unchanged CertVID V3 selector first. Moderate-horizon
-temporal and referred-retrieval questions may rebuild a frame-stratified
-portion of the coreset under the same fixed budget. Other intents, short
-horizons, ultra-long horizons, and rejected reconstructions return the exact
-V3 output.
+relation questions may use a frame-stratified reconstruction under the same
+fixed budget. All other samples, and rejected reconstructions, continue
+through the previously validated temporal/query repair instead of discarding
+that useful fallback and returning the raw V3 output.
 """
 
 from __future__ import annotations
@@ -145,10 +145,6 @@ def _blend(base: float, target: float, strength: float) -> float:
 
 def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
     text = str(getattr(config, "_certvid_query_text", "") or "").lower()
-    # Route from the question stem only. Choice text can contain incidental
-    # temporal words ("before", "after", "change") that do not describe the
-    # reasoning operation requested by the question.
-    text = re.split(r"\n\s*[a-g][\.\)]\s+", text, maxsplit=1)[0]
     text = re.sub(r"\s+", " ", text)
     router_enabled = bool(getattr(config, "certv8_intent_router", True))
     strength = min(
@@ -160,15 +156,15 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
 
     base_floor = min(
         0.95,
-        max(0.0, _cfg_float(config, "certv8_frame_floor_ratio", 0.35)),
+        max(0.0, _cfg_float(config, "certv8_frame_floor_ratio", 0.45)),
     )
     base_cap = max(
         1.0,
-        _cfg_float(config, "certv8_frame_cap_ratio", 2.20),
+        _cfg_float(config, "certv8_frame_cap_ratio", 2.00),
     )
     base_swap = min(
         0.50,
-        max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.12)),
+        max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.30)),
     )
     base_query = min(
         0.50,
@@ -180,36 +176,36 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
     )
     base_balance = min(
         0.60,
-        max(0.0, _cfg_float(config, "certv8_balance_weight", 0.22)),
+        max(0.0, _cfg_float(config, "certv8_balance_weight", 0.30)),
     )
     base_floor_eff = min(
         1.0,
-        max(0.0, _cfg_float(config, "certv8_d_efficiency_floor", 0.97)),
+        max(0.0, _cfg_float(config, "certv8_d_efficiency_floor", 0.95)),
     )
     base_peaks = max(1, _cfg_int(config, "certv8_query_peak_count", 2))
 
     if _matches_any(text, _SEQUENCE_PATTERNS):
         name = "sequence"
-        target = (0.62, 3, 0.38, 2.10, 0.10, 0.18, 0.32, 0.24, 0.98)
+        target = (0.90, 3, 0.75, 1.40, 0.40, 0.18, 0.32, 0.48, 0.92)
     elif _matches_any(text, _CHANGE_PATTERNS):
         name = "attribute_change"
-        target = (0.70, 2, 0.46, 1.95, 0.12, 0.32, 0.30, 0.28, 0.965)
+        target = (0.85, 2, 0.62, 1.65, 0.35, 0.32, 0.30, 0.38, 0.93)
     elif _matches_any(text, _TRACKING_PATTERNS):
         name = "object_tracking"
-        target = (0.62, 2, 0.42, 2.05, 0.11, 0.34, 0.24, 0.24, 0.975)
+        target = (0.82, 2, 0.60, 1.70, 0.34, 0.34, 0.24, 0.36, 0.93)
     elif _matches_any(text, _TEMPORAL_PATTERNS):
         name = "temporal_relation"
-        target = (0.55, 2, 0.36, 2.15, 0.09, 0.28, 0.32, 0.22, 0.98)
+        target = (0.82, 2, 0.62, 1.65, 0.35, 0.28, 0.32, 0.40, 0.93)
     elif _matches_any(text, _RETRIEVAL_PATTERNS):
         name = "referred_retrieval"
-        target = (0.52, 1, 0.36, 2.20, 0.12, 0.36, 0.20, 0.21, 0.975)
+        target = (0.65, 1, 0.45, 2.00, 0.25, 0.36, 0.20, 0.28, 0.95)
     elif text:
         name = "generic_question"
-        target = (0.38, 1, 0.30, 2.40, 0.10, 0.24, 0.22, 0.16, 0.98)
+        target = (0.45, 1, 0.35, 2.20, 0.18, 0.24, 0.22, 0.24, 0.96)
     else:
         name = "embedding_only"
         inferred = 0.35 + 0.30 * min(1.0, float(analysis.query_confidence))
-        target = (inferred, 1, 0.30, 2.40, 0.10, 0.24, 0.22, 0.16, 0.98)
+        target = (inferred, 1, 0.35, 2.20, 0.18, 0.24, 0.22, 0.24, 0.96)
 
     (
         repair_strength,
@@ -222,16 +218,13 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
         balance_weight,
         d_efficiency,
     ) = target
-    effective_peak_count = max(
-        1,
-        int(round(_blend(float(base_peaks), float(peak_count), strength))),
-    )
-    if float(analysis.query_confidence) < 0.10:
-        effective_peak_count = 1
     return _IntentRoute(
         name=name,
         repair_strength=_blend(0.35, repair_strength, strength),
-        peak_count=effective_peak_count,
+        peak_count=max(
+            1,
+            int(round(_blend(float(base_peaks), float(peak_count), strength))),
+        ),
         floor_ratio=_blend(base_floor, floor_ratio, strength),
         cap_ratio=_blend(base_cap, cap_ratio, strength),
         max_swap_ratio=_blend(base_swap, swap_ratio, strength),
@@ -492,42 +485,62 @@ def _addition_scores(
 
 def _stratified_strength(
     config: Any,
-    route: _IntentRoute,
     duration_seconds: float,
-) -> Tuple[float, str]:
+) -> Tuple[float, str, str]:
     """Route only relation-heavy, moderate-horizon samples to reconstruction."""
     if not bool(getattr(config, "certv8_stratified_enabled", True)):
-        return 0.0, "disabled"
+        return 0.0, "disabled", "disabled"
     maximum_duration = max(
         0.0,
         _cfg_float(config, "certv8_stratified_max_duration_seconds", 1200.0),
     )
     if maximum_duration > 0.0 and duration_seconds > maximum_duration:
-        return 0.0, "ultra_long_v3"
-    if route.name == "temporal_relation":
+        return 0.0, "ultra_long_legacy", "ultra_long"
+
+    text = str(getattr(config, "_certvid_query_text", "") or "").lower()
+    # The stratified branch routes from the stem only. Legacy V8 intentionally
+    # retains its published routing behavior, including choice text.
+    text = re.split(r"\n\s*[a-g][\.\)]\s+", text, maxsplit=1)[0]
+    text = re.sub(r"\s+", " ", text)
+    if _matches_any(text, _SEQUENCE_PATTERNS):
+        intent = "sequence"
+    elif _matches_any(text, _CHANGE_PATTERNS):
+        intent = "attribute_change"
+    elif _matches_any(text, _TRACKING_PATTERNS):
+        intent = "object_tracking"
+    elif _matches_any(text, _TEMPORAL_PATTERNS):
+        intent = "temporal_relation"
+    elif _matches_any(text, _RETRIEVAL_PATTERNS):
+        intent = "referred_retrieval"
+    elif text:
+        intent = "generic_question"
+    else:
+        intent = "embedding_only"
+
+    if intent == "temporal_relation":
         strength = _cfg_float(
             config,
             "certv8_stratified_temporal_strength",
-            0.62,
+            0.60,
         )
-    elif route.name == "referred_retrieval":
+    elif intent == "referred_retrieval":
         strength = _cfg_float(
             config,
             "certv8_stratified_retrieval_strength",
-            0.42,
+            0.40,
         )
-    elif route.name == "generic_question":
+    elif intent == "generic_question":
         strength = _cfg_float(
             config,
             "certv8_stratified_generic_strength",
             0.0,
         )
     else:
-        return 0.0, f"intent_{route.name}"
+        return 0.0, f"intent_{intent}", intent
     strength = min(0.90, max(0.0, strength))
     if strength <= 0.0:
-        return 0.0, f"intent_{route.name}"
-    return strength, "active"
+        return 0.0, f"intent_{intent}", intent
+    return strength, "active", intent
 
 
 def _stratified_relation_selection(
@@ -583,7 +596,7 @@ def _stratified_relation_selection(
 
     keep_ratio = min(
         0.95,
-        max(0.0, _cfg_float(config, "certv8_stratified_v3_keep_ratio", 0.62)),
+        max(0.0, _cfg_float(config, "certv8_stratified_v3_keep_ratio", 0.70)),
     )
     removal_value = _removal_cost(v3_indices, analysis, tokens_per_frame)
     v3_value_by_token = torch.full(
@@ -1115,6 +1128,9 @@ def _store_diagnostics(config: Any, diagnostics: Dict[str, Any]) -> None:
             "[certvid-v8] "
             f"sample={getattr(config, '_debug_sample_id', 'unknown')} "
             f"intent={diagnostics.get('query_intent', 'unknown')} "
+            f"stratified={diagnostics.get('stratified_intent', 'n/a')}/"
+            f"{diagnostics.get('stratified_gate', 'n/a')} "
+            f"branch={diagnostics.get('selection_branch', 'v3_fallback')} "
             f"fallback={diagnostics.get('fallback_reason')} "
             f"tokens={diagnostics.get('budget', 0)}/"
             f"{diagnostics.get('raw_token_count', 0)} "
@@ -1125,12 +1141,10 @@ def _store_diagnostics(config: Any, diagnostics: Dict[str, Any]) -> None:
             f"query={diagnostics.get('base_query_coverage', 1.0):.4f}->"
             f"{diagnostics.get('final_query_coverage', 1.0):.4f} "
             f"swaps={diagnostics.get('swap_count', 0)} "
-            f"swap_cap={diagnostics.get('hard_swap_cap', 0.0):.3f} "
             f"protected={diagnostics.get('protected_anchor_count', 0)} "
             f"v3_overlap={diagnostics.get('v3_overlap_ratio', 1.0):.3f} "
             f"D-eff={diagnostics.get('d_efficiency', 1.0):.4f} "
             f"qconf={diagnostics.get('query_confidence', 0.0):.4f} "
-            f"minCV={diagnostics.get('minimum_trial_frame_cv', 0.0):.4f} "
             f"v3_frames={diagnostics.get('v3_frame_counts', [])} "
             f"target_frames={diagnostics.get('target_frame_counts', [])} "
             f"final_frames={diagnostics.get('final_frame_counts', [])}"
@@ -1377,22 +1391,13 @@ def certvid_v8_compression(
             int(value) for value in protected_counts.detach().cpu().tolist()
         ]
 
-        stratified_strength, stratified_gate = _stratified_strength(
+        stratified_strength, stratified_gate, stratified_intent = _stratified_strength(
             config,
-            route,
             duration,
         )
         diagnostics["stratified_gate"] = stratified_gate
+        diagnostics["stratified_intent"] = stratified_intent
         diagnostics["stratified_strength"] = stratified_strength
-        if stratified_gate not in {"active", "disabled"}:
-            return _fallback(
-                config,
-                diagnostics,
-                f"stratified_{stratified_gate}",
-                v3_output,
-                v3_indices,
-                v3_plan,
-            )
         if stratified_strength > 0.0:
             try:
                 selected, target_counts, stratified_metrics = (
@@ -1419,6 +1424,31 @@ def certvid_v8_compression(
                 )
                 base_query = _query_coverage(v3_indices, analysis)
                 final_query = _query_coverage(selected, analysis)
+                candidate_counts = torch.bincount(
+                    selected // tokens_per_frame,
+                    minlength=frame_count,
+                )
+                candidate_modified = float(
+                    1.0 - torch.isin(selected, v3_indices).float().mean().item()
+                )
+                diagnostics.update(
+                    {
+                        "stratified_candidate_d_efficiency": efficiency,
+                        "stratified_candidate_query_coverage": final_query,
+                        "stratified_candidate_modified_ratio": candidate_modified,
+                        "stratified_candidate_target_frame_counts": [
+                            int(value)
+                            for value in target_counts.detach().cpu().tolist()
+                        ],
+                        "stratified_candidate_frame_counts": [
+                            int(value)
+                            for value in candidate_counts.detach().cpu().tolist()
+                        ],
+                        "stratified_candidate_frame_distribution": (
+                            _frame_count_summary(candidate_counts)
+                        ),
+                    }
+                )
                 efficiency_floor = min(
                     1.0,
                     max(
@@ -1426,7 +1456,7 @@ def certvid_v8_compression(
                         _cfg_float(
                             config,
                             "certv8_stratified_d_efficiency_floor",
-                            0.94,
+                            0.90,
                         ),
                     ),
                 )
@@ -1491,10 +1521,7 @@ def certvid_v8_compression(
                     video_features.reshape(frame_count * tokens_per_frame, -1),
                     plan,
                 )
-                final_counts = torch.bincount(
-                    selected // tokens_per_frame,
-                    minlength=frame_count,
-                )
+                final_counts = candidate_counts
                 modified = len(additions) / max(1, budget)
                 diagnostics.update(stratified_metrics)
                 diagnostics.update(
@@ -1555,14 +1582,7 @@ def certvid_v8_compression(
                 diagnostics["stratified_rejection"] = (
                     f"{type(error).__name__}: {error}"
                 )
-                return _fallback(
-                    config,
-                    diagnostics,
-                    "stratified_guard",
-                    v3_output,
-                    v3_indices,
-                    v3_plan,
-                )
+                diagnostics["stratified_gate"] = "rejected_to_legacy"
 
         target_counts = _target_frame_counts(
             v3_counts,
@@ -1596,24 +1616,9 @@ def certvid_v8_compression(
                 v3_plan,
             )
 
-        hard_swap_cap = min(
-            0.50,
-            max(0.0, _cfg_float(config, "certv8_max_swap_ratio", 0.12)),
-        )
-        # Grow the trust region with measured deficit, but saturate before
-        # large, uncertain deficits trigger destructive wholesale rewrites.
-        deficit_swap_cap = min(
-            hard_swap_cap,
-            0.07 + 0.40 * min(0.125, max(0.0, base_deficit)),
-        )
         swap_limit = min(
             budget,
-            int(
-                math.ceil(
-                    min(route.max_swap_ratio, hard_swap_cap, deficit_swap_cap)
-                    * budget
-                )
-            ),
+            int(math.ceil(min(0.50, route.max_swap_ratio) * budget)),
         )
         additions, removals = _propose_swaps(
             v3_indices,
@@ -1656,36 +1661,7 @@ def certvid_v8_compression(
         accepted_metrics: Dict[str, float] = {}
         accepted_objective = base_objective
         accepted_efficiency = 1.0
-        concentration_preserve = min(
-            1.0,
-            max(
-                0.0,
-                _cfg_float(
-                    config,
-                    "certv8_concentration_preserve_ratio",
-                    0.55,
-                ),
-            ),
-        )
-        base_distribution = _frame_count_summary(v3_counts)
-        minimum_trial_cv = (
-            concentration_preserve * float(base_distribution["cv"])
-        )
-        hard_efficiency_floor = max(
-            route.d_efficiency_floor,
-            min(
-                1.0,
-                max(
-                    0.0,
-                    _cfg_float(config, "certv8_d_efficiency_floor", 0.97),
-                ),
-            ),
-        )
         diagnostics["query_confidence"] = float(analysis.query_confidence)
-        diagnostics["hard_swap_cap"] = hard_swap_cap
-        diagnostics["deficit_swap_cap"] = deficit_swap_cap
-        diagnostics["hard_d_efficiency_floor"] = hard_efficiency_floor
-        diagnostics["minimum_trial_frame_cv"] = minimum_trial_cv
         while count > 0:
             trial = _trial_selection(v3_indices, additions, removals, count)
             trial_counts = torch.bincount(
@@ -1712,14 +1688,11 @@ def certvid_v8_compression(
             deficit_improved = (
                 1.0 - metrics["temporal_alignment"] + 1e-8 < base_deficit
             )
-            trial_cv = float(_frame_count_summary(trial_counts)["cv"])
-            concentration_safe = trial_cv + 1e-8 >= minimum_trial_cv
             if (
-                efficiency + 1e-12 >= hard_efficiency_floor
+                efficiency + 1e-12 >= route.d_efficiency_floor
                 and objective + 1e-12 >= base_objective + min_gain
                 and query_safe
                 and deficit_improved
-                and concentration_safe
             ):
                 selected = trial
                 accepted_metrics = metrics
@@ -1782,6 +1755,7 @@ def certvid_v8_compression(
         )
         diagnostics.update(
             {
+                "selection_branch": "legacy_temporal_repair",
                 "swap_count": count,
                 "modified_ratio": count / max(1, budget),
                 "v3_overlap_ratio": float(

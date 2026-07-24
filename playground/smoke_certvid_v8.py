@@ -79,18 +79,19 @@ def _active_config(frames: int) -> FlashVidConfig:
 def main() -> None:
     defaults = _config("certvid_v8")
     assert defaults.certv8_intent_router is True
-    assert defaults.certv8_max_swap_ratio == 0.12
-    assert defaults.certv8_frame_floor_ratio == 0.35
-    assert defaults.certv8_frame_cap_ratio == 2.20
+    assert defaults.certv8_max_swap_ratio == 0.30
+    assert defaults.certv8_frame_floor_ratio == 0.45
+    assert defaults.certv8_frame_cap_ratio == 2.00
     assert defaults.certv8_concentration_preserve_ratio == 0.55
-    assert defaults.certv8_d_efficiency_floor == 0.97
+    assert defaults.certv8_d_efficiency_floor == 0.95
     assert defaults.certv8_query_peak_count == 2
     assert defaults.certv8_stratified_enabled is True
-    assert defaults.certv8_stratified_temporal_strength == 0.62
-    assert defaults.certv8_stratified_retrieval_strength == 0.42
+    assert defaults.certv8_stratified_temporal_strength == 0.60
+    assert defaults.certv8_stratified_retrieval_strength == 0.40
     assert defaults.certv8_stratified_generic_strength == 0.0
-    assert defaults.certv8_stratified_v3_keep_ratio == 0.62
+    assert defaults.certv8_stratified_v3_keep_ratio == 0.70
     assert defaults.certv8_stratified_max_duration_seconds == 1200.0
+    assert defaults.certv8_stratified_d_efficiency_floor == 0.90
 
     torch.manual_seed(8)
     frames, tokens, dimension = 8, 16, 32
@@ -261,11 +262,30 @@ def main() -> None:
         ultra_long,
         question,
     )
-    assert ultra_long.last_certv8_fallback_reason == "stratified_ultra_long_v3"
-    assert torch.equal(ultra_output, v3_output)
-    assert torch.equal(ultra_indices, v3_indices)
-    _assert_plan_equal(ultra_long._certvid_plan, v3_plan)
-    print("CertVID V8 gated stratified-cohort smoke passed")
+    assert (
+        ultra_long.last_certv8_diagnostics["stratified_gate"]
+        == "ultra_long_legacy"
+    )
+    assert ultra_output.shape == (budget, dimension)
+    assert ultra_indices.unique().numel() == budget
+    assert torch.equal(ultra_indices, torch.sort(ultra_indices).values)
+    assert torch.isfinite(ultra_output).all()
+
+    guarded = copy.deepcopy(stratified)
+    guarded.certv8_stratified_d_efficiency_floor = 1.0
+    guarded_output, guarded_indices = certvid_v8_compression(
+        dynamic,
+        attention,
+        guarded,
+        question,
+    )
+    guarded_diagnostics = guarded.last_certv8_diagnostics
+    assert "stratified_rejection" in guarded_diagnostics
+    assert guarded_diagnostics["stratified_gate"] == "rejected_to_legacy"
+    assert guarded_output.shape == (budget, dimension)
+    assert guarded_indices.unique().numel() == budget
+    assert torch.equal(guarded_indices, torch.sort(guarded_indices).values)
+    print("CertVID V8 guarded stratified-plus-legacy smoke passed")
 
 
 if __name__ == "__main__":
