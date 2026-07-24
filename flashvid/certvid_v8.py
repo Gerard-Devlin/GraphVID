@@ -50,6 +50,8 @@ class _IntentRoute:
     event_weight: float
     balance_weight: float
     d_efficiency_floor: float
+    localized_cue: bool
+    attribute_cue: bool
 
 
 _SEQUENCE_PATTERNS = (
@@ -92,6 +94,18 @@ _RETRIEVAL_PATTERNS = (
     r"\bwhere\b",
     r"\bwhich (?:scene|moment|object|person)\b",
     r"\bwhat (?:object|event|action|attribute|color)\b",
+)
+_LOCALIZED_EVENT_PATTERNS = (
+    r"\bwhen\b",
+    r"\bsubtitle",
+    r"\bphrase\b",
+    r"\bwords? (?:appear|shown|displayed)\b",
+    r"\btext (?:reads|says|appears)\b",
+)
+_ATTRIBUTE_QUERY_PATTERNS = (
+    r"\bwhat colou?r\b",
+    r"\bwhich colou?r\b",
+    r"\bwhat attribute\b",
 )
 
 
@@ -218,6 +232,22 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
         balance_weight,
         d_efficiency,
     ) = target
+    localized_cue = _matches_any(text, _LOCALIZED_EVENT_PATTERNS)
+    attribute_cue = _matches_any(text, _ATTRIBUTE_QUERY_PATTERNS)
+    localized_event_boost = min(
+        0.20,
+        max(0.0, _cfg_float(config, "certv8_localized_event_boost", 0.0)),
+    )
+    attribute_query_boost = min(
+        0.20,
+        max(0.0, _cfg_float(config, "certv8_attribute_query_boost", 0.0)),
+    )
+    routed_query_weight = _blend(base_query, query_weight, strength)
+    routed_event_weight = _blend(base_event, event_weight, strength)
+    if localized_cue:
+        routed_event_weight = min(0.50, routed_event_weight + localized_event_boost)
+    if attribute_cue:
+        routed_query_weight = min(0.50, routed_query_weight + attribute_query_boost)
     return _IntentRoute(
         name=name,
         repair_strength=_blend(0.35, repair_strength, strength),
@@ -225,10 +255,12 @@ def _query_route(config: Any, analysis: _V3Analysis) -> _IntentRoute:
         floor_ratio=_blend(base_floor, floor_ratio, strength),
         cap_ratio=_blend(base_cap, cap_ratio, strength),
         max_swap_ratio=_blend(base_swap, swap_ratio, strength),
-        query_weight=_blend(base_query, query_weight, strength),
-        event_weight=_blend(base_event, event_weight, strength),
+        query_weight=routed_query_weight,
+        event_weight=routed_event_weight,
         balance_weight=_blend(base_balance, balance_weight, strength),
         d_efficiency_floor=_blend(base_floor_eff, d_efficiency, strength),
+        localized_cue=localized_cue,
+        attribute_cue=attribute_cue,
     )
 
 
@@ -1061,6 +1093,8 @@ def certvid_v8_compression(
             "event_weight": route.event_weight,
             "balance_weight": route.balance_weight,
             "d_efficiency_floor": route.d_efficiency_floor,
+            "localized_cue": route.localized_cue,
+            "attribute_cue": route.attribute_cue,
         }
 
         frame_times, has_real_times, timestamp_source = _frame_times(

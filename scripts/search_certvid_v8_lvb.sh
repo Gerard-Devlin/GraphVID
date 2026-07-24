@@ -38,36 +38,50 @@ echo "Using node-local datasets cache: $LOCAL_DATASETS_CACHE"
 case "$STAGE" in
   baseline)
     CONFIGS=$(cat <<'EOF'
-baseline	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0
+baseline	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
 EOF
 )
     ;;
   coarse)
     CONFIGS=$(cat <<'EOF'
-baseline	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0
-query_low	0.75	0.45	2.00	0.30	2	0.15	0.25	0.30	0.95	0.04	0.001	0.88	8.0
-query_high	0.75	0.45	2.00	0.30	3	0.45	0.25	0.30	0.95	0.04	0.001	0.88	8.0
-event_high	0.75	0.45	2.00	0.30	2	0.25	0.45	0.20	0.95	0.04	0.001	0.88	8.0
-balance_low	0.75	0.45	2.00	0.30	2	0.30	0.25	0.10	0.95	0.04	0.001	0.88	8.0
-swap_low	0.75	0.45	2.00	0.15	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0
-swap_high	0.75	0.45	2.00	0.45	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0
-d_strict	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.98	0.04	0.001	0.88	8.0
-d_relaxed	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.92	0.04	0.001	0.88	8.0
+baseline	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+query_low	0.75	0.45	2.00	0.30	2	0.15	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+query_high	0.75	0.45	2.00	0.30	3	0.45	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+event_high	0.75	0.45	2.00	0.30	2	0.25	0.45	0.20	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+balance_low	0.75	0.45	2.00	0.30	2	0.30	0.25	0.10	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+swap_low	0.75	0.45	2.00	0.15	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+swap_high	0.75	0.45	2.00	0.45	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.0	0.0
+d_strict	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.98	0.04	0.001	0.88	8.0	0.0	0.0
+d_relaxed	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.92	0.04	0.001	0.88	8.0	0.0	0.0
 EOF
 )
     ;;
   fine)
     CONFIGS=$(cat <<'EOF'
-fine_conservative	0.60	0.40	1.80	0.20	2	0.18	0.30	0.15	0.98	0.05	0.0020	0.90	6.0
-fine_event	0.75	0.40	2.20	0.32	2	0.20	0.40	0.15	0.95	0.035	0.0010	0.88	8.0
-fine_focused	0.85	0.30	2.50	0.35	3	0.38	0.25	0.10	0.94	0.03	0.0005	0.86	10.0
-fine_coverage	0.70	0.60	1.60	0.25	2	0.20	0.30	0.45	0.97	0.05	0.0010	0.92	6.0
-fine_local	0.70	0.45	2.00	0.25	2	0.22	0.30	0.20	0.97	0.04	0.0010	0.94	4.0
+fine_conservative	0.60	0.40	1.80	0.20	2	0.18	0.30	0.15	0.98	0.05	0.0020	0.90	6.0	0.0	0.0
+fine_event	0.75	0.40	2.20	0.32	2	0.20	0.40	0.15	0.95	0.035	0.0010	0.88	8.0	0.0	0.0
+fine_focused	0.85	0.30	2.50	0.35	3	0.38	0.25	0.10	0.94	0.03	0.0005	0.86	10.0	0.0	0.0
+fine_coverage	0.70	0.60	1.60	0.25	2	0.20	0.30	0.45	0.97	0.05	0.0010	0.92	6.0	0.0	0.0
+fine_local	0.70	0.45	2.00	0.25	2	0.22	0.30	0.20	0.97	0.04	0.0010	0.94	4.0	0.0	0.0
+EOF
+)
+    ;;
+  targeted)
+    CONFIGS=$(cat <<'EOF'
+target_baseline	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.000	0.000
+cue_e025	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.025	0.000
+cue_e050	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.050	0.000
+cue_e075	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.075	0.000
+attr_q025	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.000	0.025
+attr_q050	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.000	0.050
+combo_e025_q025	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.025	0.025
+combo_e050_q025	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.050	0.025
+combo_e050_q050	0.75	0.45	2.00	0.30	2	0.30	0.25	0.30	0.95	0.04	0.001	0.88	8.0	0.050	0.050
 EOF
 )
     ;;
   *)
-    echo "Unknown STAGE=$STAGE (expected baseline, coarse, or fine)" >&2
+    echo "Unknown STAGE=$STAGE (expected baseline, coarse, fine, or targeted)" >&2
     exit 1
     ;;
 esac
@@ -75,7 +89,7 @@ esac
 printf '%s\n' "$CONFIGS" > "$OUTPUT_ROOT/search_matrix.tsv"
 
 while IFS=$'\t' read -r \
-  name intent floor cap swap peaks query event balance d_floor deficit min_gain cross_sim cross_seconds
+  name intent floor cap swap peaks query event balance d_floor deficit min_gain cross_sim cross_seconds localized_event attribute_query
 do
   [[ -n "$name" ]] || continue
   run_dir="$OUTPUT_ROOT/search_$name"
@@ -119,6 +133,8 @@ do
     CERTV8_MIN_OBJECTIVE_GAIN="$min_gain" \
     CERTV8_CROSS_FRAME_SIMILARITY="$cross_sim" \
     CERTV8_CROSS_FRAME_MAX_SECONDS="$cross_seconds" \
+    CERTV8_LOCALIZED_EVENT_BOOST="$localized_event" \
+    CERTV8_ATTRIBUTE_QUERY_BOOST="$attribute_query" \
     CERTV8_DEBUG=False \
     CERTV8_DIAGNOSTICS_DETAIL=summary \
     LMMS_EVAL_SAMPLE_IDS_FILE="$SAMPLE_IDS_FILE" \
