@@ -106,6 +106,11 @@ do
     OUTPUT_PATH="$run_dir" \
     bash scripts/llava_ov.sh
 
+  if ! find "$run_dir" -type f -name '*_results.json' -print -quit | grep -q .; then
+    echo "No lmms-eval result JSON was produced for $name; stopping search." >&2
+    exit 1
+  fi
+
   PORT=$((PORT + 1))
   sleep 10
 done <<< "$CONFIGS"

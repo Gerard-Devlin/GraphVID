@@ -615,7 +615,7 @@ def evaluate(
         for filter_key in task.instances[0].filtered_resps.keys():
             if cli_args is not None and not cli_args.process_with_media:
                 doc_iterator = create_iterator(
-                    enumerate(task.eval_docs_no_media),
+                    iter(task.eval_doc_pairs(task.eval_docs_no_media)),
                     rank=RANK,
                     limit=int(limit) if limit else None,
                     world_size=WORLD_SIZE,
