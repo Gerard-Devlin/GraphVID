@@ -1,10 +1,10 @@
-"""CertVID V8: V3-preserving long-context evidence repair.
+"""CertVID V8: gated relation-aware stratified evidence coreset.
 
-V8 always runs the unchanged CertVID V3 selector first. It only edits the V3
-anchor set when real timestamps expose a long sampling horizon and the V3
-selection leaves a measurable temporal or query-evidence deficit. The repair
-uses the same fixed token budget, protects V3 certificates, and falls back to
-the exact V3 output whenever its guards are not satisfied.
+V8 always runs the unchanged CertVID V3 selector first. Moderate-horizon
+temporal and referred-retrieval questions may rebuild a frame-stratified
+portion of the coreset under the same fixed budget. Other intents, short
+horizons, ultra-long horizons, and rejected reconstructions return the exact
+V3 output.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 
 from .certvid import CertVidPlan, _cfg_float, _cfg_int, _minmax, apply_certvid_plan
-from .certvid_v3 import certvid_v3_compression
+from .certvid_v3 import _d_optimal_greedy, certvid_v3_compression
 
 
 @dataclass
@@ -488,6 +488,182 @@ def _addition_scores(
         ).clamp(0.0, 1.0)
         score[mask] = 0.75 * score[mask] + 0.25 * diversity
     return score
+
+
+def _stratified_strength(
+    config: Any,
+    route: _IntentRoute,
+    duration_seconds: float,
+) -> Tuple[float, str]:
+    """Route only relation-heavy, moderate-horizon samples to reconstruction."""
+    if not bool(getattr(config, "certv8_stratified_enabled", True)):
+        return 0.0, "disabled"
+    maximum_duration = max(
+        0.0,
+        _cfg_float(config, "certv8_stratified_max_duration_seconds", 1200.0),
+    )
+    if maximum_duration > 0.0 and duration_seconds > maximum_duration:
+        return 0.0, "ultra_long_v3"
+    if route.name == "temporal_relation":
+        strength = _cfg_float(
+            config,
+            "certv8_stratified_temporal_strength",
+            0.62,
+        )
+    elif route.name == "referred_retrieval":
+        strength = _cfg_float(
+            config,
+            "certv8_stratified_retrieval_strength",
+            0.42,
+        )
+    elif route.name == "generic_question":
+        strength = _cfg_float(
+            config,
+            "certv8_stratified_generic_strength",
+            0.0,
+        )
+    else:
+        return 0.0, f"intent_{route.name}"
+    strength = min(0.90, max(0.0, strength))
+    if strength <= 0.0:
+        return 0.0, f"intent_{route.name}"
+    return strength, "active"
+
+
+def _stratified_relation_selection(
+    *,
+    v3_indices: torch.Tensor,
+    v3_counts: torch.Tensor,
+    protected: set[int],
+    analysis: _V3Analysis,
+    token_score: torch.Tensor,
+    frame_quality: torch.Tensor,
+    frame_event: torch.Tensor,
+    query_demand: torch.Tensor,
+    frame_count: int,
+    tokens_per_frame: int,
+    strength: float,
+    config: Any,
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    """Build a frame-stratified local design while retaining V3 evidence."""
+    budget = int(v3_indices.numel())
+    mean_count = float(budget) / max(1, frame_count)
+    protected_tensor = torch.tensor(
+        sorted(protected),
+        dtype=torch.long,
+        device=v3_indices.device,
+    )
+    protected_counts = torch.bincount(
+        protected_tensor // tokens_per_frame,
+        minlength=frame_count,
+    )
+
+    evidence = 0.40 * frame_quality + 0.35 * frame_event + 0.25 * query_demand
+    evidence = 0.25 + _minmax(evidence, dim=0)
+    structured = (
+        0.72 * torch.full_like(evidence, mean_count)
+        + 0.28 * evidence / evidence.sum().clamp_min(1e-6) * float(budget)
+    )
+    desired = (1.0 - strength) * v3_counts.float() + strength * structured
+    floor_count = max(1, int(math.floor(0.72 * mean_count)))
+    cap_count = max(floor_count, int(math.ceil(1.65 * mean_count)))
+    lower = torch.maximum(
+        protected_counts,
+        torch.full_like(v3_counts, floor_count),
+    )
+    if int(lower.sum().item()) > budget:
+        lower = protected_counts.clone()
+    capacity = torch.maximum(
+        lower,
+        torch.full_like(v3_counts, min(tokens_per_frame, cap_count)),
+    )
+    if int(capacity.sum().item()) < budget:
+        capacity = torch.full_like(v3_counts, tokens_per_frame)
+    target_counts = _allocate_counts(budget, desired, lower, capacity)
+
+    keep_ratio = min(
+        0.95,
+        max(0.0, _cfg_float(config, "certv8_stratified_v3_keep_ratio", 0.62)),
+    )
+    removal_value = _removal_cost(v3_indices, analysis, tokens_per_frame)
+    v3_value_by_token = torch.full(
+        (frame_count * tokens_per_frame,),
+        -1.0,
+        dtype=torch.float32,
+        device=v3_indices.device,
+    )
+    v3_value_by_token[v3_indices] = removal_value
+    quality_scale = torch.sqrt(0.35 + 0.65 * token_score.clamp(0.0, 1.0))
+    local_design = analysis.design.float() * quality_scale.unsqueeze(1)
+
+    selected_parts: list[torch.Tensor] = []
+    retained_v3 = 0
+    for frame in range(frame_count):
+        start = frame * tokens_per_frame
+        stop = start + tokens_per_frame
+        local_budget = int(target_counts[frame].item())
+        frame_candidates = torch.arange(
+            start,
+            stop,
+            dtype=torch.long,
+            device=v3_indices.device,
+        )
+        frame_v3 = v3_indices[
+            (v3_indices >= start) & (v3_indices < stop)
+        ]
+        frame_locked = sorted(token for token in protected if start <= token < stop)
+        keep_target = min(
+            local_budget,
+            max(
+                len(frame_locked),
+                int(math.ceil(keep_ratio * min(local_budget, int(frame_v3.numel())))),
+            ),
+        )
+        retained = list(frame_locked)
+        if keep_target > len(retained) and frame_v3.numel() > 0:
+            order = torch.argsort(
+                v3_value_by_token[frame_v3],
+                descending=True,
+                stable=True,
+            )
+            for token in frame_v3[order].detach().cpu().tolist():
+                token = int(token)
+                if token not in protected:
+                    retained.append(token)
+                if len(retained) >= keep_target:
+                    break
+        retained = sorted(set(retained))
+        if len(retained) > local_budget:
+            raise RuntimeError("protected V3 anchors exceed a stratified frame budget")
+        chosen = _d_optimal_greedy(
+            design=local_design,
+            candidates=frame_candidates,
+            mandatory=retained,
+            budget=local_budget,
+            ridge=analysis.ridge,
+        )
+        selected_parts.append(chosen)
+        retained_v3 += int(torch.isin(chosen, frame_v3).sum().item())
+
+    selected = torch.sort(torch.cat(selected_parts)).values
+    if selected.numel() != budget or selected.unique().numel() != budget:
+        raise RuntimeError("stratified selector violated the fixed unique-token budget")
+    if protected and not set(protected).issubset(
+        set(int(token) for token in selected.detach().cpu().tolist())
+    ):
+        raise RuntimeError("stratified selector dropped a protected V3 anchor")
+    final_counts = torch.bincount(
+        selected // tokens_per_frame,
+        minlength=frame_count,
+    )
+    return selected, target_counts, {
+        "stratified_v3_retained": retained_v3,
+        "stratified_v3_keep_ratio": keep_ratio,
+        "stratified_frame_floor": floor_count,
+        "stratified_frame_cap": cap_count,
+        "stratified_target_distribution": _frame_count_summary(target_counts),
+        "stratified_final_distribution": _frame_count_summary(final_counts),
+    }
 
 
 def _propose_swaps(
@@ -1200,6 +1376,194 @@ def certvid_v8_compression(
         diagnostics["protected_frame_counts"] = [
             int(value) for value in protected_counts.detach().cpu().tolist()
         ]
+
+        stratified_strength, stratified_gate = _stratified_strength(
+            config,
+            route,
+            duration,
+        )
+        diagnostics["stratified_gate"] = stratified_gate
+        diagnostics["stratified_strength"] = stratified_strength
+        if stratified_gate not in {"active", "disabled"}:
+            return _fallback(
+                config,
+                diagnostics,
+                f"stratified_{stratified_gate}",
+                v3_output,
+                v3_indices,
+                v3_plan,
+            )
+        if stratified_strength > 0.0:
+            try:
+                selected, target_counts, stratified_metrics = (
+                    _stratified_relation_selection(
+                        v3_indices=v3_indices,
+                        v3_counts=v3_counts,
+                        protected=protected,
+                        analysis=analysis,
+                        token_score=token_score,
+                        frame_quality=frame_quality,
+                        frame_event=frame_event,
+                        query_demand=query_demand,
+                        frame_count=frame_count,
+                        tokens_per_frame=tokens_per_frame,
+                        strength=stratified_strength,
+                        config=config,
+                    )
+                )
+                efficiency = _logdet_efficiency(
+                    analysis.design,
+                    v3_indices,
+                    selected,
+                    analysis.ridge,
+                )
+                base_query = _query_coverage(v3_indices, analysis)
+                final_query = _query_coverage(selected, analysis)
+                efficiency_floor = min(
+                    1.0,
+                    max(
+                        0.0,
+                        _cfg_float(
+                            config,
+                            "certv8_stratified_d_efficiency_floor",
+                            0.94,
+                        ),
+                    ),
+                )
+                query_tolerance = min(
+                    0.10,
+                    max(
+                        0.0,
+                        _cfg_float(
+                            config,
+                            "certv8_stratified_query_tolerance",
+                            0.01,
+                        ),
+                    ),
+                )
+                if efficiency + 1e-12 < efficiency_floor:
+                    raise RuntimeError(
+                        f"stratified D-efficiency {efficiency:.6f} "
+                        f"is below {efficiency_floor:.6f}"
+                    )
+                if final_query + query_tolerance + 1e-12 < base_query:
+                    raise RuntimeError(
+                        f"stratified query coverage {final_query:.6f} "
+                        f"is below guarded V3 coverage {base_query:.6f}"
+                    )
+
+                v3_set = set(
+                    int(token) for token in v3_indices.detach().cpu().tolist()
+                )
+                selected_set = set(
+                    int(token) for token in selected.detach().cpu().tolist()
+                )
+                additions = selected_set - v3_set
+                removals = v3_set - selected_set
+                plan = _build_plan(
+                    selected,
+                    set(),
+                    protected,
+                    analysis,
+                    frame_times,
+                    has_real_times,
+                    frame_count,
+                    tokens_per_frame,
+                    config,
+                )
+                source_frames = torch.arange(
+                    frame_count,
+                    device=selected.device,
+                ).repeat_interleave(tokens_per_frame)
+                assigned_frames = source_frames[selected][plan.assignment_indices]
+                unsafe = int(
+                    ((source_frames.unsqueeze(1) - assigned_frames).abs() > 1)
+                    .any(dim=1)
+                    .sum()
+                    .item()
+                )
+                if unsafe:
+                    raise RuntimeError(
+                        f"stratified plan produced {unsafe} unsafe assignments"
+                    )
+
+                output = apply_certvid_plan(
+                    video_features.reshape(frame_count * tokens_per_frame, -1),
+                    plan,
+                )
+                final_counts = torch.bincount(
+                    selected // tokens_per_frame,
+                    minlength=frame_count,
+                )
+                modified = len(additions) / max(1, budget)
+                diagnostics.update(stratified_metrics)
+                diagnostics.update(
+                    {
+                        "selection_branch": "stratified_relation_coreset",
+                        "target_frame_counts": [
+                            int(value)
+                            for value in target_counts.detach().cpu().tolist()
+                        ],
+                        "swap_count": len(additions),
+                        "modified_ratio": modified,
+                        "v3_overlap_ratio": 1.0 - modified,
+                        "d_efficiency": efficiency,
+                        "base_query_coverage": base_query,
+                        "final_query_coverage": final_query,
+                        "unsafe_assignment_count": unsafe,
+                        "final_frame_counts": [
+                            int(value)
+                            for value in final_counts.detach().cpu().tolist()
+                        ],
+                        "final_frame_distribution": _frame_count_summary(final_counts),
+                        "v3_profile": _selection_profile(
+                            v3_indices,
+                            v3_counts,
+                            token_score,
+                            analysis,
+                        ),
+                        "final_profile": _selection_profile(
+                            selected,
+                            final_counts,
+                            token_score,
+                            analysis,
+                        ),
+                    }
+                )
+                if os.environ.get(
+                    "CERTV8_DIAGNOSTICS_DETAIL",
+                    "summary",
+                ).strip().lower() in {"tokens", "full"}:
+                    diagnostics["v3_selected_indices"] = [
+                        int(value) for value in v3_indices.detach().cpu().tolist()
+                    ]
+                    diagnostics["final_selected_indices"] = [
+                        int(value) for value in selected.detach().cpu().tolist()
+                    ]
+                config._certvid_plan = plan
+                config.vision_token_length = int(output.shape[0])
+                config.visual_token_length = int(output.shape[0])
+                config.llm_token_length = None
+                config.last_adapter_variant = "certvid_v8"
+                config.last_adapter_raw_tokens = float(
+                    frame_count * tokens_per_frame
+                )
+                config.last_adapter_output_tokens = float(output.shape[0])
+                _store_diagnostics(config, diagnostics)
+                return output, selected
+            except Exception as error:
+                diagnostics["stratified_rejection"] = (
+                    f"{type(error).__name__}: {error}"
+                )
+                return _fallback(
+                    config,
+                    diagnostics,
+                    "stratified_guard",
+                    v3_output,
+                    v3_indices,
+                    v3_plan,
+                )
+
         target_counts = _target_frame_counts(
             v3_counts,
             protected_counts,

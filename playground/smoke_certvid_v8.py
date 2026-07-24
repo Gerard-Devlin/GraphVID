@@ -52,6 +52,7 @@ def _v3_reference(features, attention, question):
 
 def _active_config(frames: int) -> FlashVidConfig:
     config = _config("certvid_v8")
+    config.certv8_stratified_enabled = False
     config.certv8_intent_router = False
     config.certv8_intent_strength = 0.0
     config.certv8_frame_floor_ratio = 0.95
@@ -84,6 +85,12 @@ def main() -> None:
     assert defaults.certv8_concentration_preserve_ratio == 0.55
     assert defaults.certv8_d_efficiency_floor == 0.97
     assert defaults.certv8_query_peak_count == 2
+    assert defaults.certv8_stratified_enabled is True
+    assert defaults.certv8_stratified_temporal_strength == 0.62
+    assert defaults.certv8_stratified_retrieval_strength == 0.42
+    assert defaults.certv8_stratified_generic_strength == 0.0
+    assert defaults.certv8_stratified_v3_keep_ratio == 0.62
+    assert defaults.certv8_stratified_max_duration_seconds == 1200.0
 
     torch.manual_seed(8)
     frames, tokens, dimension = 8, 16, 32
@@ -214,7 +221,51 @@ def main() -> None:
     assert len(compressed) == len(deepstack)
     assert all(layer.shape == (budget, dimension) for layer in compressed)
     assert all(torch.isfinite(layer).all() for layer in compressed)
-    print("CertVID V8 V3-repair smoke passed")
+
+    stratified = _config("certvid_v8")
+    stratified.certv8_intent_strength = 1.0
+    stratified.certv8_stratified_temporal_strength = 0.85
+    stratified.certv8_stratified_v3_keep_ratio = 0.35
+    stratified.certv8_stratified_d_efficiency_floor = 0.0
+    stratified.certv8_stratified_query_tolerance = 0.10
+    stratified.certv8_design_protect_ratio = 0.0
+    stratified.certv8_query_protect_ratio = 0.20
+    stratified._certvid_frame_times_sec = torch.linspace(0.0, 420.0, frames)
+    stratified._certvid_frame_times_source = "smoke"
+    stratified._certvid_query_text = "What happened after the person left?"
+    stratified_output, stratified_indices = certvid_v8_compression(
+        dynamic,
+        attention,
+        stratified,
+        question,
+    )
+    stratified_diagnostics = stratified.last_certv8_diagnostics
+    assert stratified.last_certv8_fallback_reason is None, stratified_diagnostics
+    assert (
+        stratified_diagnostics["selection_branch"]
+        == "stratified_relation_coreset"
+    )
+    assert stratified_output.shape == (budget, dimension)
+    assert stratified_indices.unique().numel() == budget
+    assert torch.equal(stratified_indices, torch.sort(stratified_indices).values)
+    assert stratified_diagnostics["final_frame_distribution"]["cv"] <= (
+        stratified_diagnostics["v3_frame_distribution"]["cv"] + 1e-8
+    )
+    assert stratified_diagnostics["unsafe_assignment_count"] == 0
+
+    ultra_long = copy.deepcopy(stratified)
+    ultra_long._certvid_frame_times_sec = torch.linspace(0.0, 1800.0, frames)
+    ultra_output, ultra_indices = certvid_v8_compression(
+        dynamic,
+        attention,
+        ultra_long,
+        question,
+    )
+    assert ultra_long.last_certv8_fallback_reason == "stratified_ultra_long_v3"
+    assert torch.equal(ultra_output, v3_output)
+    assert torch.equal(ultra_indices, v3_indices)
+    _assert_plan_equal(ultra_long._certvid_plan, v3_plan)
+    print("CertVID V8 gated stratified-cohort smoke passed")
 
 
 if __name__ == "__main__":

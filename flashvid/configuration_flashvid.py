@@ -185,6 +185,14 @@ class FlashVidConfig:
     certv8_min_objective_gain: float = field(default=0.001)
     certv8_cross_frame_similarity: float = field(default=0.88)
     certv8_cross_frame_max_seconds: float = field(default=8.0)
+    certv8_stratified_enabled: bool = field(default=True)
+    certv8_stratified_temporal_strength: float = field(default=0.62)
+    certv8_stratified_retrieval_strength: float = field(default=0.42)
+    certv8_stratified_generic_strength: float = field(default=0.0)
+    certv8_stratified_v3_keep_ratio: float = field(default=0.62)
+    certv8_stratified_max_duration_seconds: float = field(default=1200.0)
+    certv8_stratified_d_efficiency_floor: float = field(default=0.94)
+    certv8_stratified_query_tolerance: float = field(default=0.01)
     certv8_debug: bool = field(default=False)
 
     # CertVID-HR: V3-preserving long-horizon evidence repair.
@@ -328,7 +336,7 @@ class FlashVidConfig:
     # "certvid_e": V3-compatible D-efficient E-optimal evidence design.
     # "certvid_lh": V3-preserving long-horizon allocation and relay path.
     # "certvid_v7": long-horizon relation evidence and balanced local coverage.
-    # "certvid_v8": V3-preserving temporal and query-evidence repair.
+    # "certvid_v8": gated relation-aware stratified coreset over a V3 fallback.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")
