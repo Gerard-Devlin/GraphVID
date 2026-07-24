@@ -411,6 +411,13 @@ class Task(abc.ABC):
         cache_key += "-fewshot_as_multiturn" if fewshot_as_multiturn else ""
         cache_key += f"-system_prompt_hash{utils.hash_string(system_instruction)}" if system_instruction is not None else ""
         cache_key += f"-tokenizer{tokenizer_name}"
+        sample_filter = self._eval_sample_id_filter()
+        if sample_filter is not None:
+            _, sample_ids, filter_path = sample_filter
+            filter_fingerprint = utils.hash_string(
+                f"{filter_path}\n" + "\n".join(sorted(sample_ids))
+            )
+            cache_key += f"-sample_filter{filter_fingerprint}"
 
         cached_instances = load_from_cache(file_name=cache_key)
 
@@ -430,10 +437,16 @@ class Task(abc.ABC):
         if cache_requests and (not cached_instances or rewrite_requests_cache) and limit is not None:
             limit = None
 
-        doc_id_docs = utils.create_iterator(enumerate(self.eval_docs_no_media), rank=rank, limit=int(limit) if limit else None, world_size=world_size)
-        doc_iterator_for_counting = itertools.islice(range(len(self.test_docs())), rank, limit, world_size) if self.has_test_docs() else itertools.islice(range(len(self.validation_docs())), rank, limit, world_size)
-
-        num_docs = sum(1 for _ in doc_iterator_for_counting)
+        doc_pairs = self.eval_doc_pairs(self.eval_docs_no_media)
+        doc_id_docs = utils.create_iterator(
+            iter(doc_pairs),
+            rank=rank,
+            limit=int(limit) if limit else None,
+            world_size=world_size,
+        )
+        available_docs = len(doc_pairs) if isinstance(doc_pairs, list) else len(self.eval_docs_no_media)
+        effective_limit = min(int(limit), available_docs) if limit else available_docs
+        num_docs = len(range(rank, effective_limit, world_size))
 
         for doc_id, doc in tqdm(
             doc_id_docs,
@@ -659,10 +672,82 @@ class Task(abc.ABC):
         else:
             raise ValueError(f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!")
 
+    def _eval_sample_id_filter(self) -> Optional[Tuple[str, frozenset[str], str]]:
+        """Load an optional, deterministic sample-id subset for paired searches."""
+        filter_path = os.environ.get("LMMS_EVAL_SAMPLE_IDS_FILE", "").strip()
+        if not filter_path:
+            return None
+
+        field = os.environ.get("LMMS_EVAL_SAMPLE_ID_FIELD", "id").strip() or "id"
+        cache_key = (os.path.abspath(filter_path), field)
+        cached = getattr(self, "_eval_sample_id_filter_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+        sample_ids = []
+        with open(filter_path, "r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("{"):
+                    record = json.loads(line)
+                    value = record.get(field, record.get("id", record.get("sample_id")))
+                    if value is None:
+                        raise ValueError(
+                            f"{filter_path}:{line_number} has no '{field}', 'id', or "
+                            "'sample_id' field"
+                        )
+                    sample_ids.append(str(value))
+                else:
+                    sample_ids.append(line)
+
+        if not sample_ids:
+            raise ValueError(f"LMMS_EVAL_SAMPLE_IDS_FILE is empty: {filter_path}")
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError(f"LMMS_EVAL_SAMPLE_IDS_FILE contains duplicate ids: {filter_path}")
+
+        result = (field, frozenset(sample_ids), os.path.abspath(filter_path))
+        self._eval_sample_id_filter_cache = (cache_key, result)
+        return result
+
+    def eval_doc_pairs(self, docs=None):
+        """Return original document ids while optionally filtering by sample id."""
+        docs = self.eval_docs if docs is None else docs
+        sample_filter = self._eval_sample_id_filter()
+        if sample_filter is None:
+            return enumerate(docs)
+
+        field, sample_ids, filter_path = sample_filter
+        pairs = []
+        matched_ids = set()
+        for doc_id, doc in enumerate(docs):
+            if not isinstance(doc, dict) or field not in doc:
+                continue
+            value = str(doc[field])
+            if value in sample_ids:
+                pairs.append((doc_id, doc))
+                matched_ids.add(value)
+
+        missing = sorted(sample_ids - matched_ids)
+        if missing:
+            preview = ", ".join(missing[:5])
+            raise ValueError(
+                f"{len(missing)} requested sample ids were not found via field "
+                f"'{field}' in {filter_path}: {preview}"
+            )
+        return pairs
+
+    def eval_doc_count(self) -> int:
+        sample_filter = self._eval_sample_id_filter()
+        if sample_filter is None:
+            return len(self.eval_docs)
+        return len(self.eval_doc_pairs())
+
     def doc_iterator(self, *, rank: int = 0, limit: Union[int, None] = None, world_size: int = 1) -> Iterator[Tuple[int, Any]]:
         limit = int(limit) if limit else None
         doc_iterator = utils.create_iterator(
-            enumerate(self.eval_docs),
+            iter(self.eval_doc_pairs()),
             rank=int(rank),
             limit=limit,
             world_size=int(world_size),

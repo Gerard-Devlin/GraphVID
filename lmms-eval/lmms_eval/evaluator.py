@@ -622,8 +622,9 @@ def evaluate(
                 )
             else:
                 doc_iterator = task.doc_iterator(rank=RANK, limit=limit, world_size=WORLD_SIZE)
-            doc_iterator_for_counting = itertools.islice(range(len(task.test_docs())), RANK, limit, WORLD_SIZE) if task.has_test_docs() else itertools.islice(range(len(task.validation_docs())), RANK, limit, WORLD_SIZE)
-            total_docs = sum(1 for _ in doc_iterator_for_counting)
+            effective_docs = task.eval_doc_count()
+            effective_limit = min(int(limit), effective_docs) if limit else effective_docs
+            total_docs = len(range(RANK, effective_limit, WORLD_SIZE))
             pbar = tqdm(total=total_docs, desc="Postprocessing", disable=(RANK != 0))
             for doc_id, doc in doc_iterator:
                 requests = instances_by_doc_id[doc_id]
@@ -795,8 +796,8 @@ def evaluate(
                 task_output.task_name: {
                     "original": len(task_output.task.eval_docs),
                     "effective": min(
-                        limit if limit else len(task_output.task.eval_docs),
-                        len(task_output.task.eval_docs),
+                        limit if limit else task_output.task.eval_doc_count(),
+                        task_output.task.eval_doc_count(),
                     ),
                 }
                 for task_output in eval_tasks
