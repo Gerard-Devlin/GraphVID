@@ -176,6 +176,7 @@ CERTV8_CROSS_FRAME_SIMILARITY="${CERTV8_CROSS_FRAME_SIMILARITY:-0.88}"
 CERTV8_CROSS_FRAME_MAX_SECONDS="${CERTV8_CROSS_FRAME_MAX_SECONDS:-8.0}"
 CERTV8_DEBUG="${CERTV8_DEBUG:-True}"
 CERTV8_DIAGNOSTICS_DETAIL="${CERTV8_DIAGNOSTICS_DETAIL:-summary}"
+FLASHVID_DIAGNOSTICS_DETAIL="${FLASHVID_DIAGNOSTICS_DETAIL:-summary}"
 
 CERTHR_TOKEN_SELECTION_METHOD="${CERTHR_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
 CERTHR_HORIZON_GAP_SECONDS="${CERTHR_HORIZON_GAP_SECONDS:-4.0}"
@@ -420,6 +421,14 @@ for method in $(split_csv "$METHODS"); do
         env \
           CERTV8_DIAGNOSTICS_JSONL="$diagnostics_path" \
           CERTV8_DIAGNOSTICS_DETAIL="$CERTV8_DIAGNOSTICS_DETAIL" \
+          "${cmd[@]}"
+      elif [[ "$method" == "flashvid" ]]; then
+        diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$run_output/flashvid_diagnostics.jsonl}"
+        printf '[flashvid] diagnostics=%s detail=%s\n' \
+          "$diagnostics_path" "$FLASHVID_DIAGNOSTICS_DETAIL"
+        env \
+          FLASHVID_DIAGNOSTICS_JSONL="$diagnostics_path" \
+          FLASHVID_DIAGNOSTICS_DETAIL="$FLASHVID_DIAGNOSTICS_DETAIL" \
           "${cmd[@]}"
       else
         "${cmd[@]}"

@@ -1,5 +1,6 @@
-from typing import Optional, Tuple, Union, List, Iterable
+from typing import Any, Optional, Tuple, Union, List, Iterable
 
+import json
 import math
 import os
 import torch
@@ -21,6 +22,61 @@ ALL_TOKEN_SELECTION_METHOD = {
     TokenSelectionMethod.DIV: div_based_token_selection,
     TokenSelectionMethod.ADTS_STABLE: attn_div_stable_based_token_selection,
 }
+
+
+def _write_flashvid_diagnostics(
+    flashvid_config: FlashVidConfig,
+    diagnostics: dict[str, Any],
+) -> None:
+    """Append per-sample diagnostics without changing compression behavior."""
+    template = os.environ.get("FLASHVID_DIAGNOSTICS_JSONL", "").strip()
+    if not template:
+        return
+
+    rank = os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0"))
+    path = template.replace("{rank}", rank).replace("{pid}", str(os.getpid()))
+    if "{rank}" not in template and "{pid}" not in template:
+        root, extension = os.path.splitext(path)
+        path = f"{root}.rank{rank}{extension or '.jsonl'}"
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+    record = dict(diagnostics)
+    record["sample_id"] = str(
+        getattr(flashvid_config, "_debug_sample_id", "unknown")
+    )
+    record["task"] = getattr(flashvid_config, "_certvid_task_name", None)
+    record["question"] = str(
+        getattr(flashvid_config, "_certvid_query_text", "") or ""
+    )
+    category = getattr(flashvid_config, "_certvid_eval_category", None)
+    if category is not None:
+        record["eval_category"] = str(category)
+
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def _distribution_summary(counts: torch.Tensor) -> dict[str, Any]:
+    values = counts.float()
+    mean = values.mean() if values.numel() else values.new_tensor(0.0)
+    probabilities = values / values.sum().clamp_min(1.0)
+    nonzero = probabilities > 0
+    entropy = -(
+        probabilities[nonzero] * probabilities[nonzero].log()
+    ).sum()
+    max_entropy = math.log(max(1, int(values.numel())))
+    return {
+        "min": int(values.min().item()) if values.numel() else 0,
+        "max": int(values.max().item()) if values.numel() else 0,
+        "mean": float(mean.item()),
+        "std": float(values.std(unbiased=False).item()) if values.numel() else 0.0,
+        "cv": float((values.std(unbiased=False) / mean.clamp_min(1e-6)).item())
+        if values.numel()
+        else 0.0,
+        "normalized_entropy": float(entropy.item() / max_entropy)
+        if max_entropy > 0
+        else 1.0,
+    }
 
 
 def extract_question_features(
@@ -344,6 +400,115 @@ def flashvid_compression(
     flashvid_config.last_flashvid_frame_counts = [
         int(value) for value in frame_counts.detach().cpu().tolist()
     ]
+    diagnostics_template = os.environ.get(
+        "FLASHVID_DIAGNOSTICS_JSONL",
+        "",
+    ).strip()
+    if compression_variant == "flashvid" and diagnostics_template:
+        merged_counts = (
+            frame_counts
+            - torch.full_like(frame_counts, int(num_attn_div_tokens))
+        ).clamp_min(0)
+        attention = torch.nan_to_num(
+            cls_attention.detach().float(),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        frame_centers = F.normalize(
+            video_features.detach().float().mean(dim=1),
+            p=2,
+            dim=-1,
+            eps=1e-6,
+        )
+        frame_change = torch.zeros(
+            num_frames,
+            dtype=torch.float32,
+            device=video_features.device,
+        )
+        if num_frames > 1:
+            gaps = (
+                1.0 - (frame_centers[1:] * frame_centers[:-1]).sum(dim=-1)
+            ).clamp(0.0, 2.0)
+            frame_change[1:] = gaps
+            frame_change[:-1] = torch.maximum(frame_change[:-1], gaps)
+
+        frame_times = getattr(
+            flashvid_config,
+            "_certvid_frame_times_sec",
+            None,
+        )
+        if torch.is_tensor(frame_times) and frame_times.numel() == num_frames:
+            frame_times_list = [
+                float(value)
+                for value in frame_times.detach().float().cpu().tolist()
+            ]
+        else:
+            frame_times_list = None
+
+        detail = os.environ.get(
+            "FLASHVID_DIAGNOSTICS_DETAIL",
+            "summary",
+        ).strip().lower()
+        diagnostics = {
+            "method": "flashvid",
+            "nominal_retention_ratio": float(
+                getattr(flashvid_config, "retention_ratio", retention_ratio)
+            ),
+            "effective_retention_ratio": float(retention_ratio),
+            "expansion": float(flashvid_config.expansion),
+            "raw_token_count": int(num_frames * num_visual_tokens),
+            "final_token_count": int(sorted_tokens.shape[0]),
+            "actual_outer_retention": float(
+                sorted_tokens.shape[0] / max(1, num_frames * num_visual_tokens)
+            ),
+            "frame_count": int(num_frames),
+            "tokens_per_frame": int(num_visual_tokens),
+            "per_frame_budget": int(token_budget),
+            "attn_div_tokens_per_frame": int(num_attn_div_tokens),
+            "merged_tokens_per_frame_target": int(num_sttm_tokens),
+            "alpha": float(flashvid_config.alpha),
+            "token_selection_method": str(
+                flashvid_config.token_selection_method
+            ),
+            "segment_lengths": [
+                int(value)
+                for value in segment_lengths.detach().cpu().tolist()
+            ],
+            "final_frame_counts": [
+                int(value) for value in frame_counts.detach().cpu().tolist()
+            ],
+            "merged_representative_frame_counts": [
+                int(value) for value in merged_counts.detach().cpu().tolist()
+            ],
+            "frame_distribution": _distribution_summary(frame_counts),
+            "frame_attention_mean": [
+                float(value)
+                for value in attention.mean(dim=1).cpu().tolist()
+            ],
+            "frame_attention_max": [
+                float(value)
+                for value in attention.amax(dim=1).cpu().tolist()
+            ],
+            "frame_semantic_change": [
+                float(value)
+                for value in frame_change.detach().cpu().tolist()
+            ],
+            "frame_times_seconds": frame_times_list,
+            "timestamp_source": str(
+                getattr(
+                    flashvid_config,
+                    "_certvid_frame_times_source",
+                    "missing",
+                )
+            ),
+        }
+        if detail in {"full", "tokens", "indices"}:
+            diagnostics["final_global_indices"] = [
+                int(value)
+                for value in sorted_global_indices.detach().cpu().tolist()
+            ]
+        _write_flashvid_diagnostics(flashvid_config, diagnostics)
     if os.environ.get("FLASHVID_DEBUG_DISTRIBUTION", "0") == "1":
         print(
             "[flashvid-distribution] "

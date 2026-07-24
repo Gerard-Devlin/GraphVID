@@ -135,7 +135,7 @@ def _publish_certhr_timing(model, timing):
         return None
     config._certvid_frame_times_sec = None
     config._certvid_frame_times_source = "missing"
-    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_hr", "certvid_lh", "certvid_v7", "certvid_v8"} and timing is not None:
+    if str(getattr(config, "compression_variant", "")).strip().lower() in {"flashvid", "certvid_hr", "certvid_lh", "certvid_v7", "certvid_v8"} and timing is not None:
         config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
     return config
 
