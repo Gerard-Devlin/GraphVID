@@ -189,9 +189,10 @@ class FlashVidConfig:
     certv8_stratified_temporal_strength: float = field(default=0.60)
     certv8_stratified_retrieval_strength: float = field(default=0.40)
     certv8_stratified_generic_strength: float = field(default=0.0)
-    certv8_stratified_v3_keep_ratio: float = field(default=0.70)
+    certv8_stratified_min_question_words: int = field(default=12)
+    certv8_stratified_v3_keep_ratio: float = field(default=0.50)
     certv8_stratified_max_duration_seconds: float = field(default=1200.0)
-    certv8_stratified_d_efficiency_floor: float = field(default=0.90)
+    certv8_stratified_d_efficiency_floor: float = field(default=0.82)
     certv8_stratified_query_tolerance: float = field(default=0.01)
     certv8_debug: bool = field(default=False)
 

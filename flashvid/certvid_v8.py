@@ -56,7 +56,7 @@ _SEQUENCE_PATTERNS = (
     r"\bcorrect (?:temporal |chronological )?order\b",
     r"\bchronological\b",
     r"\bin what order\b",
-    r"\bsequence of\b",
+    r"\bsequences? of\b",
     r"\bfirst\b.*\bthen\b",
 )
 _CHANGE_PATTERNS = (
@@ -73,6 +73,10 @@ _TRACKING_PATTERNS = (
     r"\breappear",
     r"\bsame (?:person|object|vehicle|animal)\b",
     r"\bwhere (?:is|was|did).+(?:go|appear|move)\b",
+    r"\bin which .+ scenes? .+ appear",
+    r"\bwhere has .+ appear(?:ed)? before\b",
+    r"\bdoes .+ also appear\b",
+    r"\bwhich subtitles?.+(?:same time|appear(?:ed)? with)\b",
 )
 _TEMPORAL_PATTERNS = (
     r"\bbefore\b",
@@ -92,6 +96,13 @@ _RETRIEVAL_PATTERNS = (
     r"\bwhere\b",
     r"\bwhich (?:scene|moment|object|person)\b",
     r"\bwhat (?:object|event|action|attribute|color)\b",
+)
+_LOCAL_EXISTENCE_PATTERNS = (
+    r"\bwhat objects? (?:is|are|was|were) (?:not )?(?:present|visible|shown)\b",
+    r"\bwhich (?:item|items|object|objects|ingredient|ingredients).+"
+    r"(?:present|visible|shown|appear)",
+    r"\bwhich .+ (?:did not|does not|do not) appear\b",
+    r"\bwhat (?:item|items|object|objects).+appear\b",
 )
 
 
@@ -502,12 +513,20 @@ def _stratified_strength(
     # retains its published routing behavior, including choice text.
     text = re.split(r"\n\s*[a-g][\.\)]\s+", text, maxsplit=1)[0]
     text = re.sub(r"\s+", " ", text)
+    minimum_words = max(
+        0,
+        _cfg_int(config, "certv8_stratified_min_question_words", 12),
+    )
+    if len(re.findall(r"\b[\w'-]+\b", text)) < minimum_words:
+        return 0.0, "short_query_legacy", "short_query"
     if _matches_any(text, _SEQUENCE_PATTERNS):
         intent = "sequence"
     elif _matches_any(text, _CHANGE_PATTERNS):
         intent = "attribute_change"
     elif _matches_any(text, _TRACKING_PATTERNS):
         intent = "object_tracking"
+    elif _matches_any(text, _LOCAL_EXISTENCE_PATTERNS):
+        intent = "local_object_evidence"
     elif _matches_any(text, _TEMPORAL_PATTERNS):
         intent = "temporal_relation"
     elif _matches_any(text, _RETRIEVAL_PATTERNS):
@@ -573,13 +592,19 @@ def _stratified_relation_selection(
 
     evidence = 0.40 * frame_quality + 0.35 * frame_event + 0.25 * query_demand
     evidence = 0.25 + _minmax(evidence, dim=0)
-    structured = (
-        0.72 * torch.full_like(evidence, mean_count)
-        + 0.28 * evidence / evidence.sum().clamp_min(1e-6) * float(budget)
+    # The long-context branch first reserves a stable temporal lattice, then
+    # spends only a small fraction of the frame budget on event/query demand.
+    # Local D-optimal selection still decides which tokens represent each frame.
+    evidence_mix = 0.08 + 0.08 * (1.0 - strength)
+    desired = (
+        (1.0 - evidence_mix) * torch.full_like(evidence, mean_count)
+        + evidence_mix
+        * evidence
+        / evidence.sum().clamp_min(1e-6)
+        * float(budget)
     )
-    desired = (1.0 - strength) * v3_counts.float() + strength * structured
-    floor_count = max(1, int(math.floor(0.72 * mean_count)))
-    cap_count = max(floor_count, int(math.ceil(1.65 * mean_count)))
+    floor_count = max(1, int(math.floor(0.88 * mean_count)))
+    cap_count = max(floor_count, int(math.ceil(1.20 * mean_count)))
     lower = torch.maximum(
         protected_counts,
         torch.full_like(v3_counts, floor_count),
@@ -596,7 +621,7 @@ def _stratified_relation_selection(
 
     keep_ratio = min(
         0.95,
-        max(0.0, _cfg_float(config, "certv8_stratified_v3_keep_ratio", 0.70)),
+        max(0.0, _cfg_float(config, "certv8_stratified_v3_keep_ratio", 0.50)),
     )
     removal_value = _removal_cost(v3_indices, analysis, tokens_per_frame)
     v3_value_by_token = torch.full(
@@ -672,6 +697,7 @@ def _stratified_relation_selection(
     return selected, target_counts, {
         "stratified_v3_retained": retained_v3,
         "stratified_v3_keep_ratio": keep_ratio,
+        "stratified_evidence_mix": evidence_mix,
         "stratified_frame_floor": floor_count,
         "stratified_frame_cap": cap_count,
         "stratified_target_distribution": _frame_count_summary(target_counts),
@@ -1456,7 +1482,7 @@ def certvid_v8_compression(
                         _cfg_float(
                             config,
                             "certv8_stratified_d_efficiency_floor",
-                            0.90,
+                            0.82,
                         ),
                     ),
                 )

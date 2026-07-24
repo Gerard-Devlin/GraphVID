@@ -89,9 +89,10 @@ def main() -> None:
     assert defaults.certv8_stratified_temporal_strength == 0.60
     assert defaults.certv8_stratified_retrieval_strength == 0.40
     assert defaults.certv8_stratified_generic_strength == 0.0
-    assert defaults.certv8_stratified_v3_keep_ratio == 0.70
+    assert defaults.certv8_stratified_min_question_words == 12
+    assert defaults.certv8_stratified_v3_keep_ratio == 0.50
     assert defaults.certv8_stratified_max_duration_seconds == 1200.0
-    assert defaults.certv8_stratified_d_efficiency_floor == 0.90
+    assert defaults.certv8_stratified_d_efficiency_floor == 0.82
 
     torch.manual_seed(8)
     frames, tokens, dimension = 8, 16, 32
@@ -233,7 +234,10 @@ def main() -> None:
     stratified.certv8_query_protect_ratio = 0.20
     stratified._certvid_frame_times_sec = torch.linspace(0.0, 420.0, frames)
     stratified._certvid_frame_times_source = "smoke"
-    stratified._certvid_query_text = "What happened after the person left?"
+    stratified._certvid_query_text = (
+        "After the person left the crowded room and walked down the hallway, "
+        "what happened next in the video?"
+    )
     stratified_output, stratified_indices = certvid_v8_compression(
         dynamic,
         attention,
