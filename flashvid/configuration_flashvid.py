@@ -222,6 +222,32 @@ class FlashVidConfig:
     certv9_remove_pool: int = field(default=64)
     certv9_debug: bool = field(default=False)
 
+    # CertVID V10: aggressive trajectory-balanced evidence reallocation.
+    certv10_enabled: bool = field(default=True)
+    certv10_track_similarity: float = field(default=0.72)
+    certv10_spatial_penalty: float = field(default=0.03)
+    certv10_track_min_span: int = field(default=2)
+    certv10_reliability_floor: float = field(default=0.025)
+    certv10_reliability_target: float = field(default=0.18)
+    certv10_min_swap_ratio: float = field(default=0.08)
+    certv10_max_swap_ratio: float = field(default=0.25)
+    certv10_v3_protect_ratio: float = field(default=0.10)
+    certv10_frame_floor_ratio: float = field(default=0.55)
+    certv10_frame_cap_ratio: float = field(default=1.80)
+    certv10_budget_temperature: float = field(default=0.55)
+    certv10_allocation_strength: float = field(default=0.75)
+    certv10_motion_peak_frames: int = field(default=8)
+    certv10_candidate_pool: int = field(default=384)
+    certv10_min_swap_gain: float = field(default=-0.04)
+    certv10_d_soft_weight: float = field(default=0.10)
+    certv10_track_assignment_radius: int = field(default=2)
+    certv10_cross_frame_max_seconds: float = field(default=12.0)
+    certv10_assignment_topk: int = field(default=2)
+    certv10_assignment_temperature: float = field(default=0.07)
+    certv10_merge_threshold: float = field(default=0.76)
+    certv10_trajectory_fusion_scale: float = field(default=0.25)
+    certv10_debug: bool = field(default=False)
+
     # CertVID V4: verifiable budget-constrained D-optimal evidence design.
     certv4_budget_mode: str = field(default="layer_average")
     certv4_attention_policy: str = field(default="validated")
@@ -326,6 +352,7 @@ class FlashVidConfig:
     # "certvid_v7": long-horizon relation evidence and balanced local coverage.
     # "certvid_v8": gated relation-aware stratified coreset over a V3 fallback.
     # "certvid_v9": V3 state completion with reject-or-promote fusion.
+    # "certvid_v10": trajectory-balanced motion evidence over a V3 backbone.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

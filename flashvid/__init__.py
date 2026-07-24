@@ -300,6 +300,30 @@ def flashvid(
     certv9_repair_pool: int = 128,
     certv9_remove_pool: int = 64,
     certv9_debug: bool = False,
+    certv10_enabled: bool = True,
+    certv10_track_similarity: float = 0.72,
+    certv10_spatial_penalty: float = 0.03,
+    certv10_track_min_span: int = 2,
+    certv10_reliability_floor: float = 0.025,
+    certv10_reliability_target: float = 0.18,
+    certv10_min_swap_ratio: float = 0.08,
+    certv10_max_swap_ratio: float = 0.25,
+    certv10_v3_protect_ratio: float = 0.10,
+    certv10_frame_floor_ratio: float = 0.55,
+    certv10_frame_cap_ratio: float = 1.80,
+    certv10_budget_temperature: float = 0.55,
+    certv10_allocation_strength: float = 0.75,
+    certv10_motion_peak_frames: int = 8,
+    certv10_candidate_pool: int = 384,
+    certv10_min_swap_gain: float = -0.04,
+    certv10_d_soft_weight: float = 0.10,
+    certv10_track_assignment_radius: int = 2,
+    certv10_cross_frame_max_seconds: float = 12.0,
+    certv10_assignment_topk: int = 2,
+    certv10_assignment_temperature: float = 0.07,
+    certv10_merge_threshold: float = 0.76,
+    certv10_trajectory_fusion_scale: float = 0.25,
+    certv10_debug: bool = False,
     certv4_budget_mode: str = "layer_average",
     certv4_attention_policy: str = "validated",
     certv4_attention_eps: float = 1e-6,
@@ -614,6 +638,7 @@ def flashvid(
             "certvid_v7" preserves long-horizon relations with transition and trajectory evidence;
             "certvid_v8" preserves V3 anchors and repairs temporal/query evidence deficits;
             "certvid_v9" repairs missing states and rejects untrustworthy residual fusion;
+            "certvid_v10" aggressively reallocates V3 evidence toward reliable motion trajectories;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
             "faithvid" preserves merged-token attention mass and constrains RoPE phase dispersion;
@@ -741,10 +766,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -947,6 +972,30 @@ def flashvid(
         certv9_repair_pool=certv9_repair_pool,
         certv9_remove_pool=certv9_remove_pool,
         certv9_debug=certv9_debug,
+        certv10_enabled=certv10_enabled,
+        certv10_track_similarity=certv10_track_similarity,
+        certv10_spatial_penalty=certv10_spatial_penalty,
+        certv10_track_min_span=certv10_track_min_span,
+        certv10_reliability_floor=certv10_reliability_floor,
+        certv10_reliability_target=certv10_reliability_target,
+        certv10_min_swap_ratio=certv10_min_swap_ratio,
+        certv10_max_swap_ratio=certv10_max_swap_ratio,
+        certv10_v3_protect_ratio=certv10_v3_protect_ratio,
+        certv10_frame_floor_ratio=certv10_frame_floor_ratio,
+        certv10_frame_cap_ratio=certv10_frame_cap_ratio,
+        certv10_budget_temperature=certv10_budget_temperature,
+        certv10_allocation_strength=certv10_allocation_strength,
+        certv10_motion_peak_frames=certv10_motion_peak_frames,
+        certv10_candidate_pool=certv10_candidate_pool,
+        certv10_min_swap_gain=certv10_min_swap_gain,
+        certv10_d_soft_weight=certv10_d_soft_weight,
+        certv10_track_assignment_radius=certv10_track_assignment_radius,
+        certv10_cross_frame_max_seconds=certv10_cross_frame_max_seconds,
+        certv10_assignment_topk=certv10_assignment_topk,
+        certv10_assignment_temperature=certv10_assignment_temperature,
+        certv10_merge_threshold=certv10_merge_threshold,
+        certv10_trajectory_fusion_scale=certv10_trajectory_fusion_scale,
+        certv10_debug=certv10_debug,
         certv4_budget_mode=certv4_budget_mode,
         certv4_attention_policy=certv4_attention_policy,
         certv4_attention_eps=certv4_attention_eps,

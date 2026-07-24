@@ -935,7 +935,7 @@ def main() -> None:
     parser.add_argument("--retention_ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.25)
     parser.add_argument("--llm_retention_ratio", type=float, default=1.0)
-    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"])
+    parser.add_argument("--compression_variant", default="talon", choices=["talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"])
     parser.add_argument("--pruning_layer", type=int, default=20)
     parser.add_argument("--apex_evidence_ratio", type=float, default=0.45)
     parser.add_argument("--apex_event_ratio", type=float, default=0.30)

@@ -65,7 +65,7 @@ def _parse_dataset_map(text: str) -> OrderedDict[str, str]:
 def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
-        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
+        "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
         "fastvid", "visionzip", "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
@@ -100,7 +100,7 @@ def _stat_mean(phase: dict[str, Any] | None, key: str) -> float | None:
 
 
 def _phase_name(method: str) -> str:
-    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if method in ("talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         return "ours"
     return method
 
@@ -809,7 +809,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_v8,certvid_v9,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_v8,certvid_v9,certvid_v10,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
