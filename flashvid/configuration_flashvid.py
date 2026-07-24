@@ -185,6 +185,8 @@ class FlashVidConfig:
     certv8_min_objective_gain: float = field(default=0.001)
     certv8_cross_frame_similarity: float = field(default=0.88)
     certv8_cross_frame_max_seconds: float = field(default=8.0)
+    certv8_localized_event_boost: float = field(default=0.0)
+    certv8_attribute_query_boost: float = field(default=0.0)
     certv8_stratified_enabled: bool = field(default=True)
     certv8_stratified_temporal_strength: float = field(default=0.60)
     certv8_stratified_retrieval_strength: float = field(default=0.40)
