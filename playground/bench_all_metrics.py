@@ -947,7 +947,7 @@ def _publish_frame_timing(model: Any, timing: tuple[list[float], str] | None) ->
         return None
     config._certvid_frame_times_sec = None
     config._certvid_frame_times_source = "missing"
-    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10"} and timing is not None:
+    if str(getattr(config, "compression_variant", "")).strip().lower() in {"certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11"} and timing is not None:
         config._certvid_frame_times_sec, config._certvid_frame_times_source = timing
     return config
 
@@ -2308,6 +2308,7 @@ def _resolve_llm_pruning_args(backend: str, args: BenchmarkArgs) -> tuple[int, f
         "certvid_v5",
         "certvid_e",
         "faithvid",
+        "certvid_v11",
     }:
         return 10**9, 1.0
     return args.pruning_layer, args.llm_retention_ratio
@@ -3235,7 +3236,7 @@ def run(args: BenchmarkArgs):
     _print_header(args, backend)
     if backend == "llava":
         variant = str(args.compression_variant).strip().lower()
-        if args.run_ours and variant in {"certvid_v4", "certvid_v5", "certvid_e", "faithvid"}:
+        if args.run_ours and variant in {"certvid_v4", "certvid_v5", "certvid_e", "faithvid", "certvid_v11"}:
             print(
                 "[info] LLaVA backend: validated hybrid outer/inner pruning is enabled "
                 f"for {variant}."
@@ -3361,6 +3362,8 @@ def run(args: BenchmarkArgs):
             ours_prefix = "[certvid-v9-active][ours]"
         elif variant_name == "certvid_v10":
             ours_prefix = "[certvid-v10-active][ours]"
+        elif variant_name == "certvid_v11":
+            ours_prefix = "[certvid-v11-active][ours]"
         elif variant_name == "certvid_v4":
             ours_prefix = "[certvid-v4-active][ours]"
         elif variant_name == "certvid_v5":

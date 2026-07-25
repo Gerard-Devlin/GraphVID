@@ -248,6 +248,37 @@ class FlashVidConfig:
     certv10_trajectory_fusion_scale: float = field(default=0.25)
     certv10_debug: bool = field(default=False)
 
+    # CertVID V11: graph-structured spatio-temporal D-optimal selection.
+    certv11_max_segments: int = field(default=8)
+    certv11_segment_similarity: float = field(default=0.82)
+    certv11_tree_threshold: float = field(default=0.78)
+    certv11_spatial_penalty: float = field(default=0.04)
+    certv11_max_spatial_jump: float = field(default=0.50)
+    certv11_spatial_design_weight: float = field(default=0.24)
+    certv11_spatial_coverage_weight: float = field(default=0.22)
+    certv11_frame_floor_ratio: float = field(default=0.65)
+    certv11_frame_cap_ratio: float = field(default=1.65)
+    certv11_frame_temperature: float = field(default=0.60)
+    certv11_query_threshold: float = field(default=0.12)
+    certv11_active_tree_ratio: float = field(default=0.30)
+    certv11_tree_cap_ratio: float = field(default=3.0)
+    certv11_tree_temperature: float = field(default=0.55)
+    certv11_structure_ratio: float = field(default=0.35)
+    certv11_candidate_multiplier: float = field(default=3.0)
+    certv11_structure_weight: float = field(default=0.42)
+    certv11_tree_fill_weight: float = field(default=0.28)
+    certv11_frame_fill_weight: float = field(default=0.24)
+    certv11_branch_bonus: float = field(default=0.18)
+    certv11_tree_assignment_radius: int = field(default=3)
+    certv11_assignment_spatial_radius: float = field(default=0.65)
+    certv11_cross_tree_similarity: float = field(default=0.90)
+    certv11_assignment_topk: int = field(default=2)
+    certv11_assignment_temperature: float = field(default=0.07)
+    certv11_merge_threshold: float = field(default=0.78)
+    certv11_fusion_alpha: float = field(default=0.10)
+    certv11_structure_protect_threshold: float = field(default=0.65)
+    certv11_debug: bool = field(default=False)
+
     # CertVID V4: verifiable budget-constrained D-optimal evidence design.
     certv4_budget_mode: str = field(default="layer_average")
     certv4_attention_policy: str = field(default="validated")
@@ -353,6 +384,7 @@ class FlashVidConfig:
     # "certvid_v8": gated relation-aware stratified coreset over a V3 fallback.
     # "certvid_v9": V3 state completion with reject-or-promote fusion.
     # "certvid_v10": trajectory-balanced motion evidence over a V3 backbone.
+    # "certvid_v11": graph-structured spatio-temporal D-optimal selection.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

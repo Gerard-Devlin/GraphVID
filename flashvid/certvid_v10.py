@@ -178,9 +178,12 @@ def _build_motion_graph(
         speed[frame, valid] = displacement.norm(dim=-1)[valid] / math.sqrt(8.0)
         appearance[frame] = (1.0 - matched_similarity).clamp(0.0, 2.0) * 0.5
 
-        for current_token in torch.where(valid)[0].detach().cpu().tolist():
-            prior_token = int(best_prior[current_token].item())
-            following[frame - 1, prior_token] = int(current_token)
+        current_tokens = torch.where(valid)[0]
+        following[frame - 1, best_prior[current_tokens]] = current_tokens
+        matched_pairs = torch.stack(
+            [current_tokens, best_prior[current_tokens]], dim=1
+        ).detach().cpu().tolist()
+        for current_token, prior_token in matched_pairs:
             union(
                 frame * tokens_per_frame + int(current_token),
                 (frame - 1) * tokens_per_frame + prior_token,
@@ -208,11 +211,15 @@ def _build_motion_graph(
 
     roots = [find(node) for node in range(frame_count * tokens_per_frame)]
     root_to_track: dict[int, int] = {}
-    trajectory_ids = []
-    for root in roots:
+    trajectory_ids: list[int] = []
+    members_by_track: list[list[int]] = []
+    for token, root in enumerate(roots):
         if root not in root_to_track:
             root_to_track[root] = len(root_to_track)
-        trajectory_ids.append(root_to_track[root])
+            members_by_track.append([])
+        track_id = root_to_track[root]
+        trajectory_ids.append(track_id)
+        members_by_track[track_id].append(token)
     trajectory_ids_tensor = torch.tensor(
         trajectory_ids, dtype=torch.long, device=device
     ).view(frame_count, tokens_per_frame)
@@ -221,36 +228,49 @@ def _build_motion_graph(
     records: list[dict[str, Any]] = []
     minimum_span = max(1, _cfg_int(config, "certv10_track_min_span", 2))
     long_track_count = 0
-    for track_id in torch.unique(trajectory_ids_tensor).detach().cpu().tolist():
-        members = torch.where(trajectory_ids_tensor.flatten() == int(track_id))[0]
-        if members.numel() < 2:
+    appearance_cpu = appearance.flatten().detach().cpu().tolist()
+    turn_cpu = turn.flatten().detach().cpu().tolist()
+    speed_cpu = speed.flatten().detach().cpu().tolist()
+    endpoint_tokens: list[int] = []
+    for track_id, members in enumerate(members_by_track):
+        if len(members) < 2:
             continue
-        frames = torch.div(members, tokens_per_frame, rounding_mode="floor")
-        first_frame = int(frames.min().item())
-        last_frame = int(frames.max().item())
+        first_frame = members[0] // tokens_per_frame
+        last_frame = members[-1] // tokens_per_frame
         span = last_frame - first_frame
         if span < minimum_span:
             continue
         long_track_count += 1
-        first_members = members[frames == first_frame]
-        last_members = members[frames == last_frame]
-        start = int(first_members[torch.argmax(appearance.flatten()[first_members])].item())
-        end = int(last_members[torch.argmax(appearance.flatten()[last_members])].item())
-        endpoint.flatten()[start] = 1.0
-        endpoint.flatten()[end] = 1.0
-        turn_token = int(members[torch.argmax(turn.flatten()[members])].item())
-        speed_token = int(members[torch.argmax(speed.flatten()[members])].item())
+        first_members = [
+            token
+            for token in members
+            if token // tokens_per_frame == first_frame
+        ]
+        last_members = [
+            token
+            for token in members
+            if token // tokens_per_frame == last_frame
+        ]
+        start = max(first_members, key=lambda token: appearance_cpu[token])
+        end = max(last_members, key=lambda token: appearance_cpu[token])
+        endpoint_tokens.extend((start, end))
+        turn_token = max(members, key=lambda token: turn_cpu[token])
+        speed_token = max(members, key=lambda token: speed_cpu[token])
         records.append(
             {
                 "track": int(track_id),
                 "span": int(span),
-                "size": int(members.numel()),
+                "size": len(members),
                 "start": start,
                 "end": end,
                 "turn": turn_token,
                 "speed": speed_token,
             }
         )
+    if endpoint_tokens:
+        endpoint.flatten()[
+            torch.tensor(endpoint_tokens, dtype=torch.long, device=device)
+        ] = 1.0
 
     frame_representatives = F.normalize(
         metric.mean(dim=1), p=2, dim=-1, eps=1e-6
@@ -429,6 +449,7 @@ def _candidate_pool(
 ) -> list[_Candidate]:
     selected_set = set(int(token) for token in selected.detach().cpu().tolist())
     candidates: dict[int, _Candidate] = {}
+    token_score_cpu = graph.token_score.detach().cpu().tolist()
 
     def offer(token: int, score: float, provenance: str, trajectory: int) -> None:
         if token in selected_set:
@@ -451,7 +472,7 @@ def _candidate_pool(
             ("speed", 0.26),
         ):
             token = int(record[provenance])
-            score = float(graph.token_score[token].item()) + bonus + 0.12 * span_gain
+            score = float(token_score_cpu[token]) + bonus + 0.12 * span_gain
             offer(token, score, f"track_{provenance}", track)
 
     frame_count = int(target_counts.numel())
@@ -483,9 +504,14 @@ def _candidate_pool(
             )
         blocked[max(0, frame - 1) : min(frame_count, frame + 2)] = True
 
-    v3_counts = torch.bincount(analysis.frame_ids[selected], minlength=frame_count)
+    v3_counts = torch.bincount(
+        analysis.frame_ids[selected], minlength=frame_count
+    ).detach().cpu().tolist()
+    target_counts_cpu = target_counts.detach().cpu().tolist()
     for frame in range(frame_count):
-        deficit = int(max(0, int(target_counts[frame].item() - v3_counts[frame].item())))
+        deficit = max(
+            0, int(target_counts_cpu[frame]) - int(v3_counts[frame])
+        )
         if deficit <= 0:
             continue
         members = torch.where(analysis.frame_ids == frame)[0]
@@ -496,13 +522,20 @@ def _candidate_pool(
         )
         keep = min(int(members.numel()), max(2, deficit * 3))
         order = torch.topk(score, k=keep, largest=True).indices
-        for local in order.detach().cpu().tolist():
-            token = int(members[local].item())
+        chosen = members[order]
+        chosen_tokens = chosen.detach().cpu().tolist()
+        chosen_scores = score[order].detach().cpu().tolist()
+        chosen_trajectories = (
+            graph.trajectory_ids[chosen].detach().cpu().tolist()
+        )
+        for token, token_score, trajectory in zip(
+            chosen_tokens, chosen_scores, chosen_trajectories
+        ):
             offer(
-                token,
-                float(score[local].item()) + 0.08 * deficit,
+                int(token),
+                float(token_score) + 0.08 * deficit,
                 "frame_deficit",
-                int(graph.trajectory_ids[token].item()),
+                int(trajectory),
             )
 
     limit = max(64, _cfg_int(config, "certv10_candidate_pool", 384))
@@ -564,13 +597,15 @@ def _trajectory_reallocate(
         return v3_selected, [], minimum_swaps, max_swaps
 
     selected = v3_selected.clone()
-    selected_set = set(int(token) for token in selected.detach().cpu().tolist())
-    v3_position = {
-        int(token): position
-        for position, token in enumerate(v3_selected.detach().cpu().tolist())
-    }
+    base_tokens_cpu = v3_selected.detach().cpu().tolist()
+    selected_set = set(int(token) for token in base_tokens_cpu)
     frame_counts = torch.bincount(analysis.frame_ids[selected], minlength=frame_count)
+    frame_counts_cpu = frame_counts.detach().cpu().tolist()
+    target_counts_cpu = target_counts.detach().cpu().tolist()
+    frame_ids_cpu = analysis.frame_ids.detach().cpu().tolist()
+    query_score_cpu = analysis.query_score.detach().cpu().tolist()
     demand = _normalize(analysis.demand_weight)
+    demand_cpu = demand.detach().cpu().tolist()
     d_cost = _design_costs(analysis, v3_selected)
 
     metric = analysis.metric_flat[v3_selected].float()
@@ -598,13 +633,20 @@ def _trajectory_reallocate(
     protect_count = min(
         budget, max(1, int(math.ceil(budget * protect_ratio)))
     )
-    protected.update(
-        int(v3_selected[index].item())
-        for index in torch.topk(static_cost, k=protect_count).indices
+    protect_positions = (
+        torch.topk(static_cost, k=protect_count)
+        .indices.detach()
+        .cpu()
+        .tolist()
     )
+    protected.update(int(base_tokens_cpu[index]) for index in protect_positions)
 
+    base_frames = analysis.frame_ids[v3_selected]
+    protected_tensor = torch.tensor(
+        sorted(protected), dtype=torch.long, device=v3_selected.device
+    )
+    removable = ~torch.isin(v3_selected, protected_tensor)
     swaps: list[dict[str, Any]] = []
-    added: set[int] = set()
     minimum_gain = _cfg_float(config, "certv10_min_swap_gain", -0.04)
     d_weight = max(0.0, _cfg_float(config, "certv10_d_soft_weight", 0.10))
     average = float(budget) / max(1, frame_count)
@@ -612,74 +654,84 @@ def _trajectory_reallocate(
     for candidate in candidates:
         if len(swaps) >= max_swaps or candidate.token in selected_set:
             continue
-        add_frame = int(analysis.frame_ids[candidate.token].item())
-        deficit = max(0.0, float(target_counts[add_frame].item() - frame_counts[add_frame].item()))
+        add_frame = int(frame_ids_cpu[candidate.token])
+        deficit = max(
+            0.0,
+            float(
+                target_counts_cpu[add_frame] - frame_counts_cpu[add_frame]
+            ),
+        )
         add_value = (
             0.62 * candidate.score
-            + 0.18 * analysis.query_score[candidate.token].item()
-            + 0.12 * demand[candidate.token].item()
+            + 0.18 * query_score_cpu[candidate.token]
+            + 0.12 * demand_cpu[candidate.token]
             + 0.18 * min(1.0, deficit / max(1.0, average))
         )
 
-        best_position = -1
-        best_gain = float("-inf")
-        best_remove_cost = 0.0
-        for position, token_tensor in enumerate(selected):
-            token = int(token_tensor.item())
-            if token in protected or token in added:
-                continue
-            remove_frame = int(analysis.frame_ids[token].item())
-            if int(frame_counts[remove_frame].item()) <= 1:
-                continue
-            original_position = v3_position.get(token)
-            if original_position is None:
-                continue
-            surplus = max(
-                0.0,
-                float(frame_counts[remove_frame].item() - target_counts[remove_frame].item()),
+        frame_count_at_position = frame_counts[base_frames]
+        eligible = removable & (frame_count_at_position > 1)
+        if not bool(eligible.any()):
+            continue
+        surplus = (
+            frame_count_at_position - target_counts[base_frames]
+        ).clamp_min(0).float()
+        remove_cost = (
+            static_cost
+            + d_weight * d_cost
+            - 0.32 * (surplus / max(1.0, average)).clamp_max(1.0)
+        )
+        add_before = abs(
+            float(
+                frame_counts_cpu[add_frame] - target_counts_cpu[add_frame]
             )
-            remove_cost = float(static_cost[original_position].item())
-            remove_cost += d_weight * float(d_cost[original_position].item())
-            remove_cost -= 0.32 * min(1.0, surplus / max(1.0, average))
-            allocation_gain = 0.0
-            before = abs(float(frame_counts[add_frame].item() - target_counts[add_frame].item()))
-            after = abs(float(frame_counts[add_frame].item() + 1 - target_counts[add_frame].item()))
-            if remove_frame == add_frame:
-                after = before
-            allocation_gain += (before - after) / max(1.0, average)
-            if remove_frame != add_frame:
-                before_remove = abs(
-                    float(frame_counts[remove_frame].item() - target_counts[remove_frame].item())
-                )
-                after_remove = abs(
-                    float(frame_counts[remove_frame].item() - 1 - target_counts[remove_frame].item())
-                )
-                allocation_gain += (before_remove - after_remove) / max(1.0, average)
-            gain = add_value - remove_cost + 0.24 * allocation_gain
-            if gain > best_gain or (
-                best_position >= 0
-                and abs(gain - best_gain) <= 1e-9
-                and token < int(selected[best_position].item())
-            ):
-                best_position = position
-                best_gain = gain
-                best_remove_cost = remove_cost
-
-        if best_position < 0:
+        )
+        add_after = abs(
+            float(
+                frame_counts_cpu[add_frame]
+                + 1
+                - target_counts_cpu[add_frame]
+            )
+        )
+        add_allocation_gain = (add_before - add_after) / max(1.0, average)
+        remove_before = (
+            frame_count_at_position.float() - target_counts[base_frames].float()
+        ).abs()
+        remove_after = (
+            frame_count_at_position.float()
+            - 1.0
+            - target_counts[base_frames].float()
+        ).abs()
+        remove_allocation_gain = (
+            remove_before - remove_after
+        ) / max(1.0, average)
+        different_frame = base_frames != add_frame
+        allocation_gain = torch.where(
+            different_frame,
+            remove_allocation_gain + add_allocation_gain,
+            torch.zeros_like(remove_allocation_gain),
+        )
+        gains = add_value - remove_cost + 0.24 * allocation_gain
+        gains = gains.masked_fill(~eligible, float("-inf"))
+        best_position = int(torch.argmax(gains).item())
+        best_gain = float(gains[best_position].item())
+        best_remove_cost = float(remove_cost[best_position].item())
+        if not math.isfinite(best_gain):
             continue
         # The reliable-motion branch is deliberately active rather than a
         # conservative V3 repair. Strong trajectory candidates fill the
         # minimum reallocation quota before the regular gain gate applies.
         if len(swaps) >= minimum_swaps and best_gain < minimum_gain:
             continue
-        removed = int(selected[best_position].item())
-        remove_frame = int(analysis.frame_ids[removed].item())
+        removed = int(base_tokens_cpu[best_position])
+        remove_frame = int(frame_ids_cpu[removed])
         selected[best_position] = int(candidate.token)
         selected_set.remove(removed)
         selected_set.add(candidate.token)
-        added.add(candidate.token)
+        removable[best_position] = False
         frame_counts[remove_frame] -= 1
         frame_counts[add_frame] += 1
+        frame_counts_cpu[remove_frame] -= 1
+        frame_counts_cpu[add_frame] += 1
         swaps.append(
             {
                 "add": candidate.token,
@@ -756,16 +808,16 @@ def _build_plan(
     weights[selected] = 0.0
     weights[selected, 0] = 1.0
 
-    v3_position = {
-        int(token): position
-        for position, token in enumerate(v3_selected.detach().cpu().tolist())
-    }
     alpha = torch.zeros(budget, dtype=torch.float32, device=selected.device)
-    for position, token_tensor in enumerate(selected):
-        token = int(token_tensor.item())
-        old_position = v3_position.get(token)
-        if old_position is not None:
-            alpha[position] = v3_plan.fusion_alpha[old_position]
+    old_positions = torch.searchsorted(v3_selected, selected)
+    old_positions_clamped = old_positions.clamp_max(v3_selected.numel() - 1)
+    retained_from_v3 = (
+        (old_positions < v3_selected.numel())
+        & (v3_selected[old_positions_clamped] == selected)
+    )
+    alpha[retained_from_v3] = v3_plan.fusion_alpha[
+        old_positions_clamped[retained_from_v3]
+    ]
     trajectory_protect = _cfg_float(config, "certv10_trajectory_fusion_scale", 0.25)
     alpha *= 1.0 - (1.0 - trajectory_protect) * graph.token_score[selected]
     promoted = {int(record["add"]) for record in swaps}

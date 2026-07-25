@@ -324,6 +324,35 @@ def flashvid(
     certv10_merge_threshold: float = 0.76,
     certv10_trajectory_fusion_scale: float = 0.25,
     certv10_debug: bool = False,
+    certv11_max_segments: int = 8,
+    certv11_segment_similarity: float = 0.82,
+    certv11_tree_threshold: float = 0.78,
+    certv11_spatial_penalty: float = 0.04,
+    certv11_max_spatial_jump: float = 0.50,
+    certv11_spatial_design_weight: float = 0.24,
+    certv11_spatial_coverage_weight: float = 0.22,
+    certv11_frame_floor_ratio: float = 0.65,
+    certv11_frame_cap_ratio: float = 1.65,
+    certv11_frame_temperature: float = 0.60,
+    certv11_query_threshold: float = 0.12,
+    certv11_active_tree_ratio: float = 0.30,
+    certv11_tree_cap_ratio: float = 3.0,
+    certv11_tree_temperature: float = 0.55,
+    certv11_structure_ratio: float = 0.35,
+    certv11_candidate_multiplier: float = 3.0,
+    certv11_structure_weight: float = 0.42,
+    certv11_tree_fill_weight: float = 0.28,
+    certv11_frame_fill_weight: float = 0.24,
+    certv11_branch_bonus: float = 0.18,
+    certv11_tree_assignment_radius: int = 3,
+    certv11_assignment_spatial_radius: float = 0.65,
+    certv11_cross_tree_similarity: float = 0.90,
+    certv11_assignment_topk: int = 2,
+    certv11_assignment_temperature: float = 0.07,
+    certv11_merge_threshold: float = 0.78,
+    certv11_fusion_alpha: float = 0.10,
+    certv11_structure_protect_threshold: float = 0.65,
+    certv11_debug: bool = False,
     certv4_budget_mode: str = "layer_average",
     certv4_attention_policy: str = "validated",
     certv4_attention_eps: float = 1e-6,
@@ -639,6 +668,8 @@ def flashvid(
             "certvid_v8" preserves V3 anchors and repairs temporal/query evidence deficits;
             "certvid_v9" repairs missing states and rejects untrustworthy residual fusion;
             "certvid_v10" aggressively reallocates V3 evidence toward reliable motion trajectories;
+            "certvid_v11" applies D-optimal selection within a graph-structured
+            spatio-temporal forest;
             "certvid_v5" preserves V3 anchors and recovers discarded residual evidence with OT;
             "certvid_e" refines the V3 design against its weakest information direction;
             "faithvid" preserves merged-token attention mass and constrains RoPE phase dispersion;
@@ -766,10 +797,10 @@ def flashvid(
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
     variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
@@ -996,6 +1027,35 @@ def flashvid(
         certv10_merge_threshold=certv10_merge_threshold,
         certv10_trajectory_fusion_scale=certv10_trajectory_fusion_scale,
         certv10_debug=certv10_debug,
+        certv11_max_segments=certv11_max_segments,
+        certv11_segment_similarity=certv11_segment_similarity,
+        certv11_tree_threshold=certv11_tree_threshold,
+        certv11_spatial_penalty=certv11_spatial_penalty,
+        certv11_max_spatial_jump=certv11_max_spatial_jump,
+        certv11_spatial_design_weight=certv11_spatial_design_weight,
+        certv11_spatial_coverage_weight=certv11_spatial_coverage_weight,
+        certv11_frame_floor_ratio=certv11_frame_floor_ratio,
+        certv11_frame_cap_ratio=certv11_frame_cap_ratio,
+        certv11_frame_temperature=certv11_frame_temperature,
+        certv11_query_threshold=certv11_query_threshold,
+        certv11_active_tree_ratio=certv11_active_tree_ratio,
+        certv11_tree_cap_ratio=certv11_tree_cap_ratio,
+        certv11_tree_temperature=certv11_tree_temperature,
+        certv11_structure_ratio=certv11_structure_ratio,
+        certv11_candidate_multiplier=certv11_candidate_multiplier,
+        certv11_structure_weight=certv11_structure_weight,
+        certv11_tree_fill_weight=certv11_tree_fill_weight,
+        certv11_frame_fill_weight=certv11_frame_fill_weight,
+        certv11_branch_bonus=certv11_branch_bonus,
+        certv11_tree_assignment_radius=certv11_tree_assignment_radius,
+        certv11_assignment_spatial_radius=certv11_assignment_spatial_radius,
+        certv11_cross_tree_similarity=certv11_cross_tree_similarity,
+        certv11_assignment_topk=certv11_assignment_topk,
+        certv11_assignment_temperature=certv11_assignment_temperature,
+        certv11_merge_threshold=certv11_merge_threshold,
+        certv11_fusion_alpha=certv11_fusion_alpha,
+        certv11_structure_protect_threshold=certv11_structure_protect_threshold,
+        certv11_debug=certv11_debug,
         certv4_budget_mode=certv4_budget_mode,
         certv4_attention_policy=certv4_attention_policy,
         certv4_attention_eps=certv4_attention_eps,

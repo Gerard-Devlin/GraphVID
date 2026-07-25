@@ -9,6 +9,8 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export PYTHONPATH="$PWD:$PWD/lmms-eval:${PYTHONPATH:-}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-20480}"
+export LMMS_EVAL_SERIALIZE_DATASET_LOAD="${LMMS_EVAL_SERIALIZE_DATASET_LOAD:-1}"
+export LMMS_EVAL_DATASET_LOCK_TIMEOUT="${LMMS_EVAL_DATASET_LOCK_TIMEOUT:-3600}"
 
 ACCELERATE="${ACCELERATE:-accelerate}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -235,6 +237,36 @@ CERTV10_ASSIGNMENT_TEMPERATURE="${CERTV10_ASSIGNMENT_TEMPERATURE:-0.07}"
 CERTV10_MERGE_THRESHOLD="${CERTV10_MERGE_THRESHOLD:-0.76}"
 CERTV10_TRAJECTORY_FUSION_SCALE="${CERTV10_TRAJECTORY_FUSION_SCALE:-0.25}"
 CERTV10_DEBUG="${CERTV10_DEBUG:-False}"
+CERTV11_TOKEN_SELECTION_METHOD="${CERTV11_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
+CERTV11_MAX_SEGMENTS="${CERTV11_MAX_SEGMENTS:-8}"
+CERTV11_SEGMENT_SIMILARITY="${CERTV11_SEGMENT_SIMILARITY:-0.82}"
+CERTV11_TREE_THRESHOLD="${CERTV11_TREE_THRESHOLD:-0.78}"
+CERTV11_SPATIAL_PENALTY="${CERTV11_SPATIAL_PENALTY:-0.04}"
+CERTV11_MAX_SPATIAL_JUMP="${CERTV11_MAX_SPATIAL_JUMP:-0.50}"
+CERTV11_SPATIAL_DESIGN_WEIGHT="${CERTV11_SPATIAL_DESIGN_WEIGHT:-0.24}"
+CERTV11_SPATIAL_COVERAGE_WEIGHT="${CERTV11_SPATIAL_COVERAGE_WEIGHT:-0.22}"
+CERTV11_FRAME_FLOOR_RATIO="${CERTV11_FRAME_FLOOR_RATIO:-0.65}"
+CERTV11_FRAME_CAP_RATIO="${CERTV11_FRAME_CAP_RATIO:-1.65}"
+CERTV11_FRAME_TEMPERATURE="${CERTV11_FRAME_TEMPERATURE:-0.60}"
+CERTV11_QUERY_THRESHOLD="${CERTV11_QUERY_THRESHOLD:-0.12}"
+CERTV11_ACTIVE_TREE_RATIO="${CERTV11_ACTIVE_TREE_RATIO:-0.30}"
+CERTV11_TREE_CAP_RATIO="${CERTV11_TREE_CAP_RATIO:-3.0}"
+CERTV11_TREE_TEMPERATURE="${CERTV11_TREE_TEMPERATURE:-0.55}"
+CERTV11_STRUCTURE_RATIO="${CERTV11_STRUCTURE_RATIO:-0.35}"
+CERTV11_CANDIDATE_MULTIPLIER="${CERTV11_CANDIDATE_MULTIPLIER:-3.0}"
+CERTV11_STRUCTURE_WEIGHT="${CERTV11_STRUCTURE_WEIGHT:-0.42}"
+CERTV11_TREE_FILL_WEIGHT="${CERTV11_TREE_FILL_WEIGHT:-0.28}"
+CERTV11_FRAME_FILL_WEIGHT="${CERTV11_FRAME_FILL_WEIGHT:-0.24}"
+CERTV11_BRANCH_BONUS="${CERTV11_BRANCH_BONUS:-0.18}"
+CERTV11_TREE_ASSIGNMENT_RADIUS="${CERTV11_TREE_ASSIGNMENT_RADIUS:-3}"
+CERTV11_ASSIGNMENT_SPATIAL_RADIUS="${CERTV11_ASSIGNMENT_SPATIAL_RADIUS:-0.65}"
+CERTV11_CROSS_TREE_SIMILARITY="${CERTV11_CROSS_TREE_SIMILARITY:-0.90}"
+CERTV11_ASSIGNMENT_TOPK="${CERTV11_ASSIGNMENT_TOPK:-2}"
+CERTV11_ASSIGNMENT_TEMPERATURE="${CERTV11_ASSIGNMENT_TEMPERATURE:-0.07}"
+CERTV11_MERGE_THRESHOLD="${CERTV11_MERGE_THRESHOLD:-0.78}"
+CERTV11_FUSION_ALPHA="${CERTV11_FUSION_ALPHA:-0.10}"
+CERTV11_STRUCTURE_PROTECT_THRESHOLD="${CERTV11_STRUCTURE_PROTECT_THRESHOLD:-0.65}"
+CERTV11_DEBUG="${CERTV11_DEBUG:-False}"
 FLASHVID_DIAGNOSTICS_DETAIL="${FLASHVID_DIAGNOSTICS_DETAIL:-summary}"
 
 CERTV4_BUDGET_MODE="${CERTV4_BUDGET_MODE:-layer_average}"
@@ -388,6 +420,12 @@ method_args() {
       printf ',certv10_enabled=%s,certv10_track_similarity=%s,certv10_spatial_penalty=%s,certv10_track_min_span=%s,certv10_reliability_floor=%s,certv10_reliability_target=%s,certv10_min_swap_ratio=%s,certv10_max_swap_ratio=%s,certv10_v3_protect_ratio=%s,certv10_frame_floor_ratio=%s,certv10_frame_cap_ratio=%s,certv10_budget_temperature=%s,certv10_allocation_strength=%s,certv10_motion_peak_frames=%s,certv10_candidate_pool=%s,certv10_min_swap_gain=%s,certv10_d_soft_weight=%s,certv10_track_assignment_radius=%s,certv10_cross_frame_max_seconds=%s,certv10_assignment_topk=%s,certv10_assignment_temperature=%s,certv10_merge_threshold=%s,certv10_trajectory_fusion_scale=%s,certv10_debug=%s' \
         "$CERTV10_ENABLED" "$CERTV10_TRACK_SIMILARITY" "$CERTV10_SPATIAL_PENALTY" "$CERTV10_TRACK_MIN_SPAN" "$CERTV10_RELIABILITY_FLOOR" "$CERTV10_RELIABILITY_TARGET" "$CERTV10_MIN_SWAP_RATIO" "$CERTV10_MAX_SWAP_RATIO" "$CERTV10_V3_PROTECT_RATIO" "$CERTV10_FRAME_FLOOR_RATIO" "$CERTV10_FRAME_CAP_RATIO" "$CERTV10_BUDGET_TEMPERATURE" "$CERTV10_ALLOCATION_STRENGTH" "$CERTV10_MOTION_PEAK_FRAMES" "$CERTV10_CANDIDATE_POOL" "$CERTV10_MIN_SWAP_GAIN" "$CERTV10_D_SOFT_WEIGHT" "$CERTV10_TRACK_ASSIGNMENT_RADIUS" "$CERTV10_CROSS_FRAME_MAX_SECONDS" "$CERTV10_ASSIGNMENT_TOPK" "$CERTV10_ASSIGNMENT_TEMPERATURE" "$CERTV10_MERGE_THRESHOLD" "$CERTV10_TRAJECTORY_FUSION_SCALE" "$CERTV10_DEBUG"
       ;;
+    certvid_v11)
+      printf 'compression_variant=certvid_v11,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s' \
+        "$CERTV11_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE"
+      printf ',certv11_max_segments=%s,certv11_segment_similarity=%s,certv11_tree_threshold=%s,certv11_spatial_penalty=%s,certv11_max_spatial_jump=%s,certv11_spatial_design_weight=%s,certv11_spatial_coverage_weight=%s,certv11_frame_floor_ratio=%s,certv11_frame_cap_ratio=%s,certv11_frame_temperature=%s,certv11_query_threshold=%s,certv11_active_tree_ratio=%s,certv11_tree_cap_ratio=%s,certv11_tree_temperature=%s,certv11_structure_ratio=%s,certv11_candidate_multiplier=%s,certv11_structure_weight=%s,certv11_tree_fill_weight=%s,certv11_frame_fill_weight=%s,certv11_branch_bonus=%s,certv11_tree_assignment_radius=%s,certv11_assignment_spatial_radius=%s,certv11_cross_tree_similarity=%s,certv11_assignment_topk=%s,certv11_assignment_temperature=%s,certv11_merge_threshold=%s,certv11_fusion_alpha=%s,certv11_structure_protect_threshold=%s,certv11_debug=%s' \
+        "$CERTV11_MAX_SEGMENTS" "$CERTV11_SEGMENT_SIMILARITY" "$CERTV11_TREE_THRESHOLD" "$CERTV11_SPATIAL_PENALTY" "$CERTV11_MAX_SPATIAL_JUMP" "$CERTV11_SPATIAL_DESIGN_WEIGHT" "$CERTV11_SPATIAL_COVERAGE_WEIGHT" "$CERTV11_FRAME_FLOOR_RATIO" "$CERTV11_FRAME_CAP_RATIO" "$CERTV11_FRAME_TEMPERATURE" "$CERTV11_QUERY_THRESHOLD" "$CERTV11_ACTIVE_TREE_RATIO" "$CERTV11_TREE_CAP_RATIO" "$CERTV11_TREE_TEMPERATURE" "$CERTV11_STRUCTURE_RATIO" "$CERTV11_CANDIDATE_MULTIPLIER" "$CERTV11_STRUCTURE_WEIGHT" "$CERTV11_TREE_FILL_WEIGHT" "$CERTV11_FRAME_FILL_WEIGHT" "$CERTV11_BRANCH_BONUS" "$CERTV11_TREE_ASSIGNMENT_RADIUS" "$CERTV11_ASSIGNMENT_SPATIAL_RADIUS" "$CERTV11_CROSS_TREE_SIMILARITY" "$CERTV11_ASSIGNMENT_TOPK" "$CERTV11_ASSIGNMENT_TEMPERATURE" "$CERTV11_MERGE_THRESHOLD" "$CERTV11_FUSION_ALPHA" "$CERTV11_STRUCTURE_PROTECT_THRESHOLD" "$CERTV11_DEBUG"
+      ;;
     certvid_v4)
       printf 'compression_variant=certvid_v4,token_selection_method=%s,certv4_budget_mode=%s,certv4_attention_policy=%s,certv4_attention_eps=%s,certv4_certificate_budget_ratio=%s,certv4_query_mode=%s,certv4_design_protect_ratio=%s,certv4_query_atoms=%s,certv4_temporal_bins=%s,certv4_spatial_bins=%s,certv4_candidate_multiplier=%s,certv4_track_threshold=%s,certv4_spatial_penalty=%s,certv4_metric_dim=%s,certv4_frame_coverage_ratio=%s,certv4_cell_coverage_ratio=%s,certv4_query_threshold=%s,certv4_query_per_atom=%s,certv4_structural_weight=%s,certv4_whitening_strength=%s,certv4_quality_floor=%s,certv4_ridge=%s,certv4_swap_steps=%s,certv4_swap_pool=%s,certv4_swap_margin=%s,certv4_fusion_alpha=%s,certv4_assignment_temperature=%s,certv4_debug=%s' \
         "$CERTV4_TOKEN_SELECTION_METHOD" "$CERTV4_BUDGET_MODE" "$CERTV4_ATTENTION_POLICY" "$CERTV4_ATTENTION_EPS" "$CERTV4_CERTIFICATE_BUDGET_RATIO" "$CERTV4_QUERY_MODE" "$CERTV4_DESIGN_PROTECT_RATIO" "$CERTV4_QUERY_ATOMS" "$CERTV4_TEMPORAL_BINS" "$CERTV4_SPATIAL_BINS" "$CERTV4_CANDIDATE_MULTIPLIER" "$CERTV4_TRACK_THRESHOLD" "$CERTV4_SPATIAL_PENALTY" "$CERTV4_METRIC_DIM" "$CERTV4_FRAME_COVERAGE_RATIO" "$CERTV4_CELL_COVERAGE_RATIO" "$CERTV4_QUERY_THRESHOLD" "$CERTV4_QUERY_PER_ATOM" "$CERTV4_STRUCTURAL_WEIGHT" "$CERTV4_WHITENING_STRENGTH" "$CERTV4_QUALITY_FLOOR" "$CERTV4_RIDGE" "$CERTV4_SWAP_STEPS" "$CERTV4_SWAP_POOL" "$CERTV4_SWAP_MARGIN" "$CERTV4_FUSION_ALPHA" "$CERTV4_ASSIGNMENT_TEMPERATURE" "$CERTV4_DEBUG"
@@ -461,6 +499,13 @@ for method in $(split_csv "$METHODS"); do
         fi
         printf '[certvid-v10] diagnostics=%s\n' "$diagnostics_path"
         env CERTV10_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
+      elif [[ "$method" == "certvid_v11" ]]; then
+        diagnostics_path="${CERTV11_DIAGNOSTICS_JSONL:-}"
+        if [[ -z "$diagnostics_path" ]]; then
+          diagnostics_path="$run_output/certvid_v11_diagnostics_rank{rank}.jsonl"
+        fi
+        printf '[certvid-v11] diagnostics=%s\n' "$diagnostics_path"
+        env CERTV11_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
       elif [[ "$method" == "flashvid" ]]; then
         diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$run_output/flashvid_diagnostics.jsonl}"
         printf '[flashvid] diagnostics=%s detail=%s\n' \
