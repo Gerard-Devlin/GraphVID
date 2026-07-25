@@ -1143,13 +1143,37 @@ class ConfigurableTask(Task):
             # `ds = load_datasets("lmms-lab/MMMU")`
             self.dataset = datasets.load_from_disk(dataset_path=self.DATASET_PATH)
         else:
-            self.dataset = datasets.load_dataset(
-                path=self.DATASET_PATH,
-                name=self.DATASET_NAME,
-                download_mode=datasets.DownloadMode.REUSE_DATASET_IF_EXISTS,
-                download_config=download_config,
-                **dataset_kwargs if dataset_kwargs is not None else {},
-            )
+            def load_dataset_from_cache():
+                return datasets.load_dataset(
+                    path=self.DATASET_PATH,
+                    name=self.DATASET_NAME,
+                    download_mode=datasets.DownloadMode.REUSE_DATASET_IF_EXISTS,
+                    download_config=download_config,
+                    **dataset_kwargs if dataset_kwargs is not None else {},
+                )
+
+            serialize_load = os.environ.get(
+                "LMMS_EVAL_SERIALIZE_DATASET_LOAD", "0"
+            ).strip().lower() not in {"", "0", "false", "no", "off"}
+            world_size = int(os.environ.get("WORLD_SIZE", "1"))
+            if serialize_load and world_size > 1:
+                accelerator = Accelerator()
+                self.dataset = None
+                # Every rank follows the same barrier sequence; only the owner
+                # touches the Hugging Face datasets cache in each round.
+                for owner in range(accelerator.num_processes):
+                    if accelerator.process_index == owner:
+                        eval_logger.info(
+                            f"Rank {owner} loading task dataset without cache contention"
+                        )
+                        self.dataset = load_dataset_from_cache()
+                    accelerator.wait_for_everyone()
+                if self.dataset is None:
+                    raise RuntimeError(
+                        "serialized dataset loading did not initialize this rank"
+                    )
+            else:
+                self.dataset = load_dataset_from_cache()
 
         if self.config.process_docs is not None:
             for split in self.dataset:

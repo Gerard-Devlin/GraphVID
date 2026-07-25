@@ -3,7 +3,6 @@ import itertools
 import json
 import os
 import random
-import tempfile
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -47,45 +46,6 @@ from lmms_eval.utils import (
     run_task_tests,
     simple_parse_args_string,
 )
-
-
-def _get_task_dict_without_cache_contention(
-    tasks,
-    task_manager,
-    task_type,
-):
-    """Serialize only dataset initialization across local distributed ranks."""
-    enabled = os.environ.get(
-        "LMMS_EVAL_SERIALIZE_DATASET_LOAD", "0"
-    ).strip().lower() not in {"", "0", "false", "no", "off"}
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    if not enabled or world_size <= 1:
-        return get_task_dict(tasks, task_manager, task_type)
-
-    from filelock import FileLock
-
-    user_key = str(
-        getattr(os, "getuid", lambda: os.environ.get("USER", "user"))()
-    )
-    lock_path = os.environ.get(
-        "LMMS_EVAL_DATASET_LOCK_PATH",
-        os.path.join(
-            tempfile.gettempdir(),
-            f"lmms_eval_dataset_load_{user_key}.lock",
-        ),
-    )
-    timeout = float(
-        os.environ.get("LMMS_EVAL_DATASET_LOCK_TIMEOUT", "3600")
-    )
-    rank = int(os.environ.get("RANK", "0"))
-    eval_logger.info(
-        f"Rank {rank} waiting for serialized dataset initialization lock"
-    )
-    with FileLock(lock_path, timeout=timeout):
-        eval_logger.info(
-            f"Rank {rank} initializing task datasets under local lock"
-        )
-        return get_task_dict(tasks, task_manager, task_type)
 
 
 @positional_deprecated
@@ -239,9 +199,7 @@ def simple_evaluate(
     elif isinstance(model, lmms_eval.api.model.lmms):
         lm = model
     task_type = "simple" if lm.is_simple else "chat"
-    task_dict = _get_task_dict_without_cache_contention(
-        tasks, task_manager, task_type
-    )
+    task_dict = get_task_dict(tasks, task_manager, task_type)
 
     # helper function to recursively apply config overrides to leaf subtasks, skipping their constituent groups.
     # (setting of num_fewshot ; bypassing metric calculation ; setting fewshot seed)
