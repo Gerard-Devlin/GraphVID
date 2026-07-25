@@ -727,13 +727,33 @@ def _tree_quotas(
     ranked = torch.argsort(
         graph.tree_score, descending=True, stable=True
     )
+    ranked_cpu = ranked.detach().cpu().tolist()
+    tree_size_cpu = graph.tree_size.detach().cpu().tolist()
     active_set = set(
         int(tree) for tree in mandatory_trees.detach().cpu().tolist()
     )
-    for tree in ranked.detach().cpu().tolist():
+    for tree in ranked_cpu:
         if len(active_set) >= active_target:
             break
         active_set.add(int(tree))
+    active_capacity = sum(int(tree_size_cpu[tree]) for tree in active_set)
+    if active_capacity < budget:
+        # active_tree_ratio is a diversity target, not a hard capacity limit.
+        # Small high-scoring trees may not contain enough tokens to satisfy the
+        # fixed budget, so deterministically admit more trees as needed.
+        for tree in ranked_cpu:
+            tree = int(tree)
+            if tree in active_set:
+                continue
+            active_set.add(tree)
+            active_capacity += int(tree_size_cpu[tree])
+            if active_capacity >= budget:
+                break
+    if active_capacity < budget:
+        raise RuntimeError(
+            "GSTM tree capacity is smaller than the requested token budget: "
+            f"capacity={active_capacity}, budget={budget}"
+        )
     active = torch.tensor(
         sorted(active_set), dtype=torch.long, device=graph.tree_ids.device
     )
@@ -757,7 +777,6 @@ def _tree_quotas(
         .cpu()
         .tolist()
     )
-    tree_size_cpu = graph.tree_size.detach().cpu().tolist()
     while remaining > 0:
         eligible = [
             local
