@@ -204,6 +204,17 @@ def flashvid(
     certv3_swap_margin: float = 1e-4,
     certv3_fusion_alpha: float = 0.12,
     certv3_assignment_temperature: float = 0.07,
+    v3plus_inner_mode: str = "structured",
+    v3plus_query_rows: int = 32,
+    v3plus_attention_mean_weight: float = 0.75,
+    v3plus_frame_floor: int = 1,
+    v3plus_frame_cap_multiplier: float = 2.0,
+    v3plus_pair_budget_ratio: float = 0.10,
+    v3plus_attention_weight: float = 0.70,
+    v3plus_outer_demand_weight: float = 0.20,
+    v3plus_certificate_weight: float = 0.10,
+    v3plus_diversity_weight: float = 0.15,
+    v3plus_spatial_bonus: float = 0.05,
     certv6_scene_temporal: bool = True,
     certv6_gate_enabled: bool = True,
     certv6_continuity_low: float = 0.55,
@@ -666,6 +677,8 @@ def flashvid(
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
+            "certvid_v3plus" keeps the V3 outer design and replaces only the
+            LLaVA inner selector with structure-aware pruning;
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_v7" preserves long-horizon relations with transition and trajectory evidence;
             "certvid_v8" preserves V3 anchors and repairs temporal/query evidence deficits;
@@ -748,6 +761,10 @@ def flashvid(
         nn.Module: The model with FlashVID applied.
     """
 
+    variant = str(compression_variant).strip().lower()
+    if variant == "certvid_v3plus" and type(model) is not LlavaQwenForCausalLM:
+        raise ValueError("certvid_v3plus currently supports LLaVA-OneVision only")
+
     # Replace with custom methods.
     if type(model) is LlavaQwenForCausalLM:  ## For LLaVA-OneVision or LLaVA-Video
         LlavaMetaForCausalLM.encode_images = LlavaMetaForCausalLM_encode_images
@@ -799,12 +816,17 @@ def flashvid(
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
-    variant = str(compression_variant).strip().lower()
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
+    if variant == "certvid_v3plus":
+        v3plus_inner_mode = str(v3plus_inner_mode).strip().lower()
+        if v3plus_inner_mode not in ("structured", "legacy"):
+            raise ValueError(
+                f"v3plus_inner_mode must be structured or legacy, got {v3plus_inner_mode!r}"
+            )
     if variant == "graphvid":
         temporal_merge_mode = "graph"
 
@@ -910,6 +932,17 @@ def flashvid(
         certv3_swap_margin=certv3_swap_margin,
         certv3_fusion_alpha=certv3_fusion_alpha,
         certv3_assignment_temperature=certv3_assignment_temperature,
+        v3plus_inner_mode=v3plus_inner_mode,
+        v3plus_query_rows=v3plus_query_rows,
+        v3plus_attention_mean_weight=v3plus_attention_mean_weight,
+        v3plus_frame_floor=v3plus_frame_floor,
+        v3plus_frame_cap_multiplier=v3plus_frame_cap_multiplier,
+        v3plus_pair_budget_ratio=v3plus_pair_budget_ratio,
+        v3plus_attention_weight=v3plus_attention_weight,
+        v3plus_outer_demand_weight=v3plus_outer_demand_weight,
+        v3plus_certificate_weight=v3plus_certificate_weight,
+        v3plus_diversity_weight=v3plus_diversity_weight,
+        v3plus_spatial_bonus=v3plus_spatial_bonus,
         certv6_scene_temporal=certv6_scene_temporal,
         certv6_gate_enabled=certv6_gate_enabled,
         certv6_continuity_low=certv6_continuity_low,

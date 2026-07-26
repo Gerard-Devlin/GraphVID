@@ -155,6 +155,11 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
         mm_patch_merge_type = getattr(self.config, "mm_patch_merge_type", "flat")
         image_aspect_ratio = getattr(self.config, "image_aspect_ratio", "square")
         mm_newline_position = getattr(self.config, "mm_newline_position", "one_token")
+        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
+            query_prefix_tokens = int(
+                mm_newline_position == "one_token" and "unpad" in mm_patch_merge_type
+            )
+            setattr(flashvid_config, "_v3plus_query_prefix_tokens", query_prefix_tokens)
 
         if mm_patch_merge_type == "flat":
             image_features = [x.flatten(0, 1) for x in image_features]

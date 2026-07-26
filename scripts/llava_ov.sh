@@ -109,6 +109,18 @@ CERTV3_SWAP_MARGIN="${CERTV3_SWAP_MARGIN:-0.0001}"
 CERTV3_FUSION_ALPHA="${CERTV3_FUSION_ALPHA:-0.12}"
 CERTV3_ASSIGNMENT_TEMPERATURE="${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}"
 
+V3PLUS_INNER_MODE="${V3PLUS_INNER_MODE:-structured}"
+V3PLUS_QUERY_ROWS="${V3PLUS_QUERY_ROWS:-32}"
+V3PLUS_ATTENTION_MEAN_WEIGHT="${V3PLUS_ATTENTION_MEAN_WEIGHT:-0.75}"
+V3PLUS_FRAME_FLOOR="${V3PLUS_FRAME_FLOOR:-1}"
+V3PLUS_FRAME_CAP_MULTIPLIER="${V3PLUS_FRAME_CAP_MULTIPLIER:-2.0}"
+V3PLUS_PAIR_BUDGET_RATIO="${V3PLUS_PAIR_BUDGET_RATIO:-0.10}"
+V3PLUS_ATTENTION_WEIGHT="${V3PLUS_ATTENTION_WEIGHT:-0.70}"
+V3PLUS_OUTER_DEMAND_WEIGHT="${V3PLUS_OUTER_DEMAND_WEIGHT:-0.20}"
+V3PLUS_CERTIFICATE_WEIGHT="${V3PLUS_CERTIFICATE_WEIGHT:-0.10}"
+V3PLUS_DIVERSITY_WEIGHT="${V3PLUS_DIVERSITY_WEIGHT:-0.15}"
+V3PLUS_SPATIAL_BONUS="${V3PLUS_SPATIAL_BONUS:-0.05}"
+
 CERTV6_SCENE_TEMPORAL="${CERTV6_SCENE_TEMPORAL:-True}"
 CERTV6_GATE_ENABLED="${CERTV6_GATE_ENABLED:-True}"
 CERTV6_CONTINUITY_LOW="${CERTV6_CONTINUITY_LOW:-0.55}"
@@ -392,6 +404,12 @@ method_args() {
       printf 'compression_variant=certvid_v3,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
         "$CERTV3_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
       ;;
+    certvid_v3plus)
+      printf 'compression_variant=certvid_v3plus,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
+        "$CERTV3_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
+      printf ',v3plus_inner_mode=%s,v3plus_query_rows=%s,v3plus_attention_mean_weight=%s,v3plus_frame_floor=%s,v3plus_frame_cap_multiplier=%s,v3plus_pair_budget_ratio=%s,v3plus_attention_weight=%s,v3plus_outer_demand_weight=%s,v3plus_certificate_weight=%s,v3plus_diversity_weight=%s,v3plus_spatial_bonus=%s' \
+        "$V3PLUS_INNER_MODE" "$V3PLUS_QUERY_ROWS" "$V3PLUS_ATTENTION_MEAN_WEIGHT" "$V3PLUS_FRAME_FLOOR" "$V3PLUS_FRAME_CAP_MULTIPLIER" "$V3PLUS_PAIR_BUDGET_RATIO" "$V3PLUS_ATTENTION_WEIGHT" "$V3PLUS_OUTER_DEMAND_WEIGHT" "$V3PLUS_CERTIFICATE_WEIGHT" "$V3PLUS_DIVERSITY_WEIGHT" "$V3PLUS_SPATIAL_BONUS"
+      ;;
     certvid_v6)
       printf 'compression_variant=certvid_v6,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv6_scene_temporal=%s,certv6_gate_enabled=%s,certv6_continuity_low=%s,certv6_continuity_high=%s,certv6_query_per_atom_max=%s' \
         "$CERTV6_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTV6_SCENE_TEMPORAL" "$CERTV6_GATE_ENABLED" "$CERTV6_CONTINUITY_LOW" "$CERTV6_CONTINUITY_HIGH" "$CERTV6_QUERY_PER_ATOM_MAX"
@@ -508,6 +526,13 @@ for method in $(split_csv "$METHODS"); do
         fi
         printf '[certvid-v11] diagnostics=%s\n' "$diagnostics_path"
         env CERTV11_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
+      elif [[ "$method" == "certvid_v3plus" ]]; then
+        diagnostics_path="${V3PLUS_DIAGNOSTICS_JSONL:-}"
+        if [[ -z "$diagnostics_path" ]]; then
+          diagnostics_path="$run_output/certvid_v3plus_diagnostics_rank{rank}.jsonl"
+        fi
+        printf '[certvid-v3plus] diagnostics=%s\n' "$diagnostics_path"
+        env V3PLUS_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
       elif [[ "$method" == "flashvid" ]]; then
         diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$run_output/flashvid_diagnostics.jsonl}"
         printf '[flashvid] diagnostics=%s detail=%s\n' \

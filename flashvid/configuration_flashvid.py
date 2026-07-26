@@ -118,6 +118,19 @@ class FlashVidConfig:
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
 
+    # CertVID V3Plus: V3 outer coreset with structure-aware inner pruning.
+    v3plus_inner_mode: str = field(default="structured")
+    v3plus_query_rows: int = field(default=32)
+    v3plus_attention_mean_weight: float = field(default=0.75)
+    v3plus_frame_floor: int = field(default=1)
+    v3plus_frame_cap_multiplier: float = field(default=2.0)
+    v3plus_pair_budget_ratio: float = field(default=0.10)
+    v3plus_attention_weight: float = field(default=0.70)
+    v3plus_outer_demand_weight: float = field(default=0.20)
+    v3plus_certificate_weight: float = field(default=0.10)
+    v3plus_diversity_weight: float = field(default=0.15)
+    v3plus_spatial_bonus: float = field(default=0.05)
+
     # CertVID V6: V3 design with scene-aware temporal structure and gating.
     certv6_scene_temporal: bool = field(default=True)
     certv6_gate_enabled: bool = field(default=True)
@@ -388,6 +401,7 @@ class FlashVidConfig:
     # "certvid_v9": V3 state completion with reject-or-promote fusion.
     # "certvid_v10": trajectory-balanced motion evidence over a V3 backbone.
     # "certvid_v11": correspondence-lifted spatiotemporal V3 repair.
+    # "certvid_v3plus": V3 outer coreset with structure-aware inner pruning.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

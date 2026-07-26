@@ -216,6 +216,25 @@ def Qwen2Attention_forward(
             **kwargs,
         )
 
+    if kwargs.get("output_attentions", False):
+        flashvid_config = getattr(self, "flashvid_config", None)
+        if (
+            flashvid_config is not None
+            and str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+            == "certvid_v3plus"
+            and str(getattr(flashvid_config, "v3plus_inner_mode", "structured")).strip().lower()
+            == "structured"
+        ):
+            from .v3plus_inner import capture_v3plus_multitext_attention
+
+            capture_v3plus_multitext_attention(
+                query_states=query_states,
+                key_states=key_states,
+                config=flashvid_config,
+                scaling=self.scaling,
+                num_key_value_groups=self.num_key_value_groups,
+            )
+
     if kwargs.get("output_attentions", False) and attn_weights is None:
         # Calculate attention weights manually if not provided
         last_query = query_states[:, :, -1:, :]

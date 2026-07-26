@@ -118,6 +118,10 @@ def _publish_certvid_sample(config, doc, doc_id, context, task):
 def _clear_certvid_sample(config) -> None:
     if config is None:
         return
+    if str(getattr(config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
+        from flashvid.v3plus_inner import clear_v3plus_runtime
+
+        clear_v3plus_runtime(config)
     config._debug_sample_id = "unknown"
     config._certvid_query_text = ""
     config._certvid_eval_category = None
@@ -221,6 +225,18 @@ class Llava_OneVision(lmms):
         certv3_swap_margin: float = 1e-4,
         certv3_fusion_alpha: float = 0.12,
         certv3_assignment_temperature: float = 0.07,
+        # CertVID V3Plus inner-selector parameters
+        v3plus_inner_mode: str = "structured",
+        v3plus_query_rows: int = 32,
+        v3plus_attention_mean_weight: float = 0.75,
+        v3plus_frame_floor: int = 1,
+        v3plus_frame_cap_multiplier: float = 2.0,
+        v3plus_pair_budget_ratio: float = 0.10,
+        v3plus_attention_weight: float = 0.70,
+        v3plus_outer_demand_weight: float = 0.20,
+        v3plus_certificate_weight: float = 0.10,
+        v3plus_diversity_weight: float = 0.15,
+        v3plus_spatial_bonus: float = 0.05,
         # CertVID V6 parameters
         certv6_scene_temporal: bool = True,
         certv6_gate_enabled: bool = True,
@@ -585,6 +601,17 @@ class Llava_OneVision(lmms):
                 certv3_swap_margin=certv3_swap_margin,
                 certv3_fusion_alpha=certv3_fusion_alpha,
                 certv3_assignment_temperature=certv3_assignment_temperature,
+                v3plus_inner_mode=v3plus_inner_mode,
+                v3plus_query_rows=v3plus_query_rows,
+                v3plus_attention_mean_weight=v3plus_attention_mean_weight,
+                v3plus_frame_floor=v3plus_frame_floor,
+                v3plus_frame_cap_multiplier=v3plus_frame_cap_multiplier,
+                v3plus_pair_budget_ratio=v3plus_pair_budget_ratio,
+                v3plus_attention_weight=v3plus_attention_weight,
+                v3plus_outer_demand_weight=v3plus_outer_demand_weight,
+                v3plus_certificate_weight=v3plus_certificate_weight,
+                v3plus_diversity_weight=v3plus_diversity_weight,
+                v3plus_spatial_bonus=v3plus_spatial_bonus,
                 certv6_scene_temporal=certv6_scene_temporal,
                 certv6_gate_enabled=certv6_gate_enabled,
                 certv6_continuity_low=certv6_continuity_low,

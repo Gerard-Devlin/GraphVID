@@ -187,6 +187,10 @@ def flashvid_compression(
     # A plan is prefill-local. Clearing it here prevents stale GPU tensors from
     # surviving an interrupted or fallback generation.
     setattr(flashvid_config, "_certvid_plan", None)
+    if compression_variant == "certvid_v3plus":
+        from .v3plus_inner import clear_v3plus_runtime
+
+        clear_v3plus_runtime(flashvid_config)
     if compression_variant == "faithvid":
         from .faithvid_attention import clear_faithvid_runtime
 
@@ -239,6 +243,15 @@ def flashvid_compression(
         from .certvid_v3 import certvid_v3_compression
 
         return certvid_v3_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
+    if compression_variant == "certvid_v3plus":
+        from .certvid_v3plus import certvid_v3plus_compression
+
+        return certvid_v3plus_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
@@ -347,7 +360,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -1040,6 +1053,10 @@ def fastv_prune(
     if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) >= 0.9999:
         flashvid_config.llm_token_length = getattr(flashvid_config, "visual_token_length", None)
         keep_indices = torch.arange(seq_length, device=device, dtype=torch.long)
+        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
+            from .v3plus_inner import clear_v3plus_runtime
+
+            clear_v3plus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices
 
     # Obtain FlashVid arguments.
@@ -1059,18 +1076,70 @@ def fastv_prune(
     visual_global_indices = torch.where(visual_pos_masks[0])[0]
     non_visual_global_indices = torch.where(non_visual_pos_masks[0])[0]
     if visual_features.numel() == 0 or visual_global_indices.numel() == 0:
+        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
+            from .v3plus_inner import clear_v3plus_runtime
+
+            clear_v3plus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
 
     num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
     num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
-    attn = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
+    variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+    inner_mode = str(getattr(flashvid_config, "v3plus_inner_mode", "structured")).strip().lower()
+    if variant == "certvid_v3plus" and inner_mode == "structured":
+        # The FA2 fallback may return either a compact last-query row or a full
+        # attention matrix. Normalize both shapes without touching legacy paths.
+        last_query_attention = torch.mean(attentions, dim=1)
+        if last_query_attention.ndim == 3:
+            last_query_attention = last_query_attention[:, -1, :]
+        elif last_query_attention.ndim != 2:
+            raise RuntimeError(
+                f"unexpected V3Plus attention shape: {tuple(attentions.shape)}"
+            )
+        attn = last_query_attention[visual_pos_masks]
+    else:
+        attn = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
 
-    _, topk_indices = attn_based_token_selection(
-        features=visual_features.unsqueeze(0),
-        cls_attention=attn.unsqueeze(0),
-        num_retained_tokens=num_retained_tokens,
-    )
-    topk_indices = topk_indices.squeeze(0)
+    if variant == "certvid_v3plus" and inner_mode == "structured":
+        from .v3plus_inner import (
+            clear_v3plus_runtime,
+            record_v3plus_fallback,
+            select_v3plus_inner_tokens,
+        )
+
+        try:
+            try:
+                topk_indices = select_v3plus_inner_tokens(
+                    visual_features=visual_features,
+                    legacy_attention=attn,
+                    budget=num_retained_tokens,
+                    config=flashvid_config,
+                )
+            except (RuntimeError, TypeError, ValueError) as error:
+                record_v3plus_fallback(
+                    flashvid_config,
+                    reason=f"structured_selector_error: {error}",
+                    budget=num_retained_tokens,
+                )
+                _, topk_indices = attn_based_token_selection(
+                    features=visual_features.unsqueeze(0),
+                    cls_attention=attn.unsqueeze(0),
+                    num_retained_tokens=num_retained_tokens,
+                )
+                topk_indices = topk_indices.squeeze(0)
+        finally:
+            clear_v3plus_runtime(flashvid_config)
+    else:
+        _, topk_indices = attn_based_token_selection(
+            features=visual_features.unsqueeze(0),
+            cls_attention=attn.unsqueeze(0),
+            num_retained_tokens=num_retained_tokens,
+        )
+        topk_indices = topk_indices.squeeze(0)
+        if variant == "certvid_v3plus":
+            from .v3plus_inner import clear_v3plus_runtime
+
+            clear_v3plus_runtime(flashvid_config)
     topk_indices = topk_indices.clamp(min=0, max=max(0, int(visual_global_indices.numel()) - 1))
     all_global_indices = [non_visual_global_indices, visual_global_indices[topk_indices]]
     keep_indices = torch.sort(torch.cat(all_global_indices).unique()).values
