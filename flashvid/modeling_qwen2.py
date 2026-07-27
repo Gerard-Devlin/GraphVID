@@ -80,6 +80,20 @@ def Qwen2Model_forward(
         raise ValueError("FlashVID configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
+    compression_variant = str(
+        getattr(flashvid_config, "compression_variant", "")
+    ).strip().lower()
+    v3plusplus_gradient_mode = (
+        compression_variant == "certvid_v3plusplus"
+        and str(
+            getattr(flashvid_config, "v3plusplus_inner_mode", "gradient_nms")
+        ).strip().lower()
+        == "gradient_nms"
+    )
+    if v3plusplus_gradient_mode:
+        from .v3plusplus_inner import v3plusplus_strict_enabled
+
+        v3plusplus_gradient_mode = v3plusplus_strict_enabled(flashvid_config)
 
     assert all(decoder_layer.attention_type == "full_attention" for decoder_layer in self.layers[: self.config.num_hidden_layers])
     causal_mask = causal_mask_mapping["full_attention"]
@@ -87,7 +101,9 @@ def Qwen2Model_forward(
         # Only prunes visual tokens in prefilling stage.
         if is_prefill:
             if layer_idx == flashvid_config.pruning_layer - 1:
-                kwargs["output_attentions"] = True
+                # Strict PlusPlus computes its own inference-objective gradient
+                # and must never depend on a legacy FastV attention row.
+                kwargs["output_attentions"] = not v3plusplus_gradient_mode
             elif layer_idx == flashvid_config.pruning_layer:
                 kwargs["output_attentions"] = False
                 attn: torch.Tensor = attn_weights
@@ -106,6 +122,9 @@ def Qwen2Model_forward(
                     position_ids=position_ids,
                     position_embeddings=position_embeddings,
                     flashvid_config=flashvid_config,
+                    decoder_layer=decoder_layer,
+                    output_norm=self.norm,
+                    output_head=getattr(self, "_v3plusplus_output_head", None),
                 )
         hidden_states, attn_weights = decoder_layer(
             hidden_states,

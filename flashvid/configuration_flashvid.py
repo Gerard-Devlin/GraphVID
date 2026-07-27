@@ -131,6 +131,13 @@ class FlashVidConfig:
     v3plus_diversity_weight: float = field(default=0.15)
     v3plus_spatial_bonus: float = field(default=0.05)
 
+    # CertVID V3PlusPlus: V3 outer with inference-objective gradient pruning.
+    v3plusplus_inner_mode: str = field(default="gradient_nms")
+    v3plusplus_proxy_positions: int = field(default=4)
+    v3plusplus_nms_enabled: bool = field(default=True)
+    v3plusplus_nms_threshold: float = field(default=0.80)
+    v3plusplus_strict: bool = field(default=True)
+
     # CertVID V6: V3 design with scene-aware temporal structure and gating.
     certv6_scene_temporal: bool = field(default=True)
     certv6_gate_enabled: bool = field(default=True)
@@ -402,6 +409,7 @@ class FlashVidConfig:
     # "certvid_v10": trajectory-balanced motion evidence over a V3 backbone.
     # "certvid_v11": correspondence-lifted spatiotemporal V3 repair.
     # "certvid_v3plus": V3 outer coreset with structure-aware inner pruning.
+    # "certvid_v3plusplus": V3 outer with inference-objective gradient pruning.
     # "faithvid": mass-corrected functionally faithful merging path.
     # "prismvid": Qwen3 DeepStack-aware exact coreset path.
     compression_variant: str = field(default="flashvid")

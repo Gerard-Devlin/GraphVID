@@ -122,6 +122,10 @@ def _clear_certvid_sample(config) -> None:
         from flashvid.v3plus_inner import clear_v3plus_runtime
 
         clear_v3plus_runtime(config)
+    if str(getattr(config, "compression_variant", "")).strip().lower() == "certvid_v3plusplus":
+        from flashvid.v3plusplus_inner import clear_v3plusplus_runtime
+
+        clear_v3plusplus_runtime(config)
     config._debug_sample_id = "unknown"
     config._certvid_query_text = ""
     config._certvid_eval_category = None
@@ -237,6 +241,11 @@ class Llava_OneVision(lmms):
         v3plus_certificate_weight: float = 0.10,
         v3plus_diversity_weight: float = 0.15,
         v3plus_spatial_bonus: float = 0.05,
+        v3plusplus_inner_mode: str = "gradient_nms",
+        v3plusplus_proxy_positions: int = 4,
+        v3plusplus_nms_enabled: bool = True,
+        v3plusplus_nms_threshold: float = 0.80,
+        v3plusplus_strict: bool = True,
         # CertVID V6 parameters
         certv6_scene_temporal: bool = True,
         certv6_gate_enabled: bool = True,
@@ -612,6 +621,11 @@ class Llava_OneVision(lmms):
                 v3plus_certificate_weight=v3plus_certificate_weight,
                 v3plus_diversity_weight=v3plus_diversity_weight,
                 v3plus_spatial_bonus=v3plus_spatial_bonus,
+                v3plusplus_inner_mode=v3plusplus_inner_mode,
+                v3plusplus_proxy_positions=v3plusplus_proxy_positions,
+                v3plusplus_nms_enabled=v3plusplus_nms_enabled,
+                v3plusplus_nms_threshold=v3plusplus_nms_threshold,
+                v3plusplus_strict=v3plusplus_strict,
                 certv6_scene_temporal=certv6_scene_temporal,
                 certv6_gate_enabled=certv6_gate_enabled,
                 certv6_continuity_low=certv6_continuity_low,

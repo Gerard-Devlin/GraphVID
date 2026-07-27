@@ -191,6 +191,10 @@ def flashvid_compression(
         from .v3plus_inner import clear_v3plus_runtime
 
         clear_v3plus_runtime(flashvid_config)
+    if compression_variant == "certvid_v3plusplus":
+        from .v3plusplus_inner import clear_v3plusplus_runtime
+
+        clear_v3plusplus_runtime(flashvid_config)
     if compression_variant == "faithvid":
         from .faithvid_attention import clear_faithvid_runtime
 
@@ -252,6 +256,15 @@ def flashvid_compression(
         from .certvid_v3plus import certvid_v3plus_compression
 
         return certvid_v3plus_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
+    if compression_variant == "certvid_v3plusplus":
+        from .certvid_v3plusplus import certvid_v3plusplus_compression
+
+        return certvid_v3plusplus_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
@@ -360,7 +373,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -1046,6 +1059,9 @@ def fastv_prune(
     position_embeddings: Tuple[torch.Tensor, torch.Tensor],
     flashvid_config: FlashVidConfig,
     visual_pos_masks: Optional[torch.BoolTensor] = None,
+    decoder_layer=None,
+    output_norm=None,
+    output_head=None,
 ):
     bsz, seq_length, _ = hidden_states.shape
     device = hidden_states.device
@@ -1057,6 +1073,10 @@ def fastv_prune(
             from .v3plus_inner import clear_v3plus_runtime
 
             clear_v3plus_runtime(flashvid_config)
+        elif str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plusplus":
+            from .v3plusplus_inner import clear_v3plusplus_runtime
+
+            clear_v3plusplus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices
 
     # Obtain FlashVid arguments.
@@ -1080,13 +1100,71 @@ def fastv_prune(
             from .v3plus_inner import clear_v3plus_runtime
 
             clear_v3plus_runtime(flashvid_config)
+        elif str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plusplus":
+            from .v3plusplus_inner import clear_v3plusplus_runtime
+
+            clear_v3plusplus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
 
     num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
     num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+    if variant == "certvid_v3plusplus":
+        from .v3plusplus_inner import (
+            clear_v3plusplus_runtime,
+            record_v3plusplus_fallback,
+            select_v3plusplus_inner_tokens,
+            v3plusplus_strict_enabled,
+        )
+
+        inner_mode = str(
+            getattr(flashvid_config, "v3plusplus_inner_mode", "gradient_nms")
+        ).strip().lower()
+        try:
+            if inner_mode == "legacy":
+                raise RuntimeError("legacy mode requested")
+            topk_indices = select_v3plusplus_inner_tokens(
+                hidden_states=hidden_states,
+                visual_global_indices=visual_global_indices,
+                budget=num_retained_tokens,
+                decoder_layer=decoder_layer,
+                output_norm=output_norm,
+                output_head=output_head,
+                position_ids=position_ids,
+                position_embeddings=position_embeddings,
+                config=flashvid_config,
+            )
+        except (RuntimeError, TypeError, ValueError) as error:
+            record_v3plusplus_fallback(
+                flashvid_config,
+                reason=f"gradient_nms_error: {error}",
+                budget=num_retained_tokens,
+            )
+            if inner_mode != "legacy" and v3plusplus_strict_enabled(flashvid_config):
+                raise RuntimeError(
+                    "CertVID V3PlusPlus strict TRIO selection failed; refusing "
+                    "to silently fall back to legacy FastV"
+                ) from error
+            if attentions is None:
+                raise RuntimeError(
+                    "CertVID V3PlusPlus fallback requires legacy attention, but "
+                    "the gradient selector failed before attention was requested"
+                ) from error
+            legacy_attention = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
+            _, topk_indices = attn_based_token_selection(
+                features=visual_features.unsqueeze(0),
+                cls_attention=legacy_attention.unsqueeze(0),
+                num_retained_tokens=num_retained_tokens,
+            )
+            topk_indices = topk_indices.squeeze(0)
+        finally:
+            clear_v3plusplus_runtime(flashvid_config)
+    else:
+        topk_indices = None
     inner_mode = str(getattr(flashvid_config, "v3plus_inner_mode", "structured")).strip().lower()
-    if variant == "certvid_v3plus" and inner_mode == "structured":
+    if variant == "certvid_v3plusplus":
+        attn = None
+    elif variant == "certvid_v3plus" and inner_mode == "structured":
         # The FA2 fallback may return either a compact last-query row or a full
         # attention matrix. Normalize both shapes without touching legacy paths.
         last_query_attention = torch.mean(attentions, dim=1)
@@ -1100,7 +1178,9 @@ def fastv_prune(
     else:
         attn = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
 
-    if variant == "certvid_v3plus" and inner_mode == "structured":
+    if variant == "certvid_v3plusplus":
+        pass
+    elif variant == "certvid_v3plus" and inner_mode == "structured":
         from .v3plus_inner import (
             clear_v3plus_runtime,
             record_v3plus_fallback,

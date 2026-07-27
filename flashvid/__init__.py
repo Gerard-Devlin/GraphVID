@@ -215,6 +215,11 @@ def flashvid(
     v3plus_certificate_weight: float = 0.10,
     v3plus_diversity_weight: float = 0.15,
     v3plus_spatial_bonus: float = 0.05,
+    v3plusplus_inner_mode: str = "gradient_nms",
+    v3plusplus_proxy_positions: int = 4,
+    v3plusplus_nms_enabled: bool = True,
+    v3plusplus_nms_threshold: float = 0.80,
+    v3plusplus_strict: bool = True,
     certv6_scene_temporal: bool = True,
     certv6_gate_enabled: bool = True,
     certv6_continuity_low: float = 0.55,
@@ -679,6 +684,8 @@ def flashvid(
             "certvid_v3" selects a certified regularized D-optimal evidence design;
             "certvid_v3plus" keeps the V3 outer design and replaces only the
             LLaVA inner selector with structure-aware pruning;
+            "certvid_v3plusplus" keeps the V3 outer design and uses
+            inference-objective gradient saliency with feature-space NMS;
             "certvid_v6" adds continuity-gated scene structure to the V3 evidence design;
             "certvid_v7" preserves long-horizon relations with transition and trajectory evidence;
             "certvid_v8" preserves V3 anchors and repairs temporal/query evidence deficits;
@@ -762,8 +769,8 @@ def flashvid(
     """
 
     variant = str(compression_variant).strip().lower()
-    if variant == "certvid_v3plus" and type(model) is not LlavaQwenForCausalLM:
-        raise ValueError("certvid_v3plus currently supports LLaVA-OneVision only")
+    if variant in ("certvid_v3plus", "certvid_v3plusplus") and type(model) is not LlavaQwenForCausalLM:
+        raise ValueError(f"{variant} currently supports LLaVA-OneVision only")
 
     # Replace with custom methods.
     if type(model) is LlavaQwenForCausalLM:  ## For LLaVA-OneVision or LLaVA-Video
@@ -816,10 +823,10 @@ def flashvid(
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "certvid_v3plus":
         v3plus_inner_mode = str(v3plus_inner_mode).strip().lower()
@@ -827,6 +834,17 @@ def flashvid(
             raise ValueError(
                 f"v3plus_inner_mode must be structured or legacy, got {v3plus_inner_mode!r}"
             )
+    if variant == "certvid_v3plusplus":
+        v3plusplus_inner_mode = str(v3plusplus_inner_mode).strip().lower()
+        if v3plusplus_inner_mode not in ("gradient_nms", "legacy"):
+            raise ValueError(
+                "v3plusplus_inner_mode must be gradient_nms or legacy, "
+                f"got {v3plusplus_inner_mode!r}"
+            )
+        if int(v3plusplus_proxy_positions) <= 0:
+            raise ValueError("v3plusplus_proxy_positions must be positive")
+        if not (-1.0 <= float(v3plusplus_nms_threshold) <= 1.0):
+            raise ValueError("v3plusplus_nms_threshold must be in [-1, 1]")
     if variant == "graphvid":
         temporal_merge_mode = "graph"
 
@@ -943,6 +961,11 @@ def flashvid(
         v3plus_certificate_weight=v3plus_certificate_weight,
         v3plus_diversity_weight=v3plus_diversity_weight,
         v3plus_spatial_bonus=v3plus_spatial_bonus,
+        v3plusplus_inner_mode=v3plusplus_inner_mode,
+        v3plusplus_proxy_positions=v3plusplus_proxy_positions,
+        v3plusplus_nms_enabled=v3plusplus_nms_enabled,
+        v3plusplus_nms_threshold=v3plusplus_nms_threshold,
+        v3plusplus_strict=v3plusplus_strict,
         certv6_scene_temporal=certv6_scene_temporal,
         certv6_gate_enabled=certv6_gate_enabled,
         certv6_continuity_low=certv6_continuity_low,
@@ -1391,6 +1414,13 @@ def flashvid(
     # Store FlashVid Config in the model.
     setattr(model, "flashvid_config", flashvid_config)
     setattr(model.model, "flashvid_config", flashvid_config)
+    if variant == "certvid_v3plusplus":
+        output_head = getattr(model, "lm_head", None)
+        if output_head is None:
+            raise RuntimeError("certvid_v3plusplus requires the LLaVA language-model head")
+        # Qwen2Model.forward owns the pruning loop, while lm_head lives on the
+        # causal-LM wrapper. Keep a non-registered reference for the proxy loss.
+        object.__setattr__(model.model, "_v3plusplus_output_head", output_head)
     setattr(model.config, "flashvid_bypass_active", False)
     if type(model) in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration):
         setattr(model.model.language_model, "flashvid_config", flashvid_config)
