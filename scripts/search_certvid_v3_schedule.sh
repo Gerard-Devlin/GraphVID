@@ -15,7 +15,9 @@ PROCESSES="${NUM_PROCESSES:-6}"
 PORT="${MAIN_PROCESS_PORT:-18960}"
 TASKS="${TASKS:-videomme,mvbench,longvideobench_val_v}"
 RATES="${RATES:-0.10}"
-LIMIT="${LIMIT:-100}"
+LIMIT="${LIMIT-100}"
+SAMPLE_IDS_FILE="${SAMPLE_IDS_FILE:-}"
+SAMPLE_ID_FIELD="${SAMPLE_ID_FIELD:-id}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 FAIL_FAST="${FAIL_FAST:-1}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -56,6 +58,17 @@ if [[ "$DRY_RUN" != "1" && "$ACCELERATE" == */* && ! -x "$ACCELERATE" ]] \
   echo "Accelerate executable not found: $ACCELERATE" >&2
   exit 1
 fi
+if [[ -n "$SAMPLE_IDS_FILE" ]]; then
+  if [[ ! -f "$SAMPLE_IDS_FILE" ]]; then
+    echo "Sample-id file not found: $SAMPLE_IDS_FILE" >&2
+    exit 1
+  fi
+  SAMPLE_IDS_FILE="$(cd "$(dirname "$SAMPLE_IDS_FILE")" && pwd)/$(basename "$SAMPLE_IDS_FILE")"
+  if [[ -n "$LIMIT" ]]; then
+    echo "Fixed sample IDs supplied; disabling LIMIT=$LIMIT."
+    LIMIT=""
+  fi
+fi
 
 export HF_HOME="${HF_HOME:-/gluster/envs/users/xuyouwen/hf_home}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
@@ -73,6 +86,9 @@ mkdir -p "$OUTPUT_ROOT"
 MATRIX_PATH="$OUTPUT_ROOT/search_matrix.tsv"
 SKIPPED_PATH="$OUTPUT_ROOT/skipped_invalid.tsv"
 SUMMARY_PATH="$OUTPUT_ROOT/v3_schedule_summary.csv"
+if [[ -n "$SAMPLE_IDS_FILE" ]]; then
+  cp "$SAMPLE_IDS_FILE" "$OUTPUT_ROOT/selected_sample_ids.txt"
+fi
 
 printf 'name\touter_layers\tinner_layers\texpansion\tinner_retention\taverage_multiplier\n' \
   > "$MATRIX_PATH"
@@ -164,6 +180,7 @@ echo "Configurations: ${#CONFIG_ROWS[@]}"
 echo "Tasks: $TASKS"
 echo "Rates: $RATES"
 echo "Limit per task: ${LIMIT:-full}"
+echo "Fixed sample IDs: ${SAMPLE_IDS_FILE:-none}"
 echo "GPUs: $GPUS"
 echo
 column -t -s $'\t' "$MATRIX_PATH" 2>/dev/null || cat "$MATRIX_PATH"
@@ -224,6 +241,12 @@ for row in "${CONFIG_ROWS[@]}"; do
   )
   if [[ -n "$LIMIT" ]]; then
     cmd+=(LIMIT="$LIMIT")
+  fi
+  if [[ -n "$SAMPLE_IDS_FILE" ]]; then
+    cmd+=(
+      LMMS_EVAL_SAMPLE_IDS_FILE="$SAMPLE_IDS_FILE"
+      LMMS_EVAL_SAMPLE_ID_FIELD="$SAMPLE_ID_FIELD"
+    )
   fi
   cmd+=(bash scripts/llava_ov.sh)
 
