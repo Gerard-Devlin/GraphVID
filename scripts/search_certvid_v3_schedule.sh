@@ -250,10 +250,24 @@ for row in "${CONFIG_ROWS[@]}"; do
   fi
   cmd+=(bash scripts/llava_ov.sh)
 
+  run_succeeded=0
   if "${cmd[@]}" 2>&1 | tee "$run_dir/search.log"; then
-    echo "[$(date)] completed: $name"
+    result_count="$(
+      find "$run_dir" -type f -name '*_results.json' -print 2>/dev/null \
+        | wc -l \
+        | tr -d '[:space:]'
+    )"
+    if [[ "$result_count" -ge "$EXPECTED_RESULTS" ]]; then
+      run_succeeded=1
+      echo "[$(date)] completed: $name"
+    else
+      echo "[$(date)] FAILED: $name produced $result_count/$EXPECTED_RESULTS result files" >&2
+    fi
   else
     echo "[$(date)] FAILED: $name" >&2
+  fi
+
+  if [[ "$run_succeeded" != "1" ]]; then
     FAILURES=$((FAILURES + 1))
     if [[ "$FAIL_FAST" == "1" ]]; then
       exit 1

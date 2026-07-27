@@ -17,6 +17,7 @@ MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-18888}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
 
 PRETRAINED="${PRETRAINED:-lmms-lab/llava-onevision-qwen2-7b-ov}"
+MODEL_NAME="${MODEL_NAME:-llava_qwen}"
 METHODS="${METHODS:-flashvid}"
 RATES="${RATES:-0.10,0.15,0.20,0.25}"
 TASKS="${TASKS:-videomme,mvbench,longvideobench_val_v,egoschema}"
@@ -381,8 +382,8 @@ resolve_accelerate_launcher() {
 }
 
 base_model_args() {
-  printf 'pretrained=%s,conv_template=%s,mm_spatial_pool_mode=%s,max_frames_num=%s,attn_implementation=%s' \
-    "$PRETRAINED" "$CONV_TEMPLATE" "$MM_SPATIAL_POOL_MODE" "$MAX_FRAMES_NUM" "$ATTN_IMPLEMENTATION"
+  printf 'pretrained=%s,model_name=%s,conv_template=%s,mm_spatial_pool_mode=%s,max_frames_num=%s,attn_implementation=%s' \
+    "$PRETRAINED" "$MODEL_NAME" "$CONV_TEMPLATE" "$MM_SPATIAL_POOL_MODE" "$MAX_FRAMES_NUM" "$ATTN_IMPLEMENTATION"
 }
 
 common_compression_args() {
