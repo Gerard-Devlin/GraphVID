@@ -85,7 +85,23 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--tasks",
+        default="videomme,mvbench,longvideobench_val_v",
+        help="Comma-separated lmms-eval tasks required for a complete row.",
+    )
     args = parser.parse_args()
+
+    requested_tasks = {
+        task.strip() for task in args.tasks.split(",") if task.strip()
+    }
+    required_metrics: set[str] = set()
+    if "videomme" in requested_tasks:
+        required_metrics.add("videomme")
+    if "mvbench" in requested_tasks:
+        required_metrics.add("mvbench")
+    if "longvideobench_val_v" in requested_tasks:
+        required_metrics.add("longvideobench")
 
     manifest = _load_manifest(args.root)
     grouped: dict[tuple[str, str], dict[str, float]] = defaultdict(dict)
@@ -118,7 +134,8 @@ def main() -> None:
                 "mvbench": scores.get("mvbench", ""),
                 "longvideobench": scores.get("longvideobench", ""),
                 "mean_score": sum(available) / len(available) if available else "",
-                "complete": len(available) == 3,
+                "complete": bool(required_metrics)
+                and required_metrics.issubset(scores),
                 "result_paths": ";".join(result_paths[(run, rate)]),
             }
         )

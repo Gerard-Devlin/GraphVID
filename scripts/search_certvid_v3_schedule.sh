@@ -276,6 +276,7 @@ for row in "${CONFIG_ROWS[@]}"; do
 
   "$PYTHON_BIN" playground/summarize_v3_schedule_search.py \
     --root "$OUTPUT_ROOT" \
+    --tasks "$TASKS" \
     --output "$SUMMARY_PATH" || true
 
   PORT=$((PORT + 1))
@@ -284,6 +285,7 @@ done
 
 "$PYTHON_BIN" playground/summarize_v3_schedule_search.py \
   --root "$OUTPUT_ROOT" \
+  --tasks "$TASKS" \
   --output "$SUMMARY_PATH"
 
 echo "Search complete: $OUTPUT_ROOT"
