@@ -518,22 +518,45 @@ def certvid_v3_compression(
             0.30,
             max(0.0, _cfg_float(flashvid_config, "certv3_query_weight", 0.18) * query_confidence),
         )
+        visual_weights = [
+            _cfg_float(flashvid_config, "certv3_visual_attention_weight", 0.28),
+            _cfg_float(flashvid_config, "certv3_visual_novelty_weight", 0.20),
+            _cfg_float(flashvid_config, "certv3_visual_curvature_weight", 0.14),
+            _cfg_float(flashvid_config, "certv3_visual_event_weight", 0.12),
+            _cfg_float(flashvid_config, "certv3_visual_detail_weight", 0.12),
+            _cfg_float(flashvid_config, "certv3_visual_component_weight", 0.14),
+        ]
+        visual_weight_sum = sum(max(0.0, weight) for weight in visual_weights)
+        if visual_weight_sum <= 0.0:
+            raise ValueError("CertVID V3 visual weights must have a positive sum")
+        visual_weights = [max(0.0, weight) / visual_weight_sum for weight in visual_weights]
         visual_quality = _minmax(
-            0.28 * attention
-            + 0.20 * novelty
-            + 0.14 * curvature
-            + 0.12 * event
-            + 0.12 * detail
-            + 0.14 * component_value,
+            visual_weights[0] * attention
+            + visual_weights[1] * novelty
+            + visual_weights[2] * curvature
+            + visual_weights[3] * event
+            + visual_weights[4] * detail
+            + visual_weights[5] * component_value,
             dim=0,
         )
         quality = _minmax((1.0 - query_weight) * visual_quality + query_weight * query_score, dim=0)
+        event_weights = [
+            _cfg_float(flashvid_config, "certv3_event_novelty_weight", 0.34),
+            _cfg_float(flashvid_config, "certv3_event_curvature_weight", 0.28),
+            _cfg_float(flashvid_config, "certv3_event_frame_weight", 0.18),
+            _cfg_float(flashvid_config, "certv3_event_detail_weight", 0.10),
+            _cfg_float(flashvid_config, "certv3_event_query_weight", 0.10),
+        ]
+        event_weight_sum = sum(max(0.0, weight) for weight in event_weights)
+        if event_weight_sum <= 0.0:
+            raise ValueError("CertVID V3 event weights must have a positive sum")
+        event_weights = [max(0.0, weight) / event_weight_sum for weight in event_weights]
         event_score = _minmax(
-            0.34 * novelty
-            + 0.28 * curvature
-            + 0.18 * event
-            + 0.10 * detail
-            + 0.10 * query_score,
+            event_weights[0] * novelty
+            + event_weights[1] * curvature
+            + event_weights[2] * event
+            + event_weights[3] * detail
+            + event_weights[4] * query_score,
             dim=0,
         )
         demand_weight = 0.20 + 0.42 * quality + 0.20 * event_score + 0.18 * component_value

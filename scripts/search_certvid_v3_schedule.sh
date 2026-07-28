@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 STAGE="${STAGE:-coarse}"
+METHOD="${METHOD:-certvid_v3}"
 TOTAL_LAYERS="${TOTAL_LAYERS:-28}"
 MODEL="${PRETRAINED:-/home/xuyouwen/models/llava-onevision-qwen2-7b-ov}"
 PYTHON_BIN="${PYTHON_BIN:-/home/xuyouwen/.conda/envs/graphvid311/bin/python}"
@@ -176,6 +177,7 @@ if [[ "${#CONFIG_ROWS[@]}" -eq 0 ]]; then
 fi
 
 echo "Search root: $OUTPUT_ROOT"
+echo "Method: $METHOD"
 echo "Configurations: ${#CONFIG_ROWS[@]}"
 echo "Tasks: $TASKS"
 echo "Rates: $RATES"
@@ -226,7 +228,7 @@ for row in "${CONFIG_ROWS[@]}"; do
     PYTHON_BIN="$PYTHON_BIN"
     ACCELERATE="$ACCELERATE"
     PRETRAINED="$MODEL"
-    METHODS=certvid_v3
+    METHODS="$METHOD"
     TASKS="$TASKS"
     RATES="$RATES"
     MAX_FRAMES_NUM=32
