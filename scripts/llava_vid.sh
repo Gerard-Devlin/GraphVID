@@ -1,94 +1,201 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# LLaVA-Video lmms-eval runner. The defaults reproduce the FlashVID
+# LLaVA-Video preprocessing while allowing methods, tasks, and rates to vary.
+cd "$(dirname "$0")/.."
 
-# Evaluation benchmarks.
-TASKS=("videomme" "mvbench" "longvideobench_val_v" "egoschema")
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+export PYTHONPATH="$PWD:$PWD/lmms-eval:${PYTHONPATH:-}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-20480}"
+export LMMS_EVAL_SERIALIZE_DATASET_LOAD="${LMMS_EVAL_SERIALIZE_DATASET_LOAD:-1}"
 
-# Pretrained model path.
-PRETRAINED="lmms-lab/LLaVA-Video-7B-Qwen2"
+ACCELERATE="${ACCELERATE:-accelerate}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-18888}"
+NUM_PROCESSES="${NUM_PROCESSES:-1}"
 
-# ! FlashVid arguments.
-RETENTION_RATIOS=(0.10 0.15 0.20 0.25)
-## Dyseg (fixed)
-DO_SEGMENT=True
-MIN_SEGMENT_NUM=8
-COMPLEMENTARY_SEGMENT=True
-## ADTS and TSTM (fixed)
-TOKEN_SELECTION_METHOD=attn_div_v2
-TEMPORAL_THRESHOLD=0.8
-ALPHA=0.7
-COMPRESSION_VARIANT=${COMPRESSION_VARIANT:-flashvid}
-CERTV3_BUDGET_USES_EXPANSION=${CERTV3_BUDGET_USES_EXPANSION:-True}
-CERTV3_QUERY_ATOMS=${CERTV3_QUERY_ATOMS:-8}
-CERTV3_TEMPORAL_BINS=${CERTV3_TEMPORAL_BINS:-12}
-CERTV3_SPATIAL_BINS=${CERTV3_SPATIAL_BINS:-3}
-CERTV3_CANDIDATE_MULTIPLIER=${CERTV3_CANDIDATE_MULTIPLIER:-2.5}
-CERTV3_QUERY_WEIGHT=${CERTV3_QUERY_WEIGHT:-0.18}
-CERTV3_TRACK_THRESHOLD=${CERTV3_TRACK_THRESHOLD:-0.82}
-CERTV3_SPATIAL_PENALTY=${CERTV3_SPATIAL_PENALTY:-0.08}
-CERTV3_METRIC_DIM=${CERTV3_METRIC_DIM:-96}
-CERTV3_FRAME_COVERAGE_RATIO=${CERTV3_FRAME_COVERAGE_RATIO:-1.0}
-CERTV3_CELL_COVERAGE_RATIO=${CERTV3_CELL_COVERAGE_RATIO:-0.50}
-CERTV3_QUERY_THRESHOLD=${CERTV3_QUERY_THRESHOLD:-0.10}
-CERTV3_QUERY_PER_ATOM=${CERTV3_QUERY_PER_ATOM:-1}
-CERTV3_STRUCTURAL_WEIGHT=${CERTV3_STRUCTURAL_WEIGHT:-0.32}
-CERTV3_WHITENING_STRENGTH=${CERTV3_WHITENING_STRENGTH:-0.50}
-CERTV3_QUALITY_FLOOR=${CERTV3_QUALITY_FLOOR:-0.15}
-CERTV3_RIDGE=${CERTV3_RIDGE:-0.50}
-CERTV3_SWAP_STEPS=${CERTV3_SWAP_STEPS:-6}
-CERTV3_SWAP_POOL=${CERTV3_SWAP_POOL:-24}
-CERTV3_SWAP_MARGIN=${CERTV3_SWAP_MARGIN:-0.0001}
-CERTV3_FUSION_ALPHA=${CERTV3_FUSION_ALPHA:-0.12}
-CERTV3_ASSIGNMENT_TEMPERATURE=${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}
-FAITH_BUDGET_USES_EXPANSION=${FAITH_BUDGET_USES_EXPANSION:-True}
-FAITH_MASS_STRENGTH=${FAITH_MASS_STRENGTH:-1.0}
-FAITH_VARIANCE_STRENGTH=${FAITH_VARIANCE_STRENGTH:-0.50}
-FAITH_MERGE_ALPHA=${FAITH_MERGE_ALPHA:-1.0}
-FAITH_TEMPORAL_RADIUS=${FAITH_TEMPORAL_RADIUS:-1}
-FAITH_SPATIAL_RADIUS=${FAITH_SPATIAL_RADIUS:-0.75}
-FAITH_COMPONENT_BONUS=${FAITH_COMPONENT_BONUS:-0.08}
-FAITH_TEMPORAL_PENALTY=${FAITH_TEMPORAL_PENALTY:-0.04}
-FAITH_SPATIAL_PENALTY=${FAITH_SPATIAL_PENALTY:-0.04}
-FAITH_ASSIGNMENT_TOPK=${FAITH_ASSIGNMENT_TOPK:-2}
-FAITH_ASSIGNMENT_TEMPERATURE=${FAITH_ASSIGNMENT_TEMPERATURE:-0.07}
-FAITH_MAX_LOG_BIAS=${FAITH_MAX_LOG_BIAS:-20.0}
-FAITH_ATTENTION_STRICT=${FAITH_ATTENTION_STRICT:-True}
-FAITH_DEBUG=${FAITH_DEBUG:-False}
-## Inner-LLM Pruning (fixed)
-EXPANSION=1.25
-PRUNING_LAYER=20
-LLM_RETENTION_RATIO=0.3
+PRETRAINED="${PRETRAINED:-lmms-lab/LLaVA-Video-7B-Qwen2}"
+MODEL_NAME="${MODEL_NAME:-llava_qwen}"
+METHODS="${METHODS:-flashvid}"
+RATES="${RATES:-0.10,0.15,0.20,0.25}"
+TASKS="${TASKS:-videomme,mvbench,longvideobench_val_v,egoschema}"
+OUTPUT_PATH="${OUTPUT_PATH:-./logs/llava_video}"
+LIMIT="${LIMIT:-}"
+LOG_SAMPLES="${LOG_SAMPLES:-0}"
+BATCH_SIZE="${BATCH_SIZE:-1}"
 
-BASE_FLASHVID_ARGS="enable_flashvid=True,expansion=$EXPANSION,do_segment=$DO_SEGMENT,min_segment_num=$MIN_SEGMENT_NUM,complementary_segment=$COMPLEMENTARY_SEGMENT,token_selection_method=$TOKEN_SELECTION_METHOD,alpha=$ALPHA,temporal_threshold=$TEMPORAL_THRESHOLD,compression_variant=$COMPRESSION_VARIANT,certv3_budget_uses_expansion=$CERTV3_BUDGET_USES_EXPANSION,certv3_query_atoms=$CERTV3_QUERY_ATOMS,certv3_temporal_bins=$CERTV3_TEMPORAL_BINS,certv3_spatial_bins=$CERTV3_SPATIAL_BINS,certv3_candidate_multiplier=$CERTV3_CANDIDATE_MULTIPLIER,certv3_query_weight=$CERTV3_QUERY_WEIGHT,certv3_track_threshold=$CERTV3_TRACK_THRESHOLD,certv3_spatial_penalty=$CERTV3_SPATIAL_PENALTY,certv3_metric_dim=$CERTV3_METRIC_DIM,certv3_frame_coverage_ratio=$CERTV3_FRAME_COVERAGE_RATIO,certv3_cell_coverage_ratio=$CERTV3_CELL_COVERAGE_RATIO,certv3_query_threshold=$CERTV3_QUERY_THRESHOLD,certv3_query_per_atom=$CERTV3_QUERY_PER_ATOM,certv3_structural_weight=$CERTV3_STRUCTURAL_WEIGHT,certv3_whitening_strength=$CERTV3_WHITENING_STRENGTH,certv3_quality_floor=$CERTV3_QUALITY_FLOOR,certv3_ridge=$CERTV3_RIDGE,certv3_swap_steps=$CERTV3_SWAP_STEPS,certv3_swap_pool=$CERTV3_SWAP_POOL,certv3_swap_margin=$CERTV3_SWAP_MARGIN,certv3_fusion_alpha=$CERTV3_FUSION_ALPHA,certv3_assignment_temperature=$CERTV3_ASSIGNMENT_TEMPERATURE,faith_budget_uses_expansion=$FAITH_BUDGET_USES_EXPANSION,faith_mass_strength=$FAITH_MASS_STRENGTH,faith_variance_strength=$FAITH_VARIANCE_STRENGTH,faith_merge_alpha=$FAITH_MERGE_ALPHA,faith_temporal_radius=$FAITH_TEMPORAL_RADIUS,faith_spatial_radius=$FAITH_SPATIAL_RADIUS,faith_component_bonus=$FAITH_COMPONENT_BONUS,faith_temporal_penalty=$FAITH_TEMPORAL_PENALTY,faith_spatial_penalty=$FAITH_SPATIAL_PENALTY,faith_assignment_topk=$FAITH_ASSIGNMENT_TOPK,faith_assignment_temperature=$FAITH_ASSIGNMENT_TEMPERATURE,faith_max_log_bias=$FAITH_MAX_LOG_BIAS,faith_attention_strict=$FAITH_ATTENTION_STRICT,faith_debug=$FAITH_DEBUG,pruning_layer=$PRUNING_LAYER,llm_retention_ratio=$LLM_RETENTION_RATIO"
+DO_SEGMENT="${DO_SEGMENT:-True}"
+SEGMENT_THRESHOLD="${SEGMENT_THRESHOLD:-0.9}"
+MIN_SEGMENT_NUM="${MIN_SEGMENT_NUM:-8}"
+COMPLEMENTARY_SEGMENT="${COMPLEMENTARY_SEGMENT:-True}"
+ALPHA="${ALPHA:-0.70}"
+TEMPORAL_THRESHOLD="${TEMPORAL_THRESHOLD:-0.8}"
+EXPANSION="${EXPANSION:-1.25}"
+PRUNING_LAYER="${PRUNING_LAYER:-20}"
+LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-0.3}"
 
-# Model arguments.
-MAX_FRAMES_NUM=64
-CONV_TEMPLATE=qwen_1_5
-FORCE_SAMPLE=True
-ADD_TIME_INSTRUCTION=False
-MM_SPATIAL_POOL_MODE=average # * Different from LLaVA-OneVision
-MM_NEWLINE_POSITION=frame # Add newline token after each frame.
-ATTN_IMPLEMENTATION=flash_attention_2
-BASE_MODEL_ARGS="pretrained=$PRETRAINED,conv_template=$CONV_TEMPLATE,mm_spatial_pool_mode=$MM_SPATIAL_POOL_MODE,mm_newline_position=$MM_NEWLINE_POSITION,max_frames_num=$MAX_FRAMES_NUM,attn_implementation=$ATTN_IMPLEMENTATION,force_sample=$FORCE_SAMPLE,add_time_instruction=$ADD_TIME_INSTRUCTION"
+# LLaVA-Video table preprocessing. These intentionally differ from OneVision.
+MAX_FRAMES_NUM="${MAX_FRAMES_NUM:-64}"
+CONV_TEMPLATE="${CONV_TEMPLATE:-qwen_1_5}"
+MM_SPATIAL_POOL_MODE="${MM_SPATIAL_POOL_MODE:-average}"
+MM_NEWLINE_POSITION="${MM_NEWLINE_POSITION:-frame}"
+FORCE_SAMPLE="${FORCE_SAMPLE:-True}"
+ADD_TIME_INSTRUCTION="${ADD_TIME_INSTRUCTION:-False}"
+ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
+FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}"
+CERTV3_TOKEN_SELECTION_METHOD="${CERTV3_TOKEN_SELECTION_METHOD:-attn_div_stable}"
+FAITH_TOKEN_SELECTION_METHOD="${FAITH_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
 
-for retention_ratio in "${RETENTION_RATIOS[@]}"; do
-    echo "Running with retention_ratio=${retention_ratio}"
-    MODEL_ARGS="$BASE_MODEL_ARGS,$BASE_FLASHVID_ARGS,retention_ratio=${retention_ratio}"
-    for task in "${TASKS[@]}"; do
-        echo "Evaluating task: $task"
-        accelerate launch \
-            --main_process_port 18888 \
-            --num_processes 8 \
-            -m lmms_eval \
-            --model llava_vid \
-            --model_args $MODEL_ARGS \
-            --tasks $task \
-            --batch_size 1 \
-            --log_samples \
-            --log_samples_suffix "llava_vid" \
-            --output_path ./logs/flashvid
+CERTV3_BUDGET_USES_EXPANSION="${CERTV3_BUDGET_USES_EXPANSION:-True}"
+CERTV3_QUERY_ATOMS="${CERTV3_QUERY_ATOMS:-8}"
+CERTV3_TEMPORAL_BINS="${CERTV3_TEMPORAL_BINS:-12}"
+CERTV3_SPATIAL_BINS="${CERTV3_SPATIAL_BINS:-3}"
+CERTV3_CANDIDATE_MULTIPLIER="${CERTV3_CANDIDATE_MULTIPLIER:-2.5}"
+CERTV3_QUERY_WEIGHT="${CERTV3_QUERY_WEIGHT:-0.18}"
+CERTV3_VISUAL_ATTENTION_WEIGHT="${CERTV3_VISUAL_ATTENTION_WEIGHT:-0.28}"
+CERTV3_VISUAL_NOVELTY_WEIGHT="${CERTV3_VISUAL_NOVELTY_WEIGHT:-0.20}"
+CERTV3_VISUAL_CURVATURE_WEIGHT="${CERTV3_VISUAL_CURVATURE_WEIGHT:-0.14}"
+CERTV3_VISUAL_EVENT_WEIGHT="${CERTV3_VISUAL_EVENT_WEIGHT:-0.12}"
+CERTV3_VISUAL_DETAIL_WEIGHT="${CERTV3_VISUAL_DETAIL_WEIGHT:-0.12}"
+CERTV3_VISUAL_COMPONENT_WEIGHT="${CERTV3_VISUAL_COMPONENT_WEIGHT:-0.14}"
+CERTV3_EVENT_NOVELTY_WEIGHT="${CERTV3_EVENT_NOVELTY_WEIGHT:-0.34}"
+CERTV3_EVENT_CURVATURE_WEIGHT="${CERTV3_EVENT_CURVATURE_WEIGHT:-0.28}"
+CERTV3_EVENT_FRAME_WEIGHT="${CERTV3_EVENT_FRAME_WEIGHT:-0.18}"
+CERTV3_EVENT_DETAIL_WEIGHT="${CERTV3_EVENT_DETAIL_WEIGHT:-0.10}"
+CERTV3_EVENT_QUERY_WEIGHT="${CERTV3_EVENT_QUERY_WEIGHT:-0.10}"
+CERTV3_TRACK_THRESHOLD="${CERTV3_TRACK_THRESHOLD:-0.82}"
+CERTV3_SPATIAL_PENALTY="${CERTV3_SPATIAL_PENALTY:-0.08}"
+CERTV3_METRIC_DIM="${CERTV3_METRIC_DIM:-96}"
+CERTV3_FRAME_COVERAGE_RATIO="${CERTV3_FRAME_COVERAGE_RATIO:-1.0}"
+CERTV3_CELL_COVERAGE_RATIO="${CERTV3_CELL_COVERAGE_RATIO:-0.50}"
+CERTV3_QUERY_THRESHOLD="${CERTV3_QUERY_THRESHOLD:-0.10}"
+CERTV3_QUERY_PER_ATOM="${CERTV3_QUERY_PER_ATOM:-1}"
+CERTV3_STRUCTURAL_WEIGHT="${CERTV3_STRUCTURAL_WEIGHT:-0.32}"
+CERTV3_WHITENING_STRENGTH="${CERTV3_WHITENING_STRENGTH:-0.50}"
+CERTV3_QUALITY_FLOOR="${CERTV3_QUALITY_FLOOR:-0.15}"
+CERTV3_RIDGE="${CERTV3_RIDGE:-0.50}"
+CERTV3_SWAP_STEPS="${CERTV3_SWAP_STEPS:-6}"
+CERTV3_SWAP_POOL="${CERTV3_SWAP_POOL:-24}"
+CERTV3_SWAP_MARGIN="${CERTV3_SWAP_MARGIN:-0.0001}"
+CERTV3_FUSION_ALPHA="${CERTV3_FUSION_ALPHA:-0.12}"
+CERTV3_ASSIGNMENT_TEMPERATURE="${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}"
+
+FAITH_BUDGET_USES_EXPANSION="${FAITH_BUDGET_USES_EXPANSION:-True}"
+FAITH_MASS_STRENGTH="${FAITH_MASS_STRENGTH:-1.0}"
+FAITH_VARIANCE_STRENGTH="${FAITH_VARIANCE_STRENGTH:-0.50}"
+FAITH_MERGE_ALPHA="${FAITH_MERGE_ALPHA:-1.0}"
+FAITH_TEMPORAL_RADIUS="${FAITH_TEMPORAL_RADIUS:-1}"
+FAITH_SPATIAL_RADIUS="${FAITH_SPATIAL_RADIUS:-0.75}"
+FAITH_COMPONENT_BONUS="${FAITH_COMPONENT_BONUS:-0.08}"
+FAITH_TEMPORAL_PENALTY="${FAITH_TEMPORAL_PENALTY:-0.04}"
+FAITH_SPATIAL_PENALTY="${FAITH_SPATIAL_PENALTY:-0.04}"
+FAITH_ASSIGNMENT_TOPK="${FAITH_ASSIGNMENT_TOPK:-2}"
+FAITH_ASSIGNMENT_TEMPERATURE="${FAITH_ASSIGNMENT_TEMPERATURE:-0.07}"
+FAITH_MAX_LOG_BIAS="${FAITH_MAX_LOG_BIAS:-20.0}"
+FAITH_ATTENTION_STRICT="${FAITH_ATTENTION_STRICT:-True}"
+FAITH_DEBUG="${FAITH_DEBUG:-False}"
+
+split_csv() {
+  local text="$1"
+  text="${text//,/ }"
+  # shellcheck disable=SC2086
+  printf '%s\n' $text
+}
+
+resolve_accelerate_launcher() {
+  if command -v "$ACCELERATE" >/dev/null 2>&1; then
+    ACCELERATE_LAUNCHER=("$ACCELERATE" launch)
+    return
+  fi
+  if "$PYTHON_BIN" -c 'import accelerate' >/dev/null 2>&1; then
+    ACCELERATE_LAUNCHER=("$PYTHON_BIN" -m accelerate.commands.launch)
+    return
+  fi
+  echo "Accelerate is not installed in the active Python environment." >&2
+  exit 127
+}
+
+base_model_args() {
+  printf 'pretrained=%s,model_name=%s,conv_template=%s,mm_spatial_pool_mode=%s,mm_newline_position=%s,max_frames_num=%s,attn_implementation=%s,force_sample=%s,add_time_instruction=%s' \
+    "$PRETRAINED" "$MODEL_NAME" "$CONV_TEMPLATE" "$MM_SPATIAL_POOL_MODE" "$MM_NEWLINE_POSITION" "$MAX_FRAMES_NUM" "$ATTN_IMPLEMENTATION" "$FORCE_SAMPLE" "$ADD_TIME_INSTRUCTION"
+}
+
+common_compression_args() {
+  local rate="$1"
+  printf 'enable_flashvid=True,retention_ratio=%s,expansion=%s,do_segment=%s,segment_threshold=%s,min_segment_num=%s,complementary_segment=%s,alpha=%s,temporal_threshold=%s,pruning_layer=%s,llm_retention_ratio=%s' \
+    "$rate" "$EXPANSION" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" "$TEMPORAL_THRESHOLD" "$PRUNING_LAYER" "$LLM_RETENTION_RATIO"
+}
+
+certv3_args() {
+  printf 'certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s' \
+    "$CERTV3_BUDGET_USES_EXPANSION" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT"
+  printf ',certv3_visual_attention_weight=%s,certv3_visual_novelty_weight=%s,certv3_visual_curvature_weight=%s,certv3_visual_event_weight=%s,certv3_visual_detail_weight=%s,certv3_visual_component_weight=%s' \
+    "$CERTV3_VISUAL_ATTENTION_WEIGHT" "$CERTV3_VISUAL_NOVELTY_WEIGHT" "$CERTV3_VISUAL_CURVATURE_WEIGHT" "$CERTV3_VISUAL_EVENT_WEIGHT" "$CERTV3_VISUAL_DETAIL_WEIGHT" "$CERTV3_VISUAL_COMPONENT_WEIGHT"
+  printf ',certv3_event_novelty_weight=%s,certv3_event_curvature_weight=%s,certv3_event_frame_weight=%s,certv3_event_detail_weight=%s,certv3_event_query_weight=%s' \
+    "$CERTV3_EVENT_NOVELTY_WEIGHT" "$CERTV3_EVENT_CURVATURE_WEIGHT" "$CERTV3_EVENT_FRAME_WEIGHT" "$CERTV3_EVENT_DETAIL_WEIGHT" "$CERTV3_EVENT_QUERY_WEIGHT"
+  printf ',certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s' \
+    "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM"
+  printf ',certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
+    "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE"
+}
+
+method_args() {
+  local method="$1"
+  case "$method" in
+    flashvid)
+      printf 'compression_variant=flashvid,token_selection_method=%s' "$FLASHVID_TOKEN_SELECTION_METHOD"
+      ;;
+    certvid_v3)
+      printf 'compression_variant=certvid_v3,token_selection_method=%s,' "$CERTV3_TOKEN_SELECTION_METHOD"
+      certv3_args
+      ;;
+    faithvid)
+      printf 'compression_variant=faithvid,token_selection_method=%s,' "$FAITH_TOKEN_SELECTION_METHOD"
+      certv3_args
+      printf ',faith_budget_uses_expansion=%s,faith_mass_strength=%s,faith_variance_strength=%s,faith_merge_alpha=%s,faith_temporal_radius=%s,faith_spatial_radius=%s' \
+        "$FAITH_BUDGET_USES_EXPANSION" "$FAITH_MASS_STRENGTH" "$FAITH_VARIANCE_STRENGTH" "$FAITH_MERGE_ALPHA" "$FAITH_TEMPORAL_RADIUS" "$FAITH_SPATIAL_RADIUS"
+      printf ',faith_component_bonus=%s,faith_temporal_penalty=%s,faith_spatial_penalty=%s,faith_assignment_topk=%s,faith_assignment_temperature=%s,faith_max_log_bias=%s,faith_attention_strict=%s,faith_debug=%s' \
+        "$FAITH_COMPONENT_BONUS" "$FAITH_TEMPORAL_PENALTY" "$FAITH_SPATIAL_PENALTY" "$FAITH_ASSIGNMENT_TOPK" "$FAITH_ASSIGNMENT_TEMPERATURE" "$FAITH_MAX_LOG_BIAS" "$FAITH_ATTENTION_STRICT" "$FAITH_DEBUG"
+      ;;
+    *)
+      echo "Unsupported LLaVA-Video method: $method" >&2
+      return 1
+      ;;
+  esac
+}
+
+mkdir -p "$OUTPUT_PATH"
+resolve_accelerate_launcher
+
+for method in $(split_csv "$METHODS"); do
+  for rate in $(split_csv "$RATES"); do
+    model_args="$(base_model_args),$(common_compression_args "$rate"),$(method_args "$method")"
+    for task in $(split_csv "$TASKS"); do
+      run_output="$OUTPUT_PATH/${method}_r${rate}_${task}"
+      cmd=(
+        "${ACCELERATE_LAUNCHER[@]}"
+        --main_process_port "$MAIN_PROCESS_PORT"
+        --num_processes "$NUM_PROCESSES"
+        -m lmms_eval
+        --model llava_vid
+        --model_args "$model_args"
+        --tasks "$task"
+        --batch_size "$BATCH_SIZE"
+        --output_path "$run_output"
+      )
+      if [[ -n "$LIMIT" ]]; then
+        cmd+=(--limit "$LIMIT")
+      fi
+      if [[ "$LOG_SAMPLES" == "1" ]]; then
+        cmd+=(--log_samples --log_samples_suffix "llava_vid_${method}_r${rate}")
+      fi
+
+      printf '[lmms-eval] method=%s rate=%s task=%s\n' "$method" "$rate" "$task"
+      printf '[lmms-eval]'; printf ' %q' "${cmd[@]}"; printf '\n'
+      "${cmd[@]}"
     done
-    echo "Finished running with retention_ratio=${retention_ratio}"
+  done
 done
