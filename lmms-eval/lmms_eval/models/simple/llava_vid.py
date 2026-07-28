@@ -83,6 +83,7 @@ class LlavaVid(lmms):
         torch_dtype: Optional[Union[str, torch.dtype]] = "float16",
         device: Optional[str] = "cuda:0",
         batch_size: Optional[Union[int, str]] = 1,
+        model_name: Optional[str] = None,
         attn_implementation=(
             "sdpa" if torch.__version__ >= "2.1.2" else "eager"
         ),  # inference implementation for attention, can be "sdpa", "eager", "flash_attention_2". Seems FA2 is not effective during inference: https://discuss.huggingface.co/t/flash-attention-has-no-effect-on-inference/73453/5
@@ -179,7 +180,17 @@ class LlavaVid(lmms):
             self.device_map = f"cuda:{accelerator.local_process_index}"
 
         self.pretrained = pretrained
-        self.model_name = get_model_name_from_path(pretrained)
+        self.model_name = model_name or get_model_name_from_path(pretrained)
+        if model_name is None:
+            config = AutoConfig.from_pretrained(pretrained)
+            architectures = {
+                str(name).lower()
+                for name in getattr(config, "architectures", None) or ()
+            }
+            if any("llavaqwen" in name for name in architectures):
+                # HF snapshot paths end in a commit hash, so path-based model
+                # detection cannot identify the custom Qwen LLaVA loader.
+                self.model_name = "llava_qwen"
         self.video_decode_backend = video_decode_backend
         # self._config = AutoConfig.from_pretrained(self.pretrained)
         self.overwrite = overwrite

@@ -1,3 +1,4 @@
+import csv
 import datetime
 import json
 import os
@@ -190,8 +191,9 @@ def egoschema_process_results_generation(doc, result):
 
 def egoschema_aggregate_submissions(results, args, task):
     now_date_time = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    submission_file_name = f"inference_results_egoschema_{task}_{now_date_time}.json"
-    path = file_utils.generate_submission_file(submission_file_name, args)
+    submission_stem = f"inference_results_egoschema_{task}_{now_date_time}"
+    json_path = file_utils.generate_submission_file(f"{submission_stem}.json", args)
+    csv_path = file_utils.generate_submission_file(f"{submission_stem}.csv", args)
 
     # results is a list of 5031 dict,
     # need to convert results into a single dict with 5031 key-value pairs
@@ -200,10 +202,29 @@ def egoschema_aggregate_submissions(results, args, task):
     for submission_dict in results:
         combined_submission.update(submission_dict)
 
-    with open(path, "w") as f:
+    invalid_predictions = {
+        question_id: prediction
+        for question_id, prediction in combined_submission.items()
+        if not isinstance(prediction, (int, np.integer)) or int(prediction) not in range(5)
+    }
+    if invalid_predictions:
+        examples = list(invalid_predictions.items())[:5]
+        raise ValueError(
+            f"EgoSchema submission contains {len(invalid_predictions)} predictions outside 0..4; "
+            f"examples: {examples}"
+        )
+
+    with open(json_path, "w") as f:
         json.dump(combined_submission, f, indent=4)
 
-    eval_logger.info(f"Submission file saved to {path}")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["q_uid", "answer"])
+        for question_id, prediction in combined_submission.items():
+            writer.writerow([question_id, int(prediction)])
+
+    eval_logger.info(f"EgoSchema validation JSON saved to {json_path}")
+    eval_logger.info(f"EgoSchema Kaggle CSV saved to {csv_path}")
 
 
 # Factory into different aggregate
