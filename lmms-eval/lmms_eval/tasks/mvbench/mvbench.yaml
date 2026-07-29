@@ -1,4 +1,5 @@
 group: mvbench
+group_alias: total
 task:
   - mvbench_action_sequence
   - mvbench_moving_count
@@ -20,5 +21,8 @@ task:
   - mvbench_fine_grained_action
   - mvbench_moving_attribute
   - mvbench_egocentric_navigation
+aggregate_metric_list:
+  - metric: mvbench_accuracy
+    weight_by_size: true
 
 # ['action_sequence', 'moving_count', 'action_prediction', 'episodic_reasoning', 'action_antonym', 'action_count', 'scene_transition', 'object_shuffle', 'object_existence', 'fine_grained_pose', 'unexpected_action', 'moving_direction', 'state_change', 'object_interaction', 'character_order', 'action_localization', 'counterfactual_inference', 'fine_grained_action', 'moving_attribute', 'egocentric_navigation']
