@@ -35,6 +35,18 @@ TEMPORAL_THRESHOLD="${TEMPORAL_THRESHOLD:-0.8}"
 EXPANSION="${EXPANSION:-1.25}"
 PRUNING_LAYER="${PRUNING_LAYER:-20}"
 LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-0.3}"
+FASTV_PRUNING_LAYER="${FASTV_PRUNING_LAYER:-2}"
+ADAPTER_BUDGET_USES_EXPANSION="${ADAPTER_BUDGET_USES_EXPANSION:-False}"
+FASTVID_DYSEG_C="${FASTVID_DYSEG_C:-8}"
+FASTVID_DYSEG_TAU="${FASTVID_DYSEG_TAU:-0.90}"
+FASTVID_STPRUNE_D="${FASTVID_STPRUNE_D:-0.40}"
+FASTVID_DTM_P="${FASTVID_DTM_P:-4}"
+FASTVID_DTM_BETA="${FASTVID_DTM_BETA:-0.60}"
+VISIONZIP_DOMINANT_RATIO="${VISIONZIP_DOMINANT_RATIO:-0.9285714286}"
+PRUNEVID_SELECTED_LAYER="${PRUNEVID_SELECTED_LAYER:-10}"
+PRUNEVID_TAU="${PRUNEVID_TAU:-0.80}"
+PRUNEVID_TEMPORAL_SEGMENT_RATIO="${PRUNEVID_TEMPORAL_SEGMENT_RATIO:-0.25}"
+PRUNEVID_CLUSTER_RATIO="${PRUNEVID_CLUSTER_RATIO:-0.50}"
 
 # LLaVA-Video table preprocessing. These intentionally differ from OneVision.
 MAX_FRAMES_NUM="${MAX_FRAMES_NUM:-64}"
@@ -124,9 +136,29 @@ base_model_args() {
 }
 
 common_compression_args() {
-  local rate="$1"
+  local method="$1"
+  local rate="$2"
+  local expansion="$EXPANSION"
+  local pruning_layer="$PRUNING_LAYER"
+  local inner_ratio="$LLM_RETENTION_RATIO"
+  case "$method" in
+    fastv)
+      expansion="1.0"
+      pruning_layer="$FASTV_PRUNING_LAYER"
+      inner_ratio="$rate"
+      ;;
+    fastvid|visionzip)
+      expansion="1.0"
+      inner_ratio="1.0"
+      ;;
+    prunevid)
+      expansion="1.0"
+      pruning_layer="$PRUNEVID_SELECTED_LAYER"
+      inner_ratio="1.0"
+      ;;
+  esac
   printf 'enable_flashvid=True,retention_ratio=%s,expansion=%s,do_segment=%s,segment_threshold=%s,min_segment_num=%s,complementary_segment=%s,alpha=%s,temporal_threshold=%s,pruning_layer=%s,llm_retention_ratio=%s' \
-    "$rate" "$EXPANSION" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" "$TEMPORAL_THRESHOLD" "$PRUNING_LAYER" "$LLM_RETENTION_RATIO"
+    "$rate" "$expansion" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" "$TEMPORAL_THRESHOLD" "$pruning_layer" "$inner_ratio"
 }
 
 certv3_args() {
@@ -145,6 +177,21 @@ certv3_args() {
 method_args() {
   local method="$1"
   case "$method" in
+    fastv)
+      printf 'compression_variant=fastv,adapter_budget_uses_expansion=False'
+      ;;
+    fastvid)
+      printf 'compression_variant=fastvid,adapter_budget_uses_expansion=%s,fastvid_DySeg_c=%s,fastvid_DySeg_tau=%s,fastvid_STPrune_d=%s,fastvid_DTM_p=%s,fastvid_DTM_beta=%s' \
+        "$ADAPTER_BUDGET_USES_EXPANSION" "$FASTVID_DYSEG_C" "$FASTVID_DYSEG_TAU" "$FASTVID_STPRUNE_D" "$FASTVID_DTM_P" "$FASTVID_DTM_BETA"
+      ;;
+    visionzip)
+      printf 'compression_variant=visionzip,adapter_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \
+        "$ADAPTER_BUDGET_USES_EXPANSION" "$VISIONZIP_DOMINANT_RATIO"
+      ;;
+    prunevid)
+      printf 'compression_variant=prunevid,adapter_budget_uses_expansion=False,prunevid_tau=%s,prunevid_temporal_segment_ratio=%s,prunevid_cluster_ratio=%s' \
+        "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
+      ;;
     flashvid)
       printf 'compression_variant=flashvid,token_selection_method=%s' "$FLASHVID_TOKEN_SELECTION_METHOD"
       ;;
@@ -172,7 +219,7 @@ resolve_accelerate_launcher
 
 for method in $(split_csv "$METHODS"); do
   for rate in $(split_csv "$RATES"); do
-    model_args="$(base_model_args),$(common_compression_args "$rate"),$(method_args "$method")"
+    model_args="$(base_model_args),$(common_compression_args "$method" "$rate"),$(method_args "$method")"
     for task in $(split_csv "$TASKS"); do
       run_output="$OUTPUT_PATH/${method}_r${rate}_${task}"
       cmd=(

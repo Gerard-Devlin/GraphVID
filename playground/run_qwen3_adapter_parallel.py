@@ -13,7 +13,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid", "curvevid")
+SUPPORTED_METHODS = ("fastgraphvid", "curvevid")
 
 
 def _artifact_method_name(method: str) -> str:
@@ -178,12 +178,6 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
-    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
-    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
-    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
-    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
-    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
     parser.add_argument("--fastgraph_ats_ratio", type=float, default=0.60)
     parser.add_argument("--fastgraph_temporal_radius", type=int, default=1)
     parser.add_argument("--fastgraph_temporal_skip", type=int, default=1)
@@ -196,7 +190,6 @@ def main() -> None:
     parser.add_argument("--curvevid_temperature", type=float, default=0.70)
     parser.add_argument("--curvevid_mix", type=float, default=0.65)
     parser.add_argument("--curvevid_min_per_frame", type=int, default=1)
-    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     args = parser.parse_args()
 
     if args.gpu_ids:
@@ -269,18 +262,6 @@ def main() -> None:
             "--token_selection_method",
             args.token_selection_method,
             "--adapter_budget_uses_expansion" if args.adapter_budget_uses_expansion else "--no-adapter_budget_uses_expansion",
-            "--fastvid_DySeg_c",
-            str(args.fastvid_DySeg_c),
-            "--fastvid_DySeg_tau",
-            str(args.fastvid_DySeg_tau),
-            "--fastvid_DySeg_ignore",
-            str(args.fastvid_DySeg_ignore),
-            "--fastvid_STPrune_d",
-            str(args.fastvid_STPrune_d),
-            "--fastvid_DTM_p",
-            str(args.fastvid_DTM_p),
-            "--fastvid_DTM_beta",
-            str(args.fastvid_DTM_beta),
             "--fastgraph_ats_ratio",
             str(args.fastgraph_ats_ratio),
             "--fastgraph_temporal_radius",
@@ -305,8 +286,6 @@ def main() -> None:
             str(args.curvevid_mix),
             "--curvevid_min_per_frame",
             str(args.curvevid_min_per_frame),
-            "--visionzip_dominant_ratio",
-            str(args.visionzip_dominant_ratio),
         ]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)

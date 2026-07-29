@@ -11,7 +11,7 @@ set -euo pipefail
 #
 # We call playground/run_qwen3_matrix.py instead of `python -m lmms_eval`
 # because our runner records visual-token/latency metrics and dispatches
-# FlashVID/GraphVID/FastVID/VisionZip/CurveVID through the same hooks.
+# FlashVID/GraphVID/CurveVID through the same hooks.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
@@ -61,8 +61,6 @@ PRETRAINED="${PRETRAINED:-${HF_HUB_CACHE}/models--Qwen--Qwen3-VL-8B-Instruct/sna
 METHODS=(
   "flashvid"
   "graphvid"
-  "fastvid"
-  "visionzip"
   "curvevid"
 )
 

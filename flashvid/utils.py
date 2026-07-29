@@ -184,6 +184,10 @@ def flashvid_compression(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
+    if compression_variant != "fastvid":
+        setattr(flashvid_config, "_fastvid_frame_global_features", None)
+    if compression_variant != "visionzip":
+        setattr(flashvid_config, "_visionzip_metric", None)
     # A plan is prefill-local. Clearing it here prevents stale GPU tensors from
     # surviving an interrupted or fallback generation.
     setattr(flashvid_config, "_certvid_plan", None)
@@ -370,10 +374,18 @@ def flashvid_compression(
             question_features=question_features,
             deepstack_features=deepstack_features,
         )
+    if compression_variant in ("fastv", "fastvid", "visionzip", "prunevid"):
+        from .baseline_adapters import baseline_compression
+
+        return baseline_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+        )
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -1106,9 +1118,18 @@ def fastv_prune(
             clear_v3plusplus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
 
-    num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
-    num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+    if variant == "prunevid":
+        num_retained_tokens = int(
+            getattr(
+                flashvid_config,
+                "_prunevid_target_tokens",
+                math.ceil(visual_token_length * retention_ratio),
+            )
+        )
+    else:
+        num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
+    num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
     if variant == "certvid_v3plusplus":
         from .v3plusplus_inner import (
             clear_v3plusplus_runtime,
@@ -1210,12 +1231,58 @@ def fastv_prune(
         finally:
             clear_v3plus_runtime(flashvid_config)
     else:
-        _, topk_indices = attn_based_token_selection(
-            features=visual_features.unsqueeze(0),
-            cls_attention=attn.unsqueeze(0),
-            num_retained_tokens=num_retained_tokens,
-        )
-        topk_indices = topk_indices.squeeze(0)
+        if variant == "prunevid":
+            group_sizes = [
+                int(value)
+                for value in getattr(flashvid_config, "_prunevid_group_sizes", ())
+                if int(value) > 0
+            ]
+            if sum(group_sizes) != int(visual_features.shape[0]):
+                raise RuntimeError(
+                    "PruneVID group metadata does not match the visual token span"
+                )
+            exact = [
+                size * num_retained_tokens / max(1, int(visual_features.shape[0]))
+                for size in group_sizes
+            ]
+            quotas = [min(size, int(value)) for size, value in zip(group_sizes, exact)]
+            remaining = num_retained_tokens - sum(quotas)
+            order = sorted(
+                range(len(group_sizes)),
+                key=lambda idx: (exact[idx] - quotas[idx], group_sizes[idx], -idx),
+                reverse=True,
+            )
+            while remaining > 0:
+                progressed = False
+                for idx in order:
+                    if quotas[idx] < group_sizes[idx]:
+                        quotas[idx] += 1
+                        remaining -= 1
+                        progressed = True
+                        if remaining == 0:
+                            break
+                if not progressed:
+                    break
+
+            selected_groups = []
+            offset = 0
+            for size, quota in zip(group_sizes, quotas):
+                if quota > 0:
+                    local = torch.topk(attn[offset : offset + size], k=quota).indices
+                    selected_groups.append(local + offset)
+                offset += size
+            topk_indices = (
+                torch.cat(selected_groups).sort().values
+                if selected_groups
+                else torch.topk(attn, k=1).indices
+            )
+        else:
+            _, topk_indices = attn_based_token_selection(
+                features=visual_features.unsqueeze(0),
+                cls_attention=attn.unsqueeze(0),
+                num_retained_tokens=num_retained_tokens,
+            )
+            topk_indices = topk_indices.squeeze(0)
         if variant == "certvid_v3plus":
             from .v3plus_inner import clear_v3plus_runtime
 

@@ -567,6 +567,12 @@ class SigLipVisionTower(nn.Module):
 
         self.vision_tower = SigLipVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
 
+        # FastVID's released LLaVA implementation uses a lightweight
+        # SigLIP "vision abstract" containing only post-layernorm and the
+        # pretrained pooling head. Preserve that head before LLaVA removes it;
+        # the normal vision-tower forward remains unchanged for every method.
+        self.fastvid_vision_head = self.vision_tower.vision_model.head
+        self.fastvid_vision_head.requires_grad_(False)
         del self.vision_tower.vision_model.encoder.layers[-1:]
         self.vision_tower.vision_model.head = nn.Identity()
         self.vision_tower.requires_grad_(False)

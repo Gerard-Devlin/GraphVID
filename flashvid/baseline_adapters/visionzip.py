@@ -27,9 +27,29 @@ def visionzip_compression(
     dtype = video_features.dtype
     effective_ratio = _effective_ratio(flashvid_config)
     per_frame_target = max(1, min(num_visual_tokens, int(num_visual_tokens * effective_ratio)))
-    dominant_ratio = max(0.0, min(1.0, _cfg_float(flashvid_config, "visionzip_dominant_ratio", 0.85)))
+    # The released Qwen implementation allocates 65 dominant and 5 contextual
+    # tokens out of every 70 output tokens.
+    dominant_ratio = max(
+        0.0,
+        min(
+            1.0,
+            _cfg_float(flashvid_config, "visionzip_dominant_ratio", 65.0 / 70.0),
+        ),
+    )
     dominant_num = min(per_frame_target, max(0, int(round(per_frame_target * dominant_ratio))))
     contextual_num = max(0, per_frame_target - dominant_num)
+
+    metric = getattr(flashvid_config, "_visionzip_metric", None)
+    if (
+        metric is None
+        or metric.ndim != 3
+        or metric.shape[:2] != video_features.shape[:2]
+    ):
+        raise RuntimeError(
+            "VisionZip requires the official vision-key metric; "
+            "the LLaVA SigLIP hook did not provide it"
+        )
+    metric = metric.to(device=device)
 
     global_indices = torch.arange(
         num_frames * num_visual_tokens,
@@ -62,7 +82,12 @@ def visionzip_compression(
             if filtered_indices.numel() > 0:
                 contextual_num_eff = min(contextual_num, int(filtered_indices.numel()))
                 hidden_states_filtered = hidden_states[filtered_indices]
-                metric_normalized = F.normalize(hidden_states_filtered.float(), p=2, dim=-1, eps=1e-6)
+                metric_normalized = F.normalize(
+                    metric[frame_idx, filtered_indices].float(),
+                    p=2,
+                    dim=-1,
+                    eps=1e-6,
+                )
 
                 step = max(1, metric_normalized.shape[0] // contextual_num_eff)
                 target_positions = torch.arange(

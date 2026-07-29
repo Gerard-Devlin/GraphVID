@@ -69,7 +69,7 @@ PY
 
 bench_method_name() {
   case "$1" in
-    fastvid|visionzip|fastgraphvid|curvevid) printf '%s_qwen3_adapter' "$1" ;;
+    fastgraphvid|curvevid) printf '%s_qwen3_adapter' "$1" ;;
     *) printf '%s' "$1" ;;
   esac
 }

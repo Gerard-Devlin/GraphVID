@@ -39,7 +39,7 @@ def fastvid_compression(
     cls_attention: torch.Tensor,
     flashvid_config: FlashVidConfig,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """FastVID DySeg + STPrune + DTM compression adapted to Qwen3 visual tokens.
+    """Released FastVID DySeg + STPrune + DTM for LLaVA SigLIP tokens.
 
     The pruning block mirrors the released LLaVA-OneVision/Qwen2.5-VL FastVID
     logic: dynamic temporal segmentation, attention-selected salient tokens,
@@ -61,7 +61,24 @@ def fastvid_compression(
     video_hidden_states = video_features
     frame_attn_weights = cls_attention.float()
 
-    segment_sizes = _fastvid_segment_sizes(video_features.mean(dim=1), flashvid_config)
+    frame_global_features = getattr(
+        flashvid_config,
+        "_fastvid_frame_global_features",
+        None,
+    )
+    if (
+        frame_global_features is None
+        or frame_global_features.ndim != 2
+        or frame_global_features.shape[0] != frame_num
+    ):
+        raise RuntimeError(
+            "FastVID requires the official SigLIP pooling-head frame features; "
+            "the LLaVA vision hook did not provide them"
+        )
+    segment_sizes = _fastvid_segment_sizes(
+        frame_global_features.to(video_features.device),
+        flashvid_config,
+    )
 
     frame_retain_num = int(frame_token_len * fastvid_retention_ratio)
     frame_retain_num = max(1, min(frame_token_len, frame_retain_num))

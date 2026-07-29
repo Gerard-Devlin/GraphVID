@@ -21,7 +21,7 @@ set +e
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" \
 PRETRAINED="${PRETRAINED:-/root/models}" \
 HF_HOME="${HF_HOME:-/root/autodl-tmp/hf_home}" \
-METHODS="${METHODS:-flashvid,graphvid,fastvid,fastgraphvid}" \
+METHODS="${METHODS:-flashvid,graphvid,fastgraphvid}" \
 RATES="${RATES:-0.10}" \
 LIMIT="${LIMIT:-50}" \
 LOG_SAMPLES="${LOG_SAMPLES:-1}" \

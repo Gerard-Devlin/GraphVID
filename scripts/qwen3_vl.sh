@@ -31,7 +31,7 @@ MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-18888}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 
 PRETRAINED="${PRETRAINED:-$HF_HOME/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b}"
-METHODS="${METHODS:-flashvid,graphvid,fastvid,fastgraphvid,visionzip}"
+METHODS="${METHODS:-flashvid,graphvid,fastgraphvid}"
 RATES="${RATES:-0.10,0.15,0.20,0.25}"
 TASKS="${TASKS:-videomme,egoschema,mvbench,longvideobench_val_v}"
 OUTPUT_PATH="${OUTPUT_PATH:-./logs/lmms_eval_qwen3_8b}"
@@ -76,12 +76,6 @@ GRAPH_FRAME_FLOOR_RATIO="${GRAPH_FRAME_FLOOR_RATIO:-0.55}"
 GRAPH_SKIP_SPATIAL_MERGE_WHEN_CAPPED="${GRAPH_SKIP_SPATIAL_MERGE_WHEN_CAPPED:-False}"
 
 ADAPTER_BUDGET_USES_EXPANSION="${ADAPTER_BUDGET_USES_EXPANSION:-True}"
-FASTVID_DYSEG_C="${FASTVID_DYSEG_C:-8}"
-FASTVID_DYSEG_TAU="${FASTVID_DYSEG_TAU:-0.90}"
-FASTVID_DYSEG_IGNORE="${FASTVID_DYSEG_IGNORE:-0.95}"
-FASTVID_STPRUNE_D="${FASTVID_STPRUNE_D:-0.40}"
-FASTVID_DTM_P="${FASTVID_DTM_P:-4}"
-FASTVID_DTM_BETA="${FASTVID_DTM_BETA:-0.60}"
 
 FASTGRAPH_ATS_RATIO="${FASTGRAPH_ATS_RATIO:-0.60}"
 FASTGRAPH_TEMPORAL_RADIUS="${FASTGRAPH_TEMPORAL_RADIUS:-1}"
@@ -92,7 +86,6 @@ FASTGRAPH_PROTECT_RATIO="${FASTGRAPH_PROTECT_RATIO:-0.15}"
 FASTGRAPH_ATTN_WEIGHT="${FASTGRAPH_ATTN_WEIGHT:-0.55}"
 FASTGRAPH_NOVELTY_WEIGHT="${FASTGRAPH_NOVELTY_WEIGHT:-0.30}"
 FASTGRAPH_DENSITY_WEIGHT="${FASTGRAPH_DENSITY_WEIGHT:-0.15}"
-VISIONZIP_DOMINANT_RATIO="${VISIONZIP_DOMINANT_RATIO:-0.85}"
 
 APEX_EVIDENCE_RATIO="${APEX_EVIDENCE_RATIO:-0.45}"
 APEX_EVENT_RATIO="${APEX_EVENT_RATIO:-0.30}"
@@ -526,13 +519,9 @@ method_flash_args() {
       printf 'compression_variant=graphvid,token_selection_method=%s,graph_temporal_topk=%s,graph_temporal_radius=%s,graph_temporal_skip=%s,graph_merge_protect_ratio=%s,graph_merge_target_ratio=%s,graph_merge_representative=%s,graph_final_tokens_per_frame=%s,graph_final_frame_floor_ratio=%s,graph_skip_spatial_merge_when_capped=%s' \
         "$GRAPHVID_TOKEN_SELECTION_METHOD" "$GRAPH_TEMPORAL_TOPK" "$GRAPH_TEMPORAL_RADIUS" "$GRAPH_TEMPORAL_SKIP" "$GRAPH_PROTECT_RATIO" "$GRAPH_TARGET_RATIO" "$GRAPH_REPRESENTATIVE" "$GRAPH_FINAL_TPF" "$GRAPH_FRAME_FLOOR_RATIO" "$GRAPH_SKIP_SPATIAL_MERGE_WHEN_CAPPED"
       ;;
-    fastvid)
-      printf 'compression_variant=fastvid,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,fastvid_DySeg_c=%s,fastvid_DySeg_tau=%s,fastvid_DySeg_ignore=%s,fastvid_STPrune_d=%s,fastvid_DTM_p=%s,fastvid_DTM_beta=%s' \
-        "$ADAPTER_TOKEN_SELECTION_METHOD" "$ADAPTER_BUDGET_USES_EXPANSION" "$ADAPTER_BUDGET_USES_EXPANSION" "$FASTVID_DYSEG_C" "$FASTVID_DYSEG_TAU" "$FASTVID_DYSEG_IGNORE" "$FASTVID_STPRUNE_D" "$FASTVID_DTM_P" "$FASTVID_DTM_BETA"
-      ;;
     fastgraphvid)
-      printf 'compression_variant=fastgraphvid,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,fastvid_DySeg_c=%s,fastvid_DySeg_tau=%s,fastvid_DySeg_ignore=%s,fastvid_STPrune_d=%s,fastvid_DTM_p=%s,fastvid_DTM_beta=%s,fastgraph_ats_ratio=%s,fastgraph_temporal_radius=%s,fastgraph_temporal_skip=%s,fastgraph_temporal_topk=%s,fastgraph_edge_threshold=%s,fastgraph_protect_ratio=%s,fastgraph_attn_weight=%s,fastgraph_novelty_weight=%s,fastgraph_density_weight=%s' \
-        "$ADAPTER_TOKEN_SELECTION_METHOD" "$ADAPTER_BUDGET_USES_EXPANSION" "$ADAPTER_BUDGET_USES_EXPANSION" "$FASTVID_DYSEG_C" "$FASTVID_DYSEG_TAU" "$FASTVID_DYSEG_IGNORE" "$FASTVID_STPRUNE_D" "$FASTVID_DTM_P" "$FASTVID_DTM_BETA" "$FASTGRAPH_ATS_RATIO" "$FASTGRAPH_TEMPORAL_RADIUS" "$FASTGRAPH_TEMPORAL_SKIP" "$FASTGRAPH_TEMPORAL_TOPK" "$FASTGRAPH_EDGE_THRESHOLD" "$FASTGRAPH_PROTECT_RATIO" "$FASTGRAPH_ATTN_WEIGHT" "$FASTGRAPH_NOVELTY_WEIGHT" "$FASTGRAPH_DENSITY_WEIGHT"
+      printf 'compression_variant=fastgraphvid,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,fastgraph_ats_ratio=%s,fastgraph_temporal_radius=%s,fastgraph_temporal_skip=%s,fastgraph_temporal_topk=%s,fastgraph_edge_threshold=%s,fastgraph_protect_ratio=%s,fastgraph_attn_weight=%s,fastgraph_novelty_weight=%s,fastgraph_density_weight=%s' \
+        "$ADAPTER_TOKEN_SELECTION_METHOD" "$ADAPTER_BUDGET_USES_EXPANSION" "$ADAPTER_BUDGET_USES_EXPANSION" "$FASTGRAPH_ATS_RATIO" "$FASTGRAPH_TEMPORAL_RADIUS" "$FASTGRAPH_TEMPORAL_SKIP" "$FASTGRAPH_TEMPORAL_TOPK" "$FASTGRAPH_EDGE_THRESHOLD" "$FASTGRAPH_PROTECT_RATIO" "$FASTGRAPH_ATTN_WEIGHT" "$FASTGRAPH_NOVELTY_WEIGHT" "$FASTGRAPH_DENSITY_WEIGHT"
       ;;
     apexvid)
       printf 'compression_variant=apexvid,token_selection_method=%s,apex_evidence_ratio=%s,apex_event_ratio=%s,apex_memory_ratio=%s,apex_router_strength=%s,apex_summary_temperature=%s,apex_frame_floor_ratio=%s,apex_question_weight=%s' \
@@ -605,10 +594,6 @@ method_flash_args() {
     faithvid)
       printf 'compression_variant=faithvid,token_selection_method=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,faith_budget_uses_expansion=%s,faith_mass_strength=%s,faith_variance_strength=%s,faith_merge_alpha=%s,faith_temporal_radius=%s,faith_spatial_radius=%s,faith_component_bonus=%s,faith_temporal_penalty=%s,faith_spatial_penalty=%s,faith_assignment_topk=%s,faith_assignment_temperature=%s,faith_max_log_bias=%s,faith_attention_strict=%s,faith_debug=%s' \
         "$FAITH_TOKEN_SELECTION_METHOD" "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM" "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$FAITH_BUDGET_USES_EXPANSION" "$FAITH_MASS_STRENGTH" "$FAITH_VARIANCE_STRENGTH" "$FAITH_MERGE_ALPHA" "$FAITH_TEMPORAL_RADIUS" "$FAITH_SPATIAL_RADIUS" "$FAITH_COMPONENT_BONUS" "$FAITH_TEMPORAL_PENALTY" "$FAITH_SPATIAL_PENALTY" "$FAITH_ASSIGNMENT_TOPK" "$FAITH_ASSIGNMENT_TEMPERATURE" "$FAITH_MAX_LOG_BIAS" "$FAITH_ATTENTION_STRICT" "$FAITH_DEBUG"
-      ;;
-    visionzip)
-      printf 'compression_variant=visionzip,token_selection_method=%s,adapter_budget_uses_expansion=%s,external_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \
-        "$ADAPTER_TOKEN_SELECTION_METHOD" "$ADAPTER_BUDGET_USES_EXPANSION" "$ADAPTER_BUDGET_USES_EXPANSION" "$VISIONZIP_DOMINANT_RATIO"
       ;;
     *)
       echo "Unknown method: $method" >&2

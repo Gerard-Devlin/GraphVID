@@ -12,13 +12,45 @@ from llava.model.multimodal_encoder.siglip_encoder import (
 
 @torch.no_grad()
 def SigLipVisionTower_forward(self: SigLipVisionTower, images: torch.Tensor):
+    variant = str(getattr(self, "_flashvid_variant", "flashvid")).strip().lower()
     image_forward_outs = self.vision_tower(
         images.to(device=self.device, dtype=self.dtype),
         output_attentions=True,
         output_hidden_states=True,
     )
-    image_features = image_forward_outs.hidden_states[-1].to(images.dtype)
-    cls_attentions = image_forward_outs.attentions[-1].to(images.dtype)
+    if variant == "visionzip":
+        image_features = image_forward_outs.hidden_states[-1].to(images.dtype)
+        cls_attentions = image_forward_outs.attentions[-1].to(images.dtype)
+        metric = getattr(
+            self.vision_tower.vision_model.encoder.layers[-1].self_attn,
+            "visionzip_metric",
+            None,
+        )
+        if metric is None:
+            raise RuntimeError("VisionZip key metric was not captured at vision layer -2")
+        self._visionzip_metric = metric.to(images.dtype)
+    else:
+        image_features = image_forward_outs.hidden_states[-1].to(images.dtype)
+        cls_attentions = image_forward_outs.attentions[-1].to(images.dtype)
+
+    if variant == "fastvid":
+        vision_model = self.vision_tower.vision_model
+        normalized = vision_model.post_layernorm(image_features)
+        head = getattr(self, "fastvid_vision_head", None)
+        if head is None:
+            raise RuntimeError("FastVID SigLIP pooling head was not preserved at model load")
+        probe = head.probe.repeat(normalized.shape[0], 1, 1)
+        pooled_output, pool_attention = head.attention(
+            probe,
+            normalized,
+            normalized,
+            need_weights=True,
+        )
+        pooled_output = pooled_output + head.mlp(head.layernorm(pooled_output))
+        self._fastvid_frame_global_features = (
+            pooled_output[:, 0] if pooled_output.ndim == 3 else pooled_output
+        ).to(images.dtype)
+        cls_attentions = pool_attention[:, 0].to(images.dtype)
     assert image_features.shape[-2] == 729
 
     return image_features, cls_attentions
@@ -66,7 +98,14 @@ def SigLipAttention_forward(
 
     attn_output = self.out_proj(attn_output)
 
-    if getattr(self, "is_last_layer", False):
+    if getattr(self, "capture_visionzip", False):
+        self.visionzip_metric = (
+            key_states.transpose(1, 2)
+            .contiguous()
+            .reshape(batch_size, q_len, self.embed_dim)
+            .detach()
+        )
+    if getattr(self, "is_last_layer", False) or getattr(self, "capture_visionzip", False):
         return attn_output, attn_weights.mean(1).mean(1)
     else:
         return attn_output, None

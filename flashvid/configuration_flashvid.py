@@ -8,6 +8,18 @@ class FlashVidConfig:
     # Average retention ratio.
     retention_ratio: float = field(default=0.25)
 
+    # Released baseline adapters for the LLaVA family.
+    adapter_budget_uses_expansion: bool = field(default=False)
+    fastvid_DySeg_c: int = field(default=8)
+    fastvid_DySeg_tau: float = field(default=0.90)
+    fastvid_STPrune_d: float = field(default=0.40)
+    fastvid_DTM_p: int = field(default=4)
+    fastvid_DTM_beta: float = field(default=0.60)
+    visionzip_dominant_ratio: float = field(default=65.0 / 70.0)
+    prunevid_tau: float = field(default=0.80)
+    prunevid_temporal_segment_ratio: float = field(default=0.25)
+    prunevid_cluster_ratio: float = field(default=0.50)
+
     # 1) Token Selection Method. Defaults to ADTS.
     alpha: float = field(default=0.7) # Ratio of ADTS tokens.
     token_selection_method: str = field(default="attn_div")

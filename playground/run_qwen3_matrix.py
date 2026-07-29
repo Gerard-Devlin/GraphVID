@@ -66,7 +66,7 @@ def _parse_method_list(text: str) -> list[str]:
     methods = [x.strip().lower() for x in str(text).split(",") if x.strip()]
     allowed = {
         "graphvid", "flashvid", "talon", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid",
-        "fastvid", "visionzip", "fastgraphvid", "curvevid",
+        "fastgraphvid", "curvevid",
     }
     unknown = sorted(set(methods) - allowed)
     if unknown:
@@ -106,7 +106,7 @@ def _phase_name(method: str) -> str:
 
 
 def _run_method_name(method: str) -> str:
-    if method in ("fastvid", "visionzip", "fastgraphvid", "curvevid"):
+    if method in ("fastgraphvid", "curvevid"):
         return f"{method}_qwen3_adapter"
     return method
 
@@ -161,7 +161,7 @@ def _build_command(
     run_method = _run_method_name(method)
     method_tag = f"{args.tag}_{run_method}_r{rate_label.replace('.', 'p')}_{dataset_name}"
     summary_path = REPO_ROOT / "logs" / "efficiency" / "parallel" / method_tag / f"{method_tag}_summary.json"
-    if method in ("fastvid", "visionzip", "fastgraphvid", "curvevid"):
+    if method in ("fastgraphvid", "curvevid"):
         cmd = [
             sys.executable,
             "-u",
@@ -213,18 +213,6 @@ def _build_command(
             "--token_selection_method",
             args.token_selection_method,
             "--adapter_budget_uses_expansion" if args.adapter_budget_uses_expansion else "--no-adapter_budget_uses_expansion",
-            "--fastvid_DySeg_c",
-            str(args.fastvid_DySeg_c),
-            "--fastvid_DySeg_tau",
-            str(args.fastvid_DySeg_tau),
-            "--fastvid_DySeg_ignore",
-            str(args.fastvid_DySeg_ignore),
-            "--fastvid_STPrune_d",
-            str(args.fastvid_STPrune_d),
-            "--fastvid_DTM_p",
-            str(args.fastvid_DTM_p),
-            "--fastvid_DTM_beta",
-            str(args.fastvid_DTM_beta),
             "--fastgraph_ats_ratio",
             str(args.fastgraph_ats_ratio),
             "--fastgraph_temporal_radius",
@@ -249,8 +237,6 @@ def _build_command(
             str(args.curvevid_mix),
             "--curvevid_min_per_frame",
             str(args.curvevid_min_per_frame),
-            "--visionzip_dominant_ratio",
-            str(args.visionzip_dominant_ratio),
         ]
         if args.gpu_ids:
             cmd.extend(["--gpu_ids", args.gpu_ids])
@@ -809,7 +795,7 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="graphvid",
-        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_v8,certvid_v9,certvid_v10,certvid_v11,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastvid,visionzip,fastgraphvid,curvevid.",
+        help="Comma list: graphvid,flashvid,talon,apexvid,certvid,certvid_v2,certvid_v3,certvid_v6,certvid_v7,certvid_v8,certvid_v9,certvid_v10,certvid_v11,certvid_v4,certvid_v5,certvid_e,faithvid,prismvid,fastgraphvid,curvevid.",
     )
     parser.add_argument("--rates", default="10,15,20,25", help="Retention ratios in percent or decimals.")
     parser.add_argument("--tag", default="qwen3_matrix")
@@ -1065,12 +1051,6 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
-    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
-    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
-    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
-    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
-    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
-    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
     parser.add_argument("--fastgraph_ats_ratio", type=float, default=0.60)
     parser.add_argument("--fastgraph_temporal_radius", type=int, default=1)
     parser.add_argument("--fastgraph_temporal_skip", type=int, default=1)
@@ -1083,7 +1063,6 @@ def main() -> None:
     parser.add_argument("--curvevid_temperature", type=float, default=0.70)
     parser.add_argument("--curvevid_mix", type=float, default=0.65)
     parser.add_argument("--curvevid_min_per_frame", type=int, default=1)
-    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     args, extra_args = parser.parse_known_args()
     args.extra_args = extra_args
 

@@ -451,6 +451,16 @@ def flashvid(
     faith_debug: bool = False,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
+    adapter_budget_uses_expansion: bool = False,
+    fastvid_DySeg_c: int = 8,
+    fastvid_DySeg_tau: float = 0.90,
+    fastvid_STPrune_d: float = 0.40,
+    fastvid_DTM_p: int = 4,
+    fastvid_DTM_beta: float = 0.60,
+    visionzip_dominant_ratio: float = 65.0 / 70.0,
+    prunevid_tau: float = 0.80,
+    prunevid_temporal_segment_ratio: float = 0.25,
+    prunevid_cluster_ratio: float = 0.50,
     question_aware_reweighting: bool = False,
     question_reweight_beta: float = 0.35,
     # TALON params.
@@ -792,7 +802,12 @@ def flashvid(
         Qwen2Attention.forward = Qwen2Attention_forward
         Qwen2DecoderLayer.forward = Qwen2DecoderLayer_forward
         Qwen2Model.forward = Qwen2Model_forward
-        model.get_vision_tower().vision_tower.vision_model.encoder.layers[-1].self_attn.is_last_layer = True
+        vision_tower = model.get_vision_tower()
+        vision_tower._flashvid_variant = variant
+        vision_layers = vision_tower.vision_tower.vision_model.encoder.layers
+        vision_layers[-1].self_attn.is_last_layer = True
+        if variant == "visionzip":
+            vision_layers[-1].self_attn.capture_visionzip = True
     elif type(model) is Qwen2_5_VLForConditionalGeneration:  ## For Qwen2.5-VL
         Qwen2_5_VLAttention.forward = Qwen2_5_VLAttention_forward
         Qwen2_5_VLModel.get_video_features = Qwen2_5_VLModel_get_video_features
@@ -834,10 +849,10 @@ def flashvid(
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
-    if variant not in ("flashvid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "fastv", "fastvid", "visionzip", "prunevid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|fastv|fastvid|visionzip|prunevid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "certvid_v3plus":
         v3plus_inner_mode = str(v3plus_inner_mode).strip().lower()
@@ -1224,6 +1239,16 @@ def flashvid(
         prism_coverage_weight=prism_coverage_weight,
         prism_pareto_weight=prism_pareto_weight,
         prism_batch_size=prism_batch_size,
+        adapter_budget_uses_expansion=adapter_budget_uses_expansion,
+        fastvid_DySeg_c=fastvid_DySeg_c,
+        fastvid_DySeg_tau=fastvid_DySeg_tau,
+        fastvid_STPrune_d=fastvid_STPrune_d,
+        fastvid_DTM_p=fastvid_DTM_p,
+        fastvid_DTM_beta=fastvid_DTM_beta,
+        visionzip_dominant_ratio=visionzip_dominant_ratio,
+        prunevid_tau=prunevid_tau,
+        prunevid_temporal_segment_ratio=prunevid_temporal_segment_ratio,
+        prunevid_cluster_ratio=prunevid_cluster_ratio,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,

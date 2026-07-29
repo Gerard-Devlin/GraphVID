@@ -32,7 +32,7 @@ if not _has_qwen_vl:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
 
 
-SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastvid", "visionzip", "fastgraphvid")
+SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastgraphvid",)
 VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
 
@@ -575,13 +575,6 @@ class Qwen3_VL(lmms):
         faith_debug: bool = False,
         adapter_budget_uses_expansion: bool = True,
         external_budget_uses_expansion: bool = True,
-        fastvid_DySeg_c: int = 8,
-        fastvid_DySeg_tau: float = 0.90,
-        fastvid_DySeg_ignore: float = 0.95,
-        fastvid_STPrune_d: float = 0.40,
-        fastvid_DTM_p: int = 4,
-        fastvid_DTM_beta: float = 0.60,
-        visionzip_dominant_ratio: float = 0.85,
         slot_base_roles: int = 5,
         slot_max_per_segment: int = 64,
         slot_role_allocation: str = "motion,interaction,detail,scene,background",
@@ -1072,12 +1065,6 @@ class Qwen3_VL(lmms):
                 setattr(cfg, "compression_variant", variant)
                 setattr(cfg, "adapter_budget_uses_expansion", bool(adapter_budget_uses_expansion))
                 setattr(cfg, "external_budget_uses_expansion", bool(external_budget_uses_expansion))
-                setattr(cfg, "fastvid_DySeg_c", int(fastvid_DySeg_c))
-                setattr(cfg, "fastvid_DySeg_tau", float(fastvid_DySeg_tau))
-                setattr(cfg, "fastvid_DySeg_ignore", float(fastvid_DySeg_ignore))
-                setattr(cfg, "fastvid_STPrune_d", float(fastvid_STPrune_d))
-                setattr(cfg, "fastvid_DTM_p", int(fastvid_DTM_p))
-                setattr(cfg, "fastvid_DTM_beta", float(fastvid_DTM_beta))
                 setattr(cfg, "fastgraph_ats_ratio", float(fastgraph_ats_ratio))
                 setattr(cfg, "fastgraph_temporal_radius", int(fastgraph_temporal_radius))
                 setattr(cfg, "fastgraph_temporal_skip", int(fastgraph_temporal_skip))
@@ -1087,7 +1074,6 @@ class Qwen3_VL(lmms):
                 setattr(cfg, "fastgraph_attn_weight", float(fastgraph_attn_weight))
                 setattr(cfg, "fastgraph_novelty_weight", float(fastgraph_novelty_weight))
                 setattr(cfg, "fastgraph_density_weight", float(fastgraph_density_weight))
-                setattr(cfg, "visionzip_dominant_ratio", float(visionzip_dominant_ratio))
             # print(f"[INFO] Enable FlashVID with retention_ratio={retention_ratio}, expansion={expansion}, do_segment={do_segment}, segment_threshold={segment_threshold}, min_segment_num={min_segment_num}, complementary_segment={complementary_segment}, token_selection_method={token_selection_method}, alpha={alpha}, temporal_threshold={temporal_threshold}, pruning_layer={pruning_layer}, llm_retention_ratio={llm_retention_ratio}")
 
         self._model.eval()

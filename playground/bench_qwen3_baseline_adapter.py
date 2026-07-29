@@ -10,7 +10,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-SUPPORTED_METHODS = ("fastvid", "visionzip", "fastgraphvid", "curvevid")
+SUPPORTED_METHODS = ("fastgraphvid", "curvevid")
 
 
 def _install_adapter_compression_patch(method: str) -> None:
@@ -61,12 +61,6 @@ def _patch_bench_apply_ours(method: str, adapter_args: argparse.Namespace) -> No
         setattr(cfg, "compression_variant", method)
         setattr(cfg, "adapter_budget_uses_expansion", bool(adapter_args.adapter_budget_uses_expansion))
         setattr(cfg, "external_budget_uses_expansion", bool(adapter_args.adapter_budget_uses_expansion))
-        setattr(cfg, "fastvid_DySeg_c", int(adapter_args.fastvid_DySeg_c))
-        setattr(cfg, "fastvid_DySeg_tau", float(adapter_args.fastvid_DySeg_tau))
-        setattr(cfg, "fastvid_DySeg_ignore", float(adapter_args.fastvid_DySeg_ignore))
-        setattr(cfg, "fastvid_STPrune_d", float(adapter_args.fastvid_STPrune_d))
-        setattr(cfg, "fastvid_DTM_p", int(adapter_args.fastvid_DTM_p))
-        setattr(cfg, "fastvid_DTM_beta", float(adapter_args.fastvid_DTM_beta))
         setattr(cfg, "fastgraph_ats_ratio", float(adapter_args.fastgraph_ats_ratio))
         setattr(cfg, "fastgraph_temporal_radius", int(adapter_args.fastgraph_temporal_radius))
         setattr(cfg, "fastgraph_temporal_skip", int(adapter_args.fastgraph_temporal_skip))
@@ -79,7 +73,6 @@ def _patch_bench_apply_ours(method: str, adapter_args: argparse.Namespace) -> No
         setattr(cfg, "curvevid_temperature", float(adapter_args.curvevid_temperature))
         setattr(cfg, "curvevid_mix", float(adapter_args.curvevid_mix))
         setattr(cfg, "curvevid_min_per_frame", int(adapter_args.curvevid_min_per_frame))
-        setattr(cfg, "visionzip_dominant_ratio", float(adapter_args.visionzip_dominant_ratio))
         return model
 
     bench._apply_ours = apply_adapter
@@ -186,12 +179,6 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--fastvid_DySeg_c", type=int, default=8)
-    parser.add_argument("--fastvid_DySeg_tau", type=float, default=0.90)
-    parser.add_argument("--fastvid_DySeg_ignore", type=float, default=0.95)
-    parser.add_argument("--fastvid_STPrune_d", type=float, default=0.40)
-    parser.add_argument("--fastvid_DTM_p", type=int, default=4)
-    parser.add_argument("--fastvid_DTM_beta", type=float, default=0.60)
     parser.add_argument("--fastgraph_ats_ratio", type=float, default=0.60)
     parser.add_argument("--fastgraph_temporal_radius", type=int, default=1)
     parser.add_argument("--fastgraph_temporal_skip", type=int, default=1)
@@ -204,7 +191,6 @@ def main() -> None:
     parser.add_argument("--curvevid_temperature", type=float, default=0.70)
     parser.add_argument("--curvevid_mix", type=float, default=0.65)
     parser.add_argument("--curvevid_min_per_frame", type=int, default=1)
-    parser.add_argument("--visionzip_dominant_ratio", type=float, default=0.85)
     cli = parser.parse_args()
 
     import playground.bench_all_metrics as bench

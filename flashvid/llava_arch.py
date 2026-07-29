@@ -126,6 +126,24 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                 )
                 pooled_image_feature = self.get_2dPool(image_feat)
                 pooled_cls_attentions = self.get_2dPool(cls_attentions.unsqueeze(-1)).squeeze(-1)
+                variant = str(
+                    getattr(flashvid_config, "compression_variant", "flashvid")
+                ).strip().lower()
+                vision_tower = self.get_model().get_vision_tower()
+                if variant == "fastvid":
+                    setattr(
+                        flashvid_config,
+                        "_fastvid_frame_global_features",
+                        getattr(vision_tower, "_fastvid_frame_global_features", None),
+                    )
+                elif variant == "visionzip":
+                    raw_metric = getattr(vision_tower, "_visionzip_metric", None)
+                    if raw_metric is not None:
+                        setattr(
+                            flashvid_config,
+                            "_visionzip_metric",
+                            self.get_2dPool(raw_metric),
+                        )
                 # LLaVA represents the image placeholder with the negative ID -200,
                 # which cannot be passed directly to the language embedding table.
                 question_input_ids = input_ids.clone()
