@@ -256,6 +256,15 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
+    if compression_variant == "certvid_qwen":
+        from .certvid_qwen import certvid_qwen_compression
+
+        return certvid_qwen_compression(
+            video_features=video_features,
+            cls_attention=cls_attention,
+            flashvid_config=flashvid_config,
+            question_features=question_features,
+        )
     if compression_variant == "certvid_v3plus":
         from .certvid_v3plus import certvid_v3plus_compression
 
@@ -385,7 +394,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_qwen|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(

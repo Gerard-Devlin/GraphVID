@@ -142,6 +142,37 @@ class FlashVidConfig:
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
 
+    # Qwen-aware CertVID: full-feature kernel design with M-RoPE constraints.
+    qcert_budget_uses_expansion: bool = field(default=True)
+    qcert_query_atoms: int = field(default=8)
+    qcert_temporal_bins: int = field(default=0)
+    qcert_spatial_bins: int = field(default=0)
+    qcert_candidate_multiplier: float = field(default=2.5)
+    qcert_track_threshold: float = field(default=0.82)
+    qcert_track_spatial_penalty: float = field(default=0.08)
+    qcert_frame_coverage_ratio: float = field(default=1.0)
+    qcert_cell_coverage_ratio: float = field(default=0.35)
+    qcert_query_threshold: float = field(default=0.10)
+    qcert_query_per_atom: int = field(default=1)
+    qcert_quality_query_weight: float = field(default=0.12)
+    qcert_whitening_strength: float = field(default=0.25)
+    qcert_semantic_weight: float = field(default=0.68)
+    qcert_phase_weight: float = field(default=0.14)
+    qcert_temporal_weight: float = field(default=0.06)
+    qcert_spatial_weight: float = field(default=0.04)
+    qcert_signal_weight: float = field(default=0.04)
+    qcert_design_query_weight: float = field(default=0.04)
+    qcert_phase_levels: int = field(default=4)
+    qcert_quality_floor: float = field(default=0.15)
+    qcert_ridge: float = field(default=0.50)
+    qcert_kernel_tolerance: float = field(default=1e-4)
+    qcert_max_kernel_pivots: int = field(default=1024)
+    qcert_fusion_alpha: float = field(default=0.08)
+    qcert_fusion_similarity: float = field(default=0.82)
+    qcert_fusion_temporal_radius: float = field(default=1.0)
+    qcert_fusion_spatial_radius: float = field(default=2.0)
+    qcert_assignment_temperature: float = field(default=0.07)
+
     # CertVID V3Plus: V3 outer coreset with structure-aware inner pruning.
     v3plus_inner_mode: str = field(default="structured")
     v3plus_query_rows: int = field(default=32)
@@ -432,6 +463,7 @@ class FlashVidConfig:
     # "certvid_v9": V3 state completion with reject-or-promote fusion.
     # "certvid_v10": trajectory-balanced motion evidence over a V3 backbone.
     # "certvid_v11": correspondence-lifted spatiotemporal V3 repair.
+    # "certvid_qwen": full-feature kernel design with M-RoPE-aware fusion.
     # "certvid_v3plus": V3 outer coreset with structure-aware inner pruning.
     # "certvid_v3plusplus": V3 outer with inference-objective gradient pruning.
     # "faithvid": mass-corrected functionally faithful merging path.
