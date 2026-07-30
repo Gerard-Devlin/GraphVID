@@ -258,6 +258,8 @@ def Qwen2_5_VisionTransformerPretrainedModel_forward(
     )
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
+    flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
+    variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
     num_blocks = len(self.blocks)
     for layer_num, blk in enumerate(self.blocks):
         if layer_num in self.fullatt_block_indexes:
@@ -265,21 +267,24 @@ def Qwen2_5_VisionTransformerPretrainedModel_forward(
         else:
             cu_seqlens_now = cu_window_seqlens
 
-        # * VisionZip needs `attn_weights` and `attn_key` metric for compression.
-        return_logits = (num_blocks - 1) == layer_num
+        # FastV prunes from language attention and PruneVID builds its own
+        # visual decomposition, so neither baseline needs the expensive final
+        # vision QK metric.
+        return_logits = (num_blocks - 1) == layer_num and variant not in {
+            "fastv",
+            "prunevid",
+        }
         hidden_states, attn_weights = blk(
             hidden_states,
             cu_seqlens=cu_seqlens_now,
             position_embeddings=position_embeddings,
             return_logits=return_logits,
+            score_mode=variant,
         )
 
     hidden_states = self.merger(hidden_states)
     reverse_indices = torch.argsort(window_index)
     hidden_states = hidden_states[reverse_indices, :]
-
-    flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
-    variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
 
     # FastVID's released Qwen2.5 path segments frames using post-merger frame
     # features rather than the pre-merger vision CLS/pooling representation.
@@ -325,10 +330,39 @@ def Qwen2_5_VisionTransformerPretrainedModel_forward(
         )
         self.blocks[-1].attn.visionzip_metric = None
 
-    # Collapse the raw final-layer attention to one score per merged token.
-    seq_len = attn_weights.shape[-1] // 4
-    attn_weights = attn_weights.view(num_frames, seq_len, -1).mean(-1).view(-1)
-    attn_weights = attn_weights[reverse_indices].view(num_frames, -1)
+    merged_tokens_per_frame = int(hidden_states.shape[0] // num_frames)
+    if attn_weights is None:
+        # These values are shape-only placeholders. The FastV identity adapter
+        # and PruneVID adapter both discard cls_attention.
+        attn_weights = torch.zeros(
+            (num_frames, merged_tokens_per_frame),
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+    elif variant == "fastvid":
+        # The released FastVID Qwen2.5 hook already scores merged 2x2 keys.
+        if tuple(attn_weights.shape) != (num_frames, merged_tokens_per_frame):
+            raise RuntimeError(
+                "Qwen2.5 FastVID attention metric has an unexpected shape: "
+                f"got {tuple(attn_weights.shape)}, expected "
+                f"{(num_frames, merged_tokens_per_frame)}"
+            )
+        attn_weights = attn_weights.reshape(-1)[reverse_indices].view(num_frames, -1)
+    else:
+        # FlashVID scores within each frame. VisionZip scores all raw visual
+        # keys globally. Both metrics are reduced over the spatial merger's
+        # groups before restoring the original token order.
+        merge_unit = int(self.spatial_merge_unit)
+        raw_attention = attn_weights.reshape(-1)
+        expected_raw_tokens = int(hidden_states.shape[0] * merge_unit)
+        if int(raw_attention.numel()) != expected_raw_tokens:
+            raise RuntimeError(
+                "Qwen2.5 visual attention metric does not align with the "
+                f"spatial merger: scores={int(raw_attention.numel())}, "
+                f"expected={expected_raw_tokens}"
+            )
+        attn_weights = raw_attention.view(-1, merge_unit).mean(dim=-1)
+        attn_weights = attn_weights[reverse_indices].view(num_frames, -1)
 
     return hidden_states, attn_weights
 
@@ -340,6 +374,7 @@ def Qwen2_5_VLVisionBlock_forward(
     rotary_pos_emb: Optional[torch.Tensor] = None,
     position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     return_logits: bool = False,
+    score_mode: str = "flashvid",
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     residual = hidden_states
     hidden_states, attn_weights = self.attn(
@@ -348,6 +383,7 @@ def Qwen2_5_VLVisionBlock_forward(
         rotary_pos_emb=rotary_pos_emb,
         position_embeddings=position_embeddings,
         return_logits=return_logits,
+        score_mode=score_mode,
     )
     hidden_states = residual + hidden_states
 
@@ -426,12 +462,126 @@ def Qwen2_5_VLAttention_forward(
     attn_output = self.o_proj(attn_output)
 
     if output_attentions and attn_weights is None:
-        # * Calculate attention weights manually if not provided
-        last_query = query_states[:, :, -1:, :]
+        # FlashAttention2 does not return weights. Reconstruct only the rows
+        # required by the active method instead of materializing full S x S.
         key_states = repeat_kv(key_states, self.num_key_value_groups)
-        # key_states = key_states.transpose(1, 2)
-        attn_weights = torch.matmul(last_query, key_states.transpose(2, 3)) / self.head_dim**0.5
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        flashvid_config = getattr(self, "flashvid_config", None)
+        variant = str(
+            getattr(flashvid_config, "compression_variant", "")
+        ).strip().lower()
+
+        if variant == "prunevid":
+            # PruneVID scores visual tokens with the maximum attention over all
+            # text queries after the visual span and over all heads. This is
+            # intentionally different from FastV's final-query mean.
+            visual_start = int(
+                getattr(flashvid_config, "visual_token_start_index", 0)
+            )
+            visual_length = int(
+                getattr(flashvid_config, "visual_token_length", 0)
+            )
+            visual_end = visual_start + visual_length
+            key_length = int(key_states.shape[-2])
+            query_length = int(query_states.shape[-2])
+            text_start = min(max(visual_end, 0), query_length)
+
+            if (
+                visual_length <= 0
+                or visual_start < 0
+                or visual_end > key_length
+                or text_start >= query_length
+            ):
+                raise RuntimeError(
+                    "PruneVID cannot locate post-visual text queries for its "
+                    "language-attention selector"
+                )
+
+            visual_scores = torch.zeros(
+                (query_states.shape[0], visual_length),
+                dtype=torch.float32,
+                device=query_states.device,
+            )
+            key_positions = torch.arange(
+                key_length,
+                device=query_states.device,
+            )
+            query_chunk = 16
+            for start in range(text_start, query_length, query_chunk):
+                end = min(query_length, start + query_chunk)
+                logits = torch.matmul(
+                    query_states[:, :, start:end],
+                    key_states.transpose(2, 3),
+                ) / self.head_dim**0.5
+
+                # Preserve causal semantics even when FA2 receives no explicit
+                # additive mask. Any padding/additive mask is applied as well.
+                query_positions = torch.arange(
+                    start,
+                    end,
+                    device=query_states.device,
+                )
+                causal = key_positions.view(1, 1, 1, -1) > query_positions.view(
+                    1,
+                    1,
+                    -1,
+                    1,
+                )
+                logits = logits.masked_fill(
+                    causal,
+                    torch.finfo(logits.dtype).min,
+                )
+                if attention_mask is not None:
+                    if attention_mask.ndim == 4:
+                        if int(attention_mask.shape[-2]) == 1:
+                            additive_mask = attention_mask[..., :1, :key_length]
+                        else:
+                            additive_mask = attention_mask[
+                                ...,
+                                start:end,
+                                :key_length,
+                            ]
+                        logits = logits + additive_mask
+                    elif attention_mask.ndim == 2:
+                        invalid_keys = attention_mask[:, None, None, :key_length] == 0
+                        logits = logits.masked_fill(
+                            invalid_keys,
+                            torch.finfo(logits.dtype).min,
+                        )
+
+                probabilities = nn.functional.softmax(
+                    logits,
+                    dim=-1,
+                    dtype=torch.float32,
+                )
+                chunk_scores = probabilities[
+                    ...,
+                    visual_start:visual_end,
+                ].amax(dim=(1, 2))
+                visual_scores = torch.maximum(visual_scores, chunk_scores)
+
+            # Keep the legacy attention tensor interface consumed by
+            # fastv_prune while carrying PruneVID's method-specific scores.
+            attn_weights = torch.zeros(
+                (query_states.shape[0], 1, 1, key_length),
+                dtype=query_states.dtype,
+                device=query_states.device,
+            )
+            attn_weights[
+                ...,
+                visual_start:visual_end,
+            ] = visual_scores[:, None, None].to(query_states.dtype)
+        else:
+            # Released FastV/FlashVID inner pruning uses the final query row.
+            last_query = query_states[:, :, -1:, :]
+            attn_weights = (
+                torch.matmul(last_query, key_states.transpose(2, 3))
+                / self.head_dim**0.5
+            )
+            attn_weights = nn.functional.softmax(
+                attn_weights,
+                dim=-1,
+                dtype=torch.float32,
+            ).to(query_states.dtype)
 
     return attn_output, attn_weights
 
@@ -449,7 +599,23 @@ def Qwen2_5_VLForConditionalGeneration_generate(
     flashvid_config.visual_token_start_index = visual_token_start_index
     flashvid_config.visual_token_length = visual_token_length
 
-    return self.generate_ori(**kwargs)
+    try:
+        return self.generate_ori(**kwargs)
+    finally:
+        # Baseline metadata belongs to one prefill only. Clear it even when
+        # generation raises so a later request cannot consume stale tensors or
+        # PruneVID quotas.
+        for name in (
+            "_fastvid_frame_global_features",
+            "_visionzip_metric",
+            "_prunevid_group_sizes",
+            "_prunevid_target_tokens",
+        ):
+            setattr(flashvid_config, name, None)
+        visual = getattr(getattr(self, "model", None), "visual", None)
+        blocks = getattr(visual, "blocks", None)
+        if blocks:
+            setattr(blocks[-1].attn, "visionzip_metric", None)
 
 
 def Qwen2_5_VLModel_forward(
@@ -648,6 +814,7 @@ def Qwen2_5_VLVisionAttention_forward(
     rotary_pos_emb: Optional[torch.Tensor] = None,
     position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
     return_logits: bool = False,
+    score_mode: str = "flashvid",
     **kwargs,
 ) -> torch.Tensor:
     seq_length = hidden_states.shape[0]
@@ -694,16 +861,106 @@ def Qwen2_5_VLVisionAttention_forward(
 
     attn_weights = None
     if return_logits:
-        # Calculate attention weights manually.
         num_frames = cu_seqlens.shape[0] - 1
-        q, k = query_states.squeeze(0), key_states.squeeze(0)
-        # reshape to (seq_length, num_heads, head_dim)
-        q, k = q.transpose(0, 1), k.transpose(0, 1)
-        q = q.reshape(num_frames, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
-        k = k.reshape(num_frames, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
-        attn_weights = torch.matmul(q, k.transpose(-1, -2)) / self.head_dim**0.5
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-        attn_weights = attn_weights.mean(1).mean(1)
+        q_heads = query_states.squeeze(0)
+        k_heads = key_states.squeeze(0)
+        raw_tokens_per_frame = int(q_heads.shape[-2] // num_frames)
+        mode = str(score_mode).strip().lower()
+
+        if mode == "fastvid":
+            # Match the released Qwen2.5 FastVID metric: one pooled query per
+            # frame attends to 2x2-merged visual keys.
+            merge_unit = 4
+            if raw_tokens_per_frame % merge_unit != 0:
+                raise RuntimeError(
+                    "Qwen2.5 FastVID raw frame tokens are not divisible by 4: "
+                    f"{raw_tokens_per_frame}"
+                )
+            q_by_frame = q_heads.view(
+                self.num_heads,
+                num_frames,
+                raw_tokens_per_frame,
+                self.head_dim,
+            ).permute(1, 0, 2, 3)
+            k_by_frame = k_heads.view(
+                self.num_heads,
+                num_frames,
+                raw_tokens_per_frame // merge_unit,
+                merge_unit,
+                self.head_dim,
+            ).mean(dim=3).permute(1, 0, 2, 3)
+            pooled_query = q_by_frame.mean(dim=2, keepdim=True)
+            scores = torch.matmul(
+                pooled_query,
+                k_by_frame.transpose(-1, -2),
+            ) / self.head_dim**0.5
+            attn_weights = nn.functional.softmax(
+                scores,
+                dim=-1,
+                dtype=torch.float32,
+            ).to(q_heads.dtype)
+            attn_weights = attn_weights.mean(dim=1).mean(dim=1)
+        elif mode == "visionzip":
+            # Match the released Qwen2.5 VisionZip metric: global incoming
+            # attention mass over every visual query. Query chunking preserves
+            # the same score while avoiding one full H x T x T allocation.
+            total_tokens = int(q_heads.shape[-2])
+            incoming_mass = torch.zeros(
+                total_tokens,
+                dtype=torch.float32,
+                device=q_heads.device,
+            )
+            query_chunk = 32
+            key_transposed = k_heads.transpose(-1, -2)
+            for start in range(0, total_tokens, query_chunk):
+                logits = torch.matmul(
+                    q_heads[:, start : start + query_chunk],
+                    key_transposed,
+                ) / self.head_dim**0.5
+                probabilities = nn.functional.softmax(logits, dim=-1)
+                incoming_mass.add_(
+                    probabilities.mean(dim=0).float().sum(dim=0)
+                )
+            attn_weights = incoming_mass.to(dtype=q_heads.dtype)
+        else:
+            # FlashVID's released Qwen2.5 score: mean incoming attention inside
+            # each frame. Accumulate query chunks so high-resolution videos do
+            # not materialize the full F x H x S x S attention tensor.
+            q_by_frame = q_heads.view(
+                self.num_heads,
+                num_frames,
+                raw_tokens_per_frame,
+                self.head_dim,
+            ).permute(1, 0, 2, 3).contiguous()
+            k_by_frame = k_heads.view(
+                self.num_heads,
+                num_frames,
+                raw_tokens_per_frame,
+                self.head_dim,
+            ).permute(1, 0, 2, 3).contiguous()
+            incoming_mass = torch.zeros(
+                (num_frames, raw_tokens_per_frame),
+                dtype=torch.float32,
+                device=q_heads.device,
+            )
+            query_chunk = 32
+            key_transposed = k_by_frame.transpose(-1, -2)
+            for start in range(0, raw_tokens_per_frame, query_chunk):
+                logits = torch.matmul(
+                    q_by_frame[:, :, start : start + query_chunk],
+                    key_transposed,
+                ) / self.head_dim**0.5
+                probabilities = nn.functional.softmax(
+                    logits,
+                    dim=-1,
+                    dtype=torch.float32,
+                ).to(q_heads.dtype)
+                incoming_mass.add_(
+                    probabilities.mean(dim=1).float().sum(dim=1)
+                )
+            attn_weights = (
+                incoming_mass / float(raw_tokens_per_frame)
+            ).to(dtype=q_heads.dtype)
     attn_output = attn_output.reshape(seq_length, -1).contiguous()
     attn_output = self.proj(attn_output)
     return attn_output, attn_weights

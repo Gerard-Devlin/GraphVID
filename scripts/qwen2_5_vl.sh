@@ -72,7 +72,8 @@ ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
 DO_SEGMENT="${DO_SEGMENT:-True}"
 SEGMENT_THRESHOLD="${SEGMENT_THRESHOLD:-0.9}"
-MIN_SEGMENT_NUM="${MIN_SEGMENT_NUM:-8}"
+# The released FlashVID Qwen2.5-VL runner uses four minimum segments.
+MIN_SEGMENT_NUM="${MIN_SEGMENT_NUM:-4}"
 COMPLEMENTARY_SEGMENT="${COMPLEMENTARY_SEGMENT:-True}"
 ALPHA="${ALPHA:-0.70}"
 TEMPORAL_THRESHOLD="${TEMPORAL_THRESHOLD:-0.8}"
@@ -87,7 +88,6 @@ FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div}"
 CERTV3_EXPANSION="${CERTV3_EXPANSION:-1.30}"
 CERTV3_PRUNING_LAYER="${CERTV3_PRUNING_LAYER:-20}"
 CERTV3_LLM_RETENTION_RATIO="${CERTV3_LLM_RETENTION_RATIO:-0.1923076923}"
-CERTV3_TOKEN_SELECTION_METHOD="${CERTV3_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 CERTV3_BUDGET_USES_EXPANSION="${CERTV3_BUDGET_USES_EXPANSION:-True}"
 CERTV3_QUERY_ATOMS="${CERTV3_QUERY_ATOMS:-8}"
 CERTV3_TEMPORAL_BINS="${CERTV3_TEMPORAL_BINS:-12}"
@@ -234,10 +234,8 @@ common_flash_args() {
       ;;
   esac
 
-  printf 'enable_flashvid=True,retention_ratio=%s,expansion=%s,do_segment=%s,segment_threshold=%s,min_segment_num=%s,complementary_segment=%s,alpha=%s,temporal_threshold=%s,pruning_layer=%s,llm_retention_ratio=%s' \
-    "$retention_ratio" "$expansion" "$DO_SEGMENT" "$SEGMENT_THRESHOLD" \
-    "$MIN_SEGMENT_NUM" "$COMPLEMENTARY_SEGMENT" "$ALPHA" \
-    "$TEMPORAL_THRESHOLD" "$pruning_layer" "$llm_retention_ratio"
+  printf 'enable_flashvid=True,retention_ratio=%s,expansion=%s,pruning_layer=%s,llm_retention_ratio=%s' \
+    "$retention_ratio" "$expansion" "$pruning_layer" "$llm_retention_ratio"
 }
 
 method_flash_args() {
@@ -260,12 +258,14 @@ method_flash_args() {
         "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
       ;;
     flashvid)
-      printf 'compression_variant=flashvid,token_selection_method=%s' \
-        "$FLASHVID_TOKEN_SELECTION_METHOD"
+      printf 'compression_variant=flashvid,do_segment=%s,segment_threshold=%s,min_segment_num=%s,complementary_segment=%s,token_selection_method=%s,alpha=%s,temporal_threshold=%s' \
+        "$DO_SEGMENT" "$SEGMENT_THRESHOLD" "$MIN_SEGMENT_NUM" \
+        "$COMPLEMENTARY_SEGMENT" "$FLASHVID_TOKEN_SELECTION_METHOD" \
+        "$ALPHA" "$TEMPORAL_THRESHOLD"
       ;;
     certvid_v3)
-      printf 'compression_variant=certvid_v3,token_selection_method=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
-        "$CERTV3_TOKEN_SELECTION_METHOD" "$CERTV3_BUDGET_USES_EXPANSION" \
+      printf 'compression_variant=certvid_v3,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
+        "$CERTV3_BUDGET_USES_EXPANSION" \
         "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" \
         "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" \
         "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" \
