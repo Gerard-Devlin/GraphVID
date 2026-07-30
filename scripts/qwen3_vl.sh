@@ -59,6 +59,20 @@ TEMPORAL_THRESHOLD="${TEMPORAL_THRESHOLD:-0.8}"
 EXPANSION="${EXPANSION:-1.25}"
 PRUNING_LAYER="${PRUNING_LAYER:-20}"
 LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-1.0}"
+FLASHVID_EXPANSION="${FLASHVID_EXPANSION:-1.25}"
+FLASHVID_PRUNING_LAYER="${FLASHVID_PRUNING_LAYER:-28}"
+FLASHVID_LLM_RETENTION_RATIO="${FLASHVID_LLM_RETENTION_RATIO:-0.1}"
+FASTV_PRUNING_LAYER="${FASTV_PRUNING_LAYER:-2}"
+FASTVID_DYSEG_C="${FASTVID_DYSEG_C:-8}"
+FASTVID_DYSEG_TAU="${FASTVID_DYSEG_TAU:-0.84}"
+FASTVID_STPRUNE_D="${FASTVID_STPRUNE_D:-0.40}"
+FASTVID_DTM_P="${FASTVID_DTM_P:-4}"
+FASTVID_DTM_BETA="${FASTVID_DTM_BETA:-0.60}"
+VISIONZIP_DOMINANT_RATIO="${VISIONZIP_DOMINANT_RATIO:-0.9285714286}"
+PRUNEVID_SELECTED_LAYER="${PRUNEVID_SELECTED_LAYER:-10}"
+PRUNEVID_TAU="${PRUNEVID_TAU:-0.80}"
+PRUNEVID_TEMPORAL_SEGMENT_RATIO="${PRUNEVID_TEMPORAL_SEGMENT_RATIO:-0.25}"
+PRUNEVID_CLUSTER_RATIO="${PRUNEVID_CLUSTER_RATIO:-0.50}"
 
 FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}"
 GRAPHVID_TOKEN_SELECTION_METHOD="${GRAPHVID_TOKEN_SELECTION_METHOD:-attn_div_stable}"
@@ -75,7 +89,7 @@ GRAPH_FINAL_TPF="${GRAPH_FINAL_TPF:-0}"
 GRAPH_FRAME_FLOOR_RATIO="${GRAPH_FRAME_FLOOR_RATIO:-0.55}"
 GRAPH_SKIP_SPATIAL_MERGE_WHEN_CAPPED="${GRAPH_SKIP_SPATIAL_MERGE_WHEN_CAPPED:-False}"
 
-ADAPTER_BUDGET_USES_EXPANSION="${ADAPTER_BUDGET_USES_EXPANSION:-True}"
+ADAPTER_BUDGET_USES_EXPANSION="${ADAPTER_BUDGET_USES_EXPANSION:-False}"
 
 FASTGRAPH_ATS_RATIO="${FASTGRAPH_ATS_RATIO:-0.60}"
 FASTGRAPH_TEMPORAL_RADIUS="${FASTGRAPH_TEMPORAL_RADIUS:-1}"
@@ -153,6 +167,9 @@ CERTV2_ASSIGNMENT_TEMPERATURE="${CERTV2_ASSIGNMENT_TEMPERATURE:-0.07}"
 CERTV3_TOKEN_SELECTION_METHOD="${CERTV3_TOKEN_SELECTION_METHOD:-$GRAPHVID_TOKEN_SELECTION_METHOD}"
 CERTV6_TOKEN_SELECTION_METHOD="${CERTV6_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
 CERTV3_BUDGET_USES_EXPANSION="${CERTV3_BUDGET_USES_EXPANSION:-True}"
+CERTV3_EXPANSION="${CERTV3_EXPANSION:-$EXPANSION}"
+CERTV3_PRUNING_LAYER="${CERTV3_PRUNING_LAYER:-$PRUNING_LAYER}"
+CERTV3_LLM_RETENTION_RATIO="${CERTV3_LLM_RETENTION_RATIO:-$LLM_RETENTION_RATIO}"
 CERTV3_QUERY_ATOMS="${CERTV3_QUERY_ATOMS:-8}"
 CERTV3_TEMPORAL_BINS="${CERTV3_TEMPORAL_BINS:-12}"
 CERTV3_SPATIAL_BINS="${CERTV3_SPATIAL_BINS:-3}"
@@ -492,7 +509,26 @@ common_flash_args() {
   local expansion="$EXPANSION"
   local pruning_layer="$PRUNING_LAYER"
   local llm_retention_ratio="$LLM_RETENTION_RATIO"
-  if [[ "$method" == "certvid_v4" ]]; then
+  if [[ "$method" == "fastv" ]]; then
+    expansion="1.0"
+    pruning_layer="$FASTV_PRUNING_LAYER"
+    llm_retention_ratio="$retention_ratio"
+  elif [[ "$method" == "fastvid" || "$method" == "visionzip" ]]; then
+    expansion="1.0"
+    llm_retention_ratio="1.0"
+  elif [[ "$method" == "prunevid" ]]; then
+    expansion="1.0"
+    pruning_layer="$PRUNEVID_SELECTED_LAYER"
+    llm_retention_ratio="1.0"
+  elif [[ "$method" == "flashvid" ]]; then
+    expansion="$FLASHVID_EXPANSION"
+    pruning_layer="$FLASHVID_PRUNING_LAYER"
+    llm_retention_ratio="$FLASHVID_LLM_RETENTION_RATIO"
+  elif [[ "$method" == "certvid_v3" ]]; then
+    expansion="$CERTV3_EXPANSION"
+    pruning_layer="$CERTV3_PRUNING_LAYER"
+    llm_retention_ratio="$CERTV3_LLM_RETENTION_RATIO"
+  elif [[ "$method" == "certvid_v4" ]]; then
     expansion="$CERTV4_EXPANSION"
     pruning_layer="$CERTV4_PRUNING_LAYER"
     llm_retention_ratio="$CERTV4_LLM_RETENTION_RATIO"
@@ -512,6 +548,21 @@ common_flash_args() {
 method_flash_args() {
   local method="$1"
   case "$method" in
+    fastv)
+      printf 'compression_variant=fastv,adapter_budget_uses_expansion=False'
+      ;;
+    fastvid)
+      printf 'compression_variant=fastvid,adapter_budget_uses_expansion=%s,fastvid_DySeg_c=%s,fastvid_DySeg_tau=%s,fastvid_STPrune_d=%s,fastvid_DTM_p=%s,fastvid_DTM_beta=%s' \
+        "$ADAPTER_BUDGET_USES_EXPANSION" "$FASTVID_DYSEG_C" "$FASTVID_DYSEG_TAU" "$FASTVID_STPRUNE_D" "$FASTVID_DTM_P" "$FASTVID_DTM_BETA"
+      ;;
+    visionzip)
+      printf 'compression_variant=visionzip,adapter_budget_uses_expansion=%s,visionzip_dominant_ratio=%s' \
+        "$ADAPTER_BUDGET_USES_EXPANSION" "$VISIONZIP_DOMINANT_RATIO"
+      ;;
+    prunevid)
+      printf 'compression_variant=prunevid,adapter_budget_uses_expansion=False,prunevid_tau=%s,prunevid_temporal_segment_ratio=%s,prunevid_cluster_ratio=%s' \
+        "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
+      ;;
     flashvid)
       printf 'compression_variant=flashvid,token_selection_method=%s' "$FLASHVID_TOKEN_SELECTION_METHOD"
       ;;

@@ -10,6 +10,121 @@ from flashvid.configuration_flashvid import FlashVidConfig
 from .common import _cfg_float, _effective_ratio, _record_adapter_metrics
 
 
+def _qwen25_global_visionzip(
+    video_features: torch.Tensor,
+    cls_attention: torch.Tensor,
+    flashvid_config: FlashVidConfig,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Qwen2.5 VisionZip uses one global dominant/contextual pool."""
+
+    num_frames, num_visual_tokens, feat_dim = video_features.shape
+    device = video_features.device
+    dtype = video_features.dtype
+    flat_features = video_features.reshape(-1, feat_dim)
+    flat_attention = cls_attention.reshape(-1).float()
+    total_tokens = int(flat_features.shape[0])
+    target_tokens = max(
+        1,
+        min(total_tokens, int(total_tokens * _effective_ratio(flashvid_config))),
+    )
+
+    dominant_ratio = max(
+        0.0,
+        min(
+            1.0,
+            _cfg_float(flashvid_config, "visionzip_dominant_ratio", 65.0 / 70.0),
+        ),
+    )
+    dominant_num = min(target_tokens, max(1, int(round(target_tokens * dominant_ratio))))
+    contextual_num = target_tokens - dominant_num
+
+    metric = getattr(flashvid_config, "_visionzip_metric", None)
+    if (
+        metric is None
+        or metric.ndim != 3
+        or metric.shape[:2] != video_features.shape[:2]
+    ):
+        raise RuntimeError(
+            "Qwen2.5 VisionZip requires post-RoPE vision keys aligned with merged video tokens"
+        )
+    flat_metric = metric.to(device=device).reshape(total_tokens, -1)
+    setattr(flashvid_config, "_visionzip_metric", None)
+
+    dominant_indices = torch.topk(
+        flat_attention,
+        k=dominant_num,
+        largest=True,
+        sorted=False,
+    ).indices
+    dominant_hidden = flat_features[dominant_indices]
+    selected_hidden = [dominant_hidden]
+    selected_indices = [dominant_indices]
+
+    if contextual_num > 0:
+        dominant_mask = torch.zeros((total_tokens,), dtype=torch.bool, device=device)
+        dominant_mask[dominant_indices] = True
+        residual_indices = torch.arange(total_tokens, device=device)[~dominant_mask]
+        contextual_num = min(contextual_num, int(residual_indices.numel()))
+        residual_metric = F.normalize(
+            flat_metric[residual_indices].float(),
+            dim=-1,
+            eps=1e-6,
+        )
+
+        step = max(1, int(residual_metric.shape[0]) // contextual_num)
+        target_positions = torch.arange(
+            0,
+            residual_metric.shape[0],
+            step,
+            device=device,
+        )[:contextual_num]
+        target_metric = residual_metric[target_positions]
+        target_hidden = flat_features[residual_indices[target_positions]]
+
+        merge_mask = torch.ones(
+            (residual_metric.shape[0],),
+            dtype=torch.bool,
+            device=device,
+        )
+        merge_mask[target_positions] = False
+        merge_metric = residual_metric[merge_mask]
+        merge_hidden = flat_features[residual_indices[merge_mask]]
+        if merge_metric.numel() > 0:
+            similarity = merge_metric @ target_metric.transpose(0, 1)
+            assignment = torch.zeros(
+                merge_metric.shape[0],
+                contextual_num,
+                dtype=dtype,
+                device=device,
+            )
+            assignment.scatter_(1, similarity.argmax(dim=1, keepdim=True), 1)
+            counts = assignment.sum(dim=0).clamp(min=1).unsqueeze(-1)
+            aggregated = assignment.transpose(0, 1) @ merge_hidden
+            contextual_hidden = target_hidden + aggregated / counts
+        else:
+            contextual_hidden = target_hidden
+
+        selected_hidden.append(contextual_hidden.to(dtype=dtype))
+        selected_indices.append(residual_indices[target_positions])
+
+    final_hidden = torch.cat(selected_hidden, dim=0)
+    final_indices = torch.cat(selected_indices, dim=0).to(dtype=torch.long)
+    order = torch.argsort(final_indices)
+    final_hidden = final_hidden[order]
+    final_indices = final_indices[order]
+
+    flashvid_config.vision_token_length = int(final_hidden.shape[0])
+    flashvid_config.llm_token_length = None
+    flashvid_config.visual_token_length = int(final_hidden.shape[0])
+    _record_adapter_metrics(
+        flashvid_config,
+        variant="visionzip",
+        output_tokens=int(final_hidden.shape[0]),
+        raw_tokens=num_frames * num_visual_tokens,
+    )
+    return final_hidden, final_indices
+
+
 def visionzip_compression(
     video_features: torch.Tensor,
     cls_attention: torch.Tensor,
@@ -22,6 +137,13 @@ def visionzip_compression(
     dropped tokens to their most similar contextual target, and emit
     target_hidden + aggregated_hidden for contextual tokens.
     """
+    if str(getattr(flashvid_config, "_baseline_backbone", "")).strip().lower() == "qwen2_5_vl":
+        return _qwen25_global_visionzip(
+            video_features,
+            cls_attention,
+            flashvid_config,
+        )
+
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     device = video_features.device
     dtype = video_features.dtype

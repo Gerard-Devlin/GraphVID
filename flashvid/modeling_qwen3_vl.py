@@ -197,6 +197,10 @@ def Qwen3VLVisionAttention_forward(
         )
     seq_length = hidden_states.shape[0]
     query_states, key_states, value_states = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+    if getattr(self, "capture_visionzip", False):
+        # VisionZip ranks contextual tokens with the vision transformer's key
+        # metric. Capture it before RoPE, matching the released operator.
+        self.visionzip_metric = key_states.detach().reshape(seq_length, -1)
     cos, sin = position_embeddings
     query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
 
@@ -351,6 +355,26 @@ def Qwen3VLVisionModel_forward(
     seq_len = attn_weights.shape[-1] // 4
     attn_weights = attn_weights.view(num_frames, seq_len, -1).mean(-1)
 
+    flashvid_config = getattr(self, "flashvid_config", None)
+    variant = str(
+        getattr(flashvid_config, "compression_variant", "")
+    ).strip().lower()
+    if variant == "visionzip":
+        raw_metric = getattr(self.blocks[-1].attn, "visionzip_metric", None)
+        merge_unit = max(1, int(self.spatial_merge_size) ** 2)
+        if raw_metric is None or int(raw_metric.shape[0]) != int(hidden_states.shape[0] * merge_unit):
+            raise RuntimeError(
+                "VisionZip could not align the Qwen3 vision-key metric with "
+                "the spatially merged visual tokens"
+            )
+        merged_metric = raw_metric.view(
+            num_frames,
+            seq_len,
+            merge_unit,
+            -1,
+        ).mean(dim=2)
+        setattr(flashvid_config, "_visionzip_metric", merged_metric)
+
     return hidden_states, deepstack_feature_lists, attn_weights
 
 
@@ -504,6 +528,17 @@ def Qwen3VLModel_forward(
         flashvid_config.H = int(video_grid_thw[0][1].item() // spatial_merge)
         flashvid_config.W = int(video_grid_thw[0][2].item() // spatial_merge)
         video_features = video_embeds.view(num_frames, num_visual_tokens, -1)
+        compression_variant = str(
+            getattr(flashvid_config, "compression_variant", "flashvid")
+        ).strip().lower()
+        if compression_variant == "fastvid":
+            # This is the exact frame descriptor used by the released
+            # Qwen2.5-VL FastVID path after the vision merger.
+            setattr(
+                flashvid_config,
+                "_fastvid_frame_global_features",
+                video_features.float().mean(dim=1),
+            )
         question_features = extract_question_features(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
@@ -522,7 +557,7 @@ def Qwen3VLModel_forward(
             question_features=question_features,
             deepstack_features=(
                 deepstack_video_embeds
-                if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "prismvid"
+                if compression_variant == "prismvid"
                 else None
             ),
         )
@@ -539,9 +574,6 @@ def Qwen3VLModel_forward(
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
         flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
-        compression_variant = str(
-            getattr(flashvid_config, "compression_variant", "flashvid")
-        ).strip().lower()
         if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
@@ -782,7 +814,7 @@ def Qwen3VLTextModel_forward(
                     text_position_ids,
                     cache_position,
                     position_embeddings,
-                    _,
+                    inner_keep_indices,
                 ) = fastv_prune(
                     hidden_states=hidden_states,
                     causal_mask=attention_mask,
@@ -793,6 +825,29 @@ def Qwen3VLTextModel_forward(
                     flashvid_config=flashvid_config,
                     visual_pos_masks=visual_pos_masks,
                 )
+                old_visual_pos_masks = visual_pos_masks
+                kept_visual_local = torch.where(old_visual_pos_masks[0])[0]
+                kept_visual_local = torch.isin(
+                    kept_visual_local,
+                    inner_keep_indices,
+                ).nonzero(as_tuple=False).squeeze(1)
+                visual_pos_masks = old_visual_pos_masks[:, inner_keep_indices]
+                if (
+                    deepstack_visual_embeds is not None
+                    and layer_idx < len(deepstack_visual_embeds)
+                ):
+                    for deepstack_idx in range(
+                        layer_idx,
+                        len(deepstack_visual_embeds),
+                    ):
+                        deepstack_visual_embeds[deepstack_idx] = (
+                            deepstack_visual_embeds[deepstack_idx].index_select(
+                                0,
+                                kept_visual_local.to(
+                                    deepstack_visual_embeds[deepstack_idx].device
+                                ),
+                            )
+                        )
 
         (
             hidden_states,

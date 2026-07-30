@@ -7,6 +7,7 @@ import torch
 from flashvid.configuration_flashvid import FlashVidConfig
 
 from .fastvid import fastvid_compression
+from .fastvid_qwen25 import fastvid_qwen25_compression
 from .identity import fastv_identity_compression
 from .prunevid import prunevid_compression
 from .visionzip import visionzip_compression
@@ -24,6 +25,8 @@ def baseline_compression(
     if variant == "fastv":
         return fastv_identity_compression(video_features, cls_attention, flashvid_config)
     if variant == "fastvid":
+        if str(getattr(flashvid_config, "_baseline_backbone", "")).strip().lower() == "qwen2_5_vl":
+            return fastvid_qwen25_compression(video_features, cls_attention, flashvid_config)
         return fastvid_compression(video_features, cls_attention, flashvid_config)
     if variant == "visionzip":
         return visionzip_compression(video_features, cls_attention, flashvid_config)

@@ -278,10 +278,54 @@ def Qwen2_5_VisionTransformerPretrainedModel_forward(
     reverse_indices = torch.argsort(window_index)
     hidden_states = hidden_states[reverse_indices, :]
 
-    # * Process attn_weights and metric.
-    # attn_weights = F.avg_pool2d(attn_weights.unsqueeze(1), kernel_size=2, stride=2).squeeze(1)
+    flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
+    variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+
+    # FastVID's released Qwen2.5 path segments frames using post-merger frame
+    # features rather than the pre-merger vision CLS/pooling representation.
     num_frames = grid_thw[0][0].item()
-    # print(f"Attn weights Shape: {attn_weights.shape}")
+    if variant == "fastvid":
+        if hidden_states.shape[0] % num_frames != 0:
+            raise RuntimeError(
+                "Qwen2.5 FastVID cannot reshape merged vision tokens into frames: "
+                f"tokens={hidden_states.shape[0]}, frames={num_frames}"
+            )
+        setattr(
+            flashvid_config,
+            "_fastvid_frame_global_features",
+            hidden_states.view(num_frames, -1, hidden_states.shape[-1]).float().mean(dim=1),
+        )
+
+    if variant == "visionzip":
+        raw_metric = getattr(self.blocks[-1].attn, "visionzip_metric", None)
+        if raw_metric is None or raw_metric.ndim != 3:
+            raise RuntimeError("Qwen2.5 VisionZip did not receive the final post-RoPE key metric")
+        merge_unit = int(self.spatial_merge_unit)
+        if raw_metric.shape[0] % merge_unit != 0:
+            raise RuntimeError(
+                "Qwen2.5 VisionZip key length is not divisible by the spatial merge unit: "
+                f"keys={raw_metric.shape[0]}, merge_unit={merge_unit}"
+            )
+        merged_metric = raw_metric.view(
+            raw_metric.shape[0] // merge_unit,
+            merge_unit,
+            raw_metric.shape[1],
+            raw_metric.shape[2],
+        ).mean(dim=1)
+        merged_metric = merged_metric.mean(dim=1)[reverse_indices]
+        if merged_metric.shape[0] % num_frames != 0:
+            raise RuntimeError(
+                "Qwen2.5 VisionZip cannot reshape merged key metrics into frames: "
+                f"keys={merged_metric.shape[0]}, frames={num_frames}"
+            )
+        setattr(
+            flashvid_config,
+            "_visionzip_metric",
+            merged_metric.view(num_frames, -1, merged_metric.shape[-1]),
+        )
+        self.blocks[-1].attn.visionzip_metric = None
+
+    # Collapse the raw final-layer attention to one score per merged token.
     seq_len = attn_weights.shape[-1] // 4
     attn_weights = attn_weights.view(num_frames, seq_len, -1).mean(-1).view(-1)
     attn_weights = attn_weights[reverse_indices].view(num_frames, -1)
@@ -612,6 +656,10 @@ def Qwen2_5_VLVisionAttention_forward(
     )
     cos, sin = position_embeddings
     query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
+    if bool(getattr(self, "capture_visionzip", False)):
+        # VisionZip's Qwen2.5 implementation merges post-RoPE keys from the
+        # final vision block, after matching the spatial merger's 4-token groups.
+        self.visionzip_metric = key_states.detach()
 
     query_states = query_states.transpose(0, 1).unsqueeze(0)
     key_states = key_states.transpose(0, 1).unsqueeze(0)

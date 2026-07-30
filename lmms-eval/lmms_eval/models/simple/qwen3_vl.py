@@ -32,7 +32,12 @@ if not _has_qwen_vl:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
 
 
-SUPPORTED_QWEN3_BASELINE_ADAPTERS = ("fastgraphvid",)
+PATCHED_QWEN3_BASELINE_ADAPTERS = ("fastgraphvid",)
+NATIVE_QWEN3_BASELINE_ADAPTERS = ("fastv", "fastvid", "visionzip", "prunevid")
+SUPPORTED_QWEN3_BASELINE_ADAPTERS = (
+    *PATCHED_QWEN3_BASELINE_ADAPTERS,
+    *NATIVE_QWEN3_BASELINE_ADAPTERS,
+)
 VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
 
@@ -207,7 +212,7 @@ def _install_qwen3_baseline_adapter_patch() -> None:
         deepstack_features=None,
     ):
         variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
-        if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
+        if variant in PATCHED_QWEN3_BASELINE_ADAPTERS:
             return adapter_baseline_compression(video_features, cls_attention, flashvid_config)
         return original(
             video_features=video_features,
@@ -575,6 +580,15 @@ class Qwen3_VL(lmms):
         faith_debug: bool = False,
         adapter_budget_uses_expansion: bool = True,
         external_budget_uses_expansion: bool = True,
+        fastvid_DySeg_c: int = 8,
+        fastvid_DySeg_tau: float = 0.84,
+        fastvid_STPrune_d: float = 0.40,
+        fastvid_DTM_p: int = 4,
+        fastvid_DTM_beta: float = 0.60,
+        visionzip_dominant_ratio: float = 65.0 / 70.0,
+        prunevid_tau: float = 0.80,
+        prunevid_temporal_segment_ratio: float = 0.25,
+        prunevid_cluster_ratio: float = 0.50,
         slot_base_roles: int = 5,
         slot_max_per_segment: int = 64,
         slot_role_allocation: str = "motion,interaction,detail,scene,background",
@@ -676,7 +690,7 @@ class Qwen3_VL(lmms):
             variant = str(compression_variant).strip().lower()
             effective_token_selection_method = flashvid_token_selection_method or token_selection_method
             flashvid_init_variant = variant
-            if variant in SUPPORTED_QWEN3_BASELINE_ADAPTERS:
+            if variant in PATCHED_QWEN3_BASELINE_ADAPTERS:
                 _install_qwen3_baseline_adapter_patch()
                 # Install the standard Qwen3 FlashVID hook first, then switch
                 # runtime compression through flashvid_config. This preserves
@@ -1006,6 +1020,16 @@ class Qwen3_VL(lmms):
                 faith_max_log_bias=faith_max_log_bias,
                 faith_attention_strict=faith_attention_strict,
                 faith_debug=faith_debug,
+                adapter_budget_uses_expansion=adapter_budget_uses_expansion,
+                fastvid_DySeg_c=fastvid_DySeg_c,
+                fastvid_DySeg_tau=fastvid_DySeg_tau,
+                fastvid_STPrune_d=fastvid_STPrune_d,
+                fastvid_DTM_p=fastvid_DTM_p,
+                fastvid_DTM_beta=fastvid_DTM_beta,
+                visionzip_dominant_ratio=visionzip_dominant_ratio,
+                prunevid_tau=prunevid_tau,
+                prunevid_temporal_segment_ratio=prunevid_temporal_segment_ratio,
+                prunevid_cluster_ratio=prunevid_cluster_ratio,
                 prism_budget_uses_expansion=prism_budget_uses_expansion,
                 prism_metric_dim=prism_metric_dim,
                 prism_query_atoms=prism_query_atoms,

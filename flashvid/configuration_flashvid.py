@@ -12,6 +12,7 @@ class FlashVidConfig:
     adapter_budget_uses_expansion: bool = field(default=False)
     fastvid_DySeg_c: int = field(default=8)
     fastvid_DySeg_tau: float = field(default=0.90)
+    fastvid_DySeg_ignore: float = field(default=0.95)
     fastvid_STPrune_d: float = field(default=0.40)
     fastvid_DTM_p: int = field(default=4)
     fastvid_DTM_beta: float = field(default=0.60)

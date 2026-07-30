@@ -454,6 +454,7 @@ def flashvid(
     adapter_budget_uses_expansion: bool = False,
     fastvid_DySeg_c: int = 8,
     fastvid_DySeg_tau: float = 0.90,
+    fastvid_DySeg_ignore: float = 0.95,
     fastvid_STPrune_d: float = 0.40,
     fastvid_DTM_p: int = 4,
     fastvid_DTM_beta: float = 0.60,
@@ -818,6 +819,8 @@ def flashvid(
         Qwen2_5_VisionTransformerPretrainedModel.forward = Qwen2_5_VisionTransformerPretrainedModel_forward
         Qwen2_5_VLForConditionalGeneration.generate_ori = Qwen2_5_VLForConditionalGeneration.generate
         Qwen2_5_VLForConditionalGeneration.generate = Qwen2_5_VLForConditionalGeneration_generate
+        if variant == "visionzip":
+            model.model.visual.blocks[-1].attn.capture_visionzip = True
     elif type(model) is Qwen3VLForConditionalGeneration:  ## For Qwen3-VL
         if not hasattr(Qwen3VLVisionAttention, "_flashvid_original_forward"):
             Qwen3VLVisionAttention._flashvid_original_forward = Qwen3VLVisionAttention.forward
@@ -846,6 +849,8 @@ def flashvid(
         Qwen3VLTextModel.forward = Qwen3VLTextModel_forward
         Qwen3VLModel.get_image_features = Qwen3VLModel_get_image_features
         Qwen3VLModel.get_video_features = Qwen3VLModel_get_video_features
+        if variant == "visionzip":
+            model.model.visual.blocks[-1].attn.capture_visionzip = True
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
@@ -1242,6 +1247,7 @@ def flashvid(
         adapter_budget_uses_expansion=adapter_budget_uses_expansion,
         fastvid_DySeg_c=fastvid_DySeg_c,
         fastvid_DySeg_tau=fastvid_DySeg_tau,
+        fastvid_DySeg_ignore=fastvid_DySeg_ignore,
         fastvid_STPrune_d=fastvid_STPrune_d,
         fastvid_DTM_p=fastvid_DTM_p,
         fastvid_DTM_beta=fastvid_DTM_beta,
@@ -1459,6 +1465,12 @@ def flashvid(
         _resolve_budget(flashvid_config, total_tokens=1)
 
     # Store FlashVid Config in the model.
+    if type(model) is Qwen2_5_VLForConditionalGeneration:
+        setattr(flashvid_config, "_baseline_backbone", "qwen2_5_vl")
+    elif type(model) is Qwen3VLForConditionalGeneration:
+        setattr(flashvid_config, "_baseline_backbone", "qwen3_vl")
+    else:
+        setattr(flashvid_config, "_baseline_backbone", "llava")
     setattr(model, "flashvid_config", flashvid_config)
     setattr(model.model, "flashvid_config", flashvid_config)
     if variant == "certvid_v3plusplus":
@@ -1471,6 +1483,7 @@ def flashvid(
     setattr(model.config, "flashvid_bypass_active", False)
     if type(model) in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration):
         setattr(model.model.language_model, "flashvid_config", flashvid_config)
+        setattr(model.model.visual, "flashvid_config", flashvid_config)
     for module in model.modules():
         if isinstance(module, (Qwen2Attention, Qwen2_5_VLAttention, Qwen3VLTextAttention)):
             setattr(module, "flashvid_config", flashvid_config)
