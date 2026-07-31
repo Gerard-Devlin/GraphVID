@@ -79,6 +79,123 @@ def _distribution_summary(counts: torch.Tensor) -> dict[str, Any]:
     }
 
 
+def _strict_cap_flashvid_tokens(
+    tokens: torch.Tensor,
+    global_indices: torch.Tensor,
+    cls_attention: torch.Tensor,
+    num_visual_tokens: int,
+    target_tokens: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Remove only FlashVID's rounding surplus while preserving frame coverage."""
+    current_tokens = int(global_indices.numel())
+    target_tokens = min(current_tokens, max(1, int(target_tokens)))
+    if current_tokens <= target_tokens:
+        return tokens, global_indices
+
+    frame_ids = torch.div(
+        global_indices,
+        max(1, int(num_visual_tokens)),
+        rounding_mode="floor",
+    )
+    token_ids = torch.remainder(global_indices, max(1, int(num_visual_tokens)))
+    valid = (
+        (frame_ids >= 0)
+        & (frame_ids < cls_attention.shape[0])
+        & (token_ids >= 0)
+        & (token_ids < cls_attention.shape[1])
+    )
+    scores = torch.full(
+        (current_tokens,),
+        -1.0e6,
+        dtype=torch.float32,
+        device=global_indices.device,
+    )
+    scores[valid] = cls_attention.float()[
+        frame_ids[valid].long(),
+        token_ids[valid].long(),
+    ]
+    scores = torch.nan_to_num(scores, nan=-1.0e6, posinf=1.0e6, neginf=-1.0e6)
+
+    keep = torch.zeros(current_tokens, dtype=torch.bool, device=global_indices.device)
+    present_frames = torch.unique(frame_ids[valid], sorted=True)
+    if target_tokens >= int(present_frames.numel()):
+        for frame_id in present_frames.tolist():
+            members = torch.where(valid & (frame_ids == int(frame_id)))[0]
+            if members.numel() > 0:
+                keep[members[torch.argmax(scores[members])]] = True
+
+    remaining = target_tokens - int(keep.sum().item())
+    if remaining > 0:
+        candidates = torch.where(~keep)[0]
+        order = torch.argsort(scores[candidates], descending=True, stable=True)
+        keep[candidates[order[:remaining]]] = True
+
+    selected = torch.where(keep)[0]
+    selected = selected[torch.argsort(global_indices[selected], stable=True)]
+    if int(selected.numel()) != target_tokens:
+        raise RuntimeError(
+            "strict FlashVID budget selection failed: "
+            f"selected={int(selected.numel())}, target={target_tokens}"
+        )
+    return tokens[selected], global_indices[selected]
+
+
+def _strict_flashvid_outer_budget(
+    total_tokens: int,
+    retention_ratio: float,
+    expansion: float,
+    pruning_layer: int,
+    num_hidden_layers: int,
+    inner_retention_ratio: float,
+) -> int:
+    """Largest outer count whose integer layer-average cost does not exceed R."""
+    total_tokens = int(total_tokens)
+    layers = int(num_hidden_layers)
+    pruning_layer = int(pruning_layer)
+    if total_tokens <= 0 or layers <= 0 or not (0 <= pruning_layer <= layers):
+        raise ValueError(
+            "invalid strict FlashVID budget dimensions: "
+            f"tokens={total_tokens}, K={pruning_layer}, L={layers}"
+        )
+
+    proposed = max(
+        1,
+        int(math.floor(total_tokens * retention_ratio * expansion + 1e-9)),
+    )
+    nominal_layer_tokens = int(
+        math.floor(total_tokens * retention_ratio * layers + 1e-9)
+    )
+
+    def layer_cost(outer_tokens: int) -> int:
+        if inner_retention_ratio >= 0.9999:
+            inner_tokens = outer_tokens
+        else:
+            inner_tokens = max(
+                1,
+                int(math.floor(outer_tokens * inner_retention_ratio + 1e-9)),
+            )
+        return (
+            pruning_layer * outer_tokens
+            + (layers - pruning_layer) * inner_tokens
+        )
+
+    if layer_cost(1) > nominal_layer_tokens:
+        raise ValueError(
+            "the nominal retention ratio is too small to keep one visual token "
+            f"without exceeding the layer-average budget: N={total_tokens}, "
+            f"R={retention_ratio}, L={layers}"
+        )
+
+    low, high = 1, proposed
+    while low < high:
+        middle = (low + high + 1) // 2
+        if layer_cost(middle) <= nominal_layer_tokens:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
 def extract_question_features(
     input_ids: Optional[torch.Tensor],
     inputs_embeds: Optional[torch.Tensor],
@@ -256,15 +373,6 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant == "certvid_qwen":
-        from .certvid_qwen import certvid_qwen_compression
-
-        return certvid_qwen_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
     if compression_variant == "certvid_v3plus":
         from .certvid_v3plus import certvid_v3plus_compression
 
@@ -394,7 +502,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_qwen|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -449,6 +557,36 @@ def flashvid_compression(
     sorted_indices = final_global_indices.argsort()
     sorted_tokens = final_tokens[sorted_indices]  # Sort by global indices.
     sorted_global_indices = final_global_indices[sorted_indices]
+    strict_outer_target = None
+    strict_outer_removed = 0
+    strict_budget_ratio = None
+    if (
+        compression_variant == "flashvid"
+        and bool(getattr(flashvid_config, "strict_token_budget", False))
+    ):
+        strict_budget_ratio = min(
+            float(retention_ratio),
+            float(flashvid_config.retention_ratio),
+        )
+        strict_outer_target = _strict_flashvid_outer_budget(
+            total_tokens=num_frames * num_visual_tokens,
+            retention_ratio=strict_budget_ratio,
+            expansion=float(flashvid_config.expansion),
+            pruning_layer=int(flashvid_config.pruning_layer),
+            num_hidden_layers=int(flashvid_config.strict_num_hidden_layers),
+            inner_retention_ratio=float(flashvid_config.llm_retention_ratio),
+        )
+        before_cap = int(sorted_global_indices.numel())
+        sorted_tokens, sorted_global_indices = _strict_cap_flashvid_tokens(
+            tokens=sorted_tokens,
+            global_indices=sorted_global_indices,
+            cls_attention=cls_attention,
+            num_visual_tokens=num_visual_tokens,
+            target_tokens=strict_outer_target,
+        )
+        strict_outer_removed = before_cap - int(sorted_global_indices.numel())
+        flashvid_config.last_flashvid_strict_outer_target = int(strict_outer_target)
+        flashvid_config.last_flashvid_strict_outer_removed = int(strict_outer_removed)
     frame_counts = torch.bincount(
         sorted_global_indices // max(1, num_visual_tokens),
         minlength=num_frames,
@@ -517,6 +655,17 @@ def flashvid_compression(
             "final_token_count": int(sorted_tokens.shape[0]),
             "actual_outer_retention": float(
                 sorted_tokens.shape[0] / max(1, num_frames * num_visual_tokens)
+            ),
+            "strict_token_budget": bool(
+                getattr(flashvid_config, "strict_token_budget", False)
+            ),
+            "strict_budget_ratio": strict_budget_ratio,
+            "strict_outer_target": strict_outer_target,
+            "strict_outer_removed": int(strict_outer_removed),
+            "strict_average_budget_multiplier": getattr(
+                flashvid_config,
+                "last_flashvid_average_budget_multiplier",
+                None,
             ),
             "frame_count": int(num_frames),
             "tokens_per_frame": int(num_visual_tokens),
@@ -1128,6 +1277,10 @@ def fastv_prune(
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
 
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+    strict_flashvid_budget = bool(
+        variant == "flashvid"
+        and getattr(flashvid_config, "strict_token_budget", False)
+    )
     if variant == "prunevid":
         num_retained_tokens = int(
             getattr(
@@ -1136,9 +1289,15 @@ def fastv_prune(
                 math.ceil(visual_token_length * retention_ratio),
             )
         )
+    elif strict_flashvid_budget:
+        num_retained_tokens = int(
+            math.floor(visual_token_length * retention_ratio + 1e-9)
+        )
     else:
         num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
     num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
+    if strict_flashvid_budget:
+        flashvid_config.last_flashvid_strict_inner_target = int(num_retained_tokens)
     if variant == "certvid_v3plusplus":
         from .v3plusplus_inner import (
             clear_v3plusplus_runtime,

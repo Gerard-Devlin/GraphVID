@@ -610,7 +610,6 @@ def Qwen2_5_VLForConditionalGeneration_generate(
             "_visionzip_metric",
             "_prunevid_group_sizes",
             "_prunevid_target_tokens",
-            "_qwen_mrope_coords",
         ):
             setattr(flashvid_config, name, None)
         visual = getattr(getattr(self, "model", None), "visual", None)
@@ -714,29 +713,6 @@ def Qwen2_5_VLModel_forward(
         num_frames, num_visual_tokens = cls_attention.shape
         flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
         setattr(flashvid_config, "_certvid_attention_source", "manual_qk")
-        visual_token_indexes = torch.where(input_ids[0] == self.config.video_token_id)[0]
-        variant = str(
-            getattr(flashvid_config, "compression_variant", "")
-        ).strip().lower()
-        if variant == "certvid_qwen":
-            raw_token_count = int(num_frames * num_visual_tokens)
-            if int(visual_token_indexes.numel()) != raw_token_count:
-                raise RuntimeError(
-                    "Qwen M-RoPE metadata does not match the visual token tensor: "
-                    f"positions={int(visual_token_indexes.numel())}, "
-                    f"features={raw_token_count}"
-                )
-            if position_ids.ndim != 3 or position_ids.shape[0] < 3:
-                raise RuntimeError(
-                    f"expected Qwen M-RoPE position_ids [3, B, S], got {tuple(position_ids.shape)}"
-                )
-            setattr(
-                flashvid_config,
-                "_qwen_mrope_coords",
-                position_ids[-3:, 0, visual_token_indexes]
-                .transpose(0, 1)
-                .detach(),
-            )
         spatial_merge = max(1, int(getattr(self.visual, "spatial_merge_size", 2)))
         flashvid_config.H = int(video_grid_thw[0][1].item() // spatial_merge)
         flashvid_config.W = int(video_grid_thw[0][2].item() // spatial_merge)
@@ -761,6 +737,7 @@ def Qwen2_5_VLModel_forward(
         visual_start_index = torch.where(input_ids[0] == self.config.video_token_id)[0][0].item()
         visual_length = n_video_tokens
         visual_end_index = visual_start_index + visual_length
+        visual_token_indexes = torch.where(input_ids[0] == self.config.video_token_id)[0]
         if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
             from .faithvid import apply_faithvid_position_centroids
 

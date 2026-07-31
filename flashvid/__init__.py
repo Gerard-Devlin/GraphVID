@@ -215,35 +215,6 @@ def flashvid(
     certv3_swap_margin: float = 1e-4,
     certv3_fusion_alpha: float = 0.12,
     certv3_assignment_temperature: float = 0.07,
-    qcert_budget_uses_expansion: bool = True,
-    qcert_query_atoms: int = 8,
-    qcert_temporal_bins: int = 0,
-    qcert_spatial_bins: int = 0,
-    qcert_candidate_multiplier: float = 2.5,
-    qcert_track_threshold: float = 0.82,
-    qcert_track_spatial_penalty: float = 0.08,
-    qcert_frame_coverage_ratio: float = 1.0,
-    qcert_cell_coverage_ratio: float = 0.35,
-    qcert_query_threshold: float = 0.10,
-    qcert_query_per_atom: int = 1,
-    qcert_quality_query_weight: float = 0.12,
-    qcert_whitening_strength: float = 0.25,
-    qcert_semantic_weight: float = 0.68,
-    qcert_phase_weight: float = 0.14,
-    qcert_temporal_weight: float = 0.06,
-    qcert_spatial_weight: float = 0.04,
-    qcert_signal_weight: float = 0.04,
-    qcert_design_query_weight: float = 0.04,
-    qcert_phase_levels: int = 4,
-    qcert_quality_floor: float = 0.15,
-    qcert_ridge: float = 0.50,
-    qcert_kernel_tolerance: float = 1e-4,
-    qcert_max_kernel_pivots: int = 1024,
-    qcert_fusion_alpha: float = 0.08,
-    qcert_fusion_similarity: float = 0.82,
-    qcert_fusion_temporal_radius: float = 1.0,
-    qcert_fusion_spatial_radius: float = 2.0,
-    qcert_assignment_temperature: float = 0.07,
     v3plus_inner_mode: str = "structured",
     v3plus_query_rows: int = 32,
     v3plus_attention_mean_weight: float = 0.75,
@@ -733,8 +704,6 @@ def flashvid(
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
-            "certvid_qwen" uses full-feature kernel D-optimal design with
-            M-RoPE-aware fusion for Qwen2.5-VL;
             "certvid_v3plus" keeps the V3 outer design and replaces only the
             LLaVA inner selector with structure-aware pruning;
             "certvid_v3plusplus" keeps the V3 outer design and uses
@@ -824,8 +793,6 @@ def flashvid(
     variant = str(compression_variant).strip().lower()
     if variant in ("certvid_v3plus", "certvid_v3plusplus") and type(model) is not LlavaQwenForCausalLM:
         raise ValueError(f"{variant} currently supports LLaVA-OneVision only")
-    if variant == "certvid_qwen" and type(model) is not Qwen2_5_VLForConditionalGeneration:
-        raise ValueError("certvid_qwen currently supports Qwen2.5-VL only")
 
     # Replace with custom methods.
     if type(model) is LlavaQwenForCausalLM:  ## For LLaVA-OneVision or LLaVA-Video
@@ -887,10 +854,10 @@ def flashvid(
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
-    if variant not in ("flashvid", "fastv", "fastvid", "visionzip", "prunevid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_qwen", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "fastv", "fastvid", "visionzip", "prunevid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|fastv|fastvid|visionzip|prunevid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_qwen|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|fastv|fastvid|visionzip|prunevid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "certvid_v3plus":
         v3plus_inner_mode = str(v3plus_inner_mode).strip().lower()
@@ -1025,35 +992,6 @@ def flashvid(
         certv3_swap_margin=certv3_swap_margin,
         certv3_fusion_alpha=certv3_fusion_alpha,
         certv3_assignment_temperature=certv3_assignment_temperature,
-        qcert_budget_uses_expansion=qcert_budget_uses_expansion,
-        qcert_query_atoms=qcert_query_atoms,
-        qcert_temporal_bins=qcert_temporal_bins,
-        qcert_spatial_bins=qcert_spatial_bins,
-        qcert_candidate_multiplier=qcert_candidate_multiplier,
-        qcert_track_threshold=qcert_track_threshold,
-        qcert_track_spatial_penalty=qcert_track_spatial_penalty,
-        qcert_frame_coverage_ratio=qcert_frame_coverage_ratio,
-        qcert_cell_coverage_ratio=qcert_cell_coverage_ratio,
-        qcert_query_threshold=qcert_query_threshold,
-        qcert_query_per_atom=qcert_query_per_atom,
-        qcert_quality_query_weight=qcert_quality_query_weight,
-        qcert_whitening_strength=qcert_whitening_strength,
-        qcert_semantic_weight=qcert_semantic_weight,
-        qcert_phase_weight=qcert_phase_weight,
-        qcert_temporal_weight=qcert_temporal_weight,
-        qcert_spatial_weight=qcert_spatial_weight,
-        qcert_signal_weight=qcert_signal_weight,
-        qcert_design_query_weight=qcert_design_query_weight,
-        qcert_phase_levels=qcert_phase_levels,
-        qcert_quality_floor=qcert_quality_floor,
-        qcert_ridge=qcert_ridge,
-        qcert_kernel_tolerance=qcert_kernel_tolerance,
-        qcert_max_kernel_pivots=qcert_max_kernel_pivots,
-        qcert_fusion_alpha=qcert_fusion_alpha,
-        qcert_fusion_similarity=qcert_fusion_similarity,
-        qcert_fusion_temporal_radius=qcert_fusion_temporal_radius,
-        qcert_fusion_spatial_radius=qcert_fusion_spatial_radius,
-        qcert_assignment_temperature=qcert_assignment_temperature,
         v3plus_inner_mode=v3plus_inner_mode,
         v3plus_query_rows=v3plus_query_rows,
         v3plus_attention_mean_weight=v3plus_attention_mean_weight,
@@ -1514,6 +1452,37 @@ def flashvid(
         decode_update_interval=decode_update_interval,
         decode_start_layer=decode_start_layer,
     )
+    # Qwen2.5 evaluates very small retention ratios where per-stage ceil
+    # rounding is material. Cap FlashVID to a non-exceeding global budget;
+    # other models and compression variants retain their existing behavior.
+    flashvid_config.strict_token_budget = bool(
+        variant == "flashvid"
+        and type(model) is Qwen2_5_VLForConditionalGeneration
+    )
+    if flashvid_config.strict_token_budget:
+        num_hidden_layers = _text_layer_count(model)
+        if num_hidden_layers <= 0:
+            raise ValueError("cannot verify the Qwen2.5 FlashVID token budget without decoder depth")
+        if not (0 <= int(pruning_layer) <= num_hidden_layers):
+            raise ValueError(
+                "Qwen2.5 FlashVID pruning_layer must satisfy "
+                f"0 <= K <= L, got K={pruning_layer}, L={num_hidden_layers}"
+            )
+        average_multiplier = float(expansion) * (
+            int(pruning_layer)
+            + (num_hidden_layers - int(pruning_layer)) * float(llm_retention_ratio)
+        ) / float(num_hidden_layers)
+        if average_multiplier > 1.0 + 1e-9:
+            raise ValueError(
+                "Qwen2.5 FlashVID exceeds the nominal layer-average token budget: "
+                f"multiplier={average_multiplier:.10f} > 1.0 "
+                f"(E={expansion}, K={pruning_layer}, "
+                f"r={llm_retention_ratio}, L={num_hidden_layers})"
+            )
+        flashvid_config.last_flashvid_average_budget_multiplier = float(
+            average_multiplier
+        )
+        flashvid_config.strict_num_hidden_layers = int(num_hidden_layers)
 
     if variant == "certvid_v4":
         from .certvid_v4 import _resolve_budget
