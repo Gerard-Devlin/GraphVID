@@ -541,17 +541,33 @@ class Qwen2_5_VL(lmms):
                 current_gen_kwargs["temperature"] = None
                 current_gen_kwargs["top_p"] = None
 
-            cont = self.model.generate(
-                **inputs,
-                eos_token_id=self.tokenizer.eos_token_id,
-                pad_token_id=pad_token_id,
-                do_sample=current_gen_kwargs["do_sample"],
-                temperature=current_gen_kwargs["temperature"],
-                top_p=current_gen_kwargs["top_p"],
-                num_beams=current_gen_kwargs["num_beams"],
-                max_new_tokens=current_gen_kwargs["max_new_tokens"],
-                use_cache=self.use_cache,
-            )
+            flashvid_config = getattr(self.model, "flashvid_config", None)
+            if flashvid_config is not None:
+                if len(doc_id) == 1:
+                    flashvid_config._debug_sample_id = str(doc_id[0])
+                    flashvid_config._certvid_task_name = str(task)
+                    flashvid_config._certvid_query_text = str(contexts[0])
+                else:
+                    flashvid_config._debug_sample_id = "batched"
+                    flashvid_config._certvid_task_name = str(task)
+                    flashvid_config._certvid_query_text = ""
+            try:
+                cont = self.model.generate(
+                    **inputs,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    pad_token_id=pad_token_id,
+                    do_sample=current_gen_kwargs["do_sample"],
+                    temperature=current_gen_kwargs["temperature"],
+                    top_p=current_gen_kwargs["top_p"],
+                    num_beams=current_gen_kwargs["num_beams"],
+                    max_new_tokens=current_gen_kwargs["max_new_tokens"],
+                    use_cache=self.use_cache,
+                )
+            finally:
+                if flashvid_config is not None:
+                    flashvid_config._debug_sample_id = "unknown"
+                    flashvid_config._certvid_task_name = None
+                    flashvid_config._certvid_query_text = ""
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
             answers = self.processor.batch_decode(

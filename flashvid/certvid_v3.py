@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import os
 from typing import Any, MutableMapping, Optional
 
 import torch
@@ -24,6 +26,29 @@ from .certvid import (
 )
 from .certvid_v2 import _component_support, _trajectory_signals
 from .configuration_flashvid import FlashVidConfig
+
+
+def _write_certv3_diagnostics(
+    config: FlashVidConfig,
+    diagnostics: dict[str, Any],
+) -> None:
+    """Append scalar diagnostics without changing the V3 selection path."""
+    template = os.environ.get("CERTV3_DIAGNOSTICS_JSONL", "").strip()
+    if not template:
+        return
+
+    rank = os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0"))
+    path = template.replace("{rank}", rank).replace("{pid}", str(os.getpid()))
+    if "{rank}" not in template and "{pid}" not in template:
+        root, extension = os.path.splitext(path)
+        path = f"{root}.rank{rank}{extension or '.jsonl'}"
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+    record = dict(diagnostics)
+    record["sample_id"] = str(getattr(config, "_debug_sample_id", "unknown"))
+    record["task"] = getattr(config, "_certvid_task_name", None)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
 
 
 def _effective_ratio(config: FlashVidConfig) -> float:
@@ -698,8 +723,56 @@ def certvid_v3_compression(
     setattr(flashvid_config, "last_certv3_candidate_tokens", float(candidates))
     setattr(flashvid_config, "last_certv3_component_count", float(components))
     setattr(flashvid_config, "last_certv3_certificate_count", float(len(mandatory)))
+    free_dopt_slots = max(0, int(budget) - len(mandatory))
+    certificate_pressure = len(mandatory) / float(max(1, budget))
+    dopt_slot_ratio = free_dopt_slots / float(max(1, budget))
+    setattr(
+        flashvid_config,
+        "last_certv3_certificate_pressure",
+        float(certificate_pressure),
+    )
+    setattr(
+        flashvid_config,
+        "last_certv3_free_dopt_slots",
+        float(free_dopt_slots),
+    )
+    setattr(
+        flashvid_config,
+        "last_certv3_dopt_slot_ratio",
+        float(dopt_slot_ratio),
+    )
     setattr(flashvid_config, "last_certv3_query_seed_count", float(len(query_seeds)))
     setattr(flashvid_config, "last_certv3_query_confidence", float(query_confidence))
     setattr(flashvid_config, "last_certv3_swap_count", float(swaps))
     setattr(flashvid_config, "last_certv3_logdet", float(logdet))
+    diagnostics = {
+        "identity": bool(budget >= total_tokens),
+        "retention_ratio": float(
+            _cfg_float(flashvid_config, "retention_ratio", 0.10)
+        ),
+        "effective_outer_ratio": float(ratio),
+        "expansion": float(_cfg_float(flashvid_config, "expansion", 1.0)),
+        "pruning_layer": int(_cfg_int(flashvid_config, "pruning_layer", 0)),
+        "llm_retention_ratio": float(
+            _cfg_float(flashvid_config, "llm_retention_ratio", 1.0)
+        ),
+        "fusion_alpha": float(
+            _cfg_float(flashvid_config, "certv3_fusion_alpha", 0.12)
+        ),
+        "raw_tokens": int(total_tokens),
+        "target_tokens": int(budget),
+        "output_tokens": int(output.shape[0]),
+        "certificate_count": int(len(mandatory)),
+        "certificate_pressure": float(certificate_pressure),
+        "free_dopt_slots": int(free_dopt_slots),
+        "dopt_slot_ratio": float(dopt_slot_ratio),
+        "candidate_count": int(candidates),
+        "component_count": int(components),
+        "query_seed_count": int(len(query_seeds)),
+        "query_confidence": float(query_confidence),
+        "swap_count": int(swaps),
+        "logdet": float(logdet),
+    }
+    setattr(flashvid_config, "last_certv3_diagnostics", diagnostics)
+    _write_certv3_diagnostics(flashvid_config, diagnostics)
     return output, plan.anchor_indices
