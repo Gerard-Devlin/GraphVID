@@ -1452,20 +1452,24 @@ def flashvid(
         decode_update_interval=decode_update_interval,
         decode_start_layer=decode_start_layer,
     )
-    # Qwen2.5 evaluates very small retention ratios where per-stage ceil
-    # rounding is material. Cap FlashVID to a non-exceeding global budget;
-    # other models and compression variants retain their existing behavior.
+    # Qwen-family evaluations include very small retention ratios where
+    # per-stage ceil rounding is material. Cap FlashVID to a non-exceeding
+    # global budget; LLaVA and other compression variants remain unchanged.
     flashvid_config.strict_token_budget = bool(
         variant == "flashvid"
-        and type(model) is Qwen2_5_VLForConditionalGeneration
+        and type(model)
+        in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration)
     )
     if flashvid_config.strict_token_budget:
         num_hidden_layers = _text_layer_count(model)
         if num_hidden_layers <= 0:
-            raise ValueError("cannot verify the Qwen2.5 FlashVID token budget without decoder depth")
+            raise ValueError(
+                "cannot verify the Qwen-family FlashVID token budget "
+                "without decoder depth"
+            )
         if not (0 <= int(pruning_layer) <= num_hidden_layers):
             raise ValueError(
-                "Qwen2.5 FlashVID pruning_layer must satisfy "
+                "Qwen-family FlashVID pruning_layer must satisfy "
                 f"0 <= K <= L, got K={pruning_layer}, L={num_hidden_layers}"
             )
         average_multiplier = float(expansion) * (
@@ -1474,7 +1478,7 @@ def flashvid(
         ) / float(num_hidden_layers)
         if average_multiplier > 1.0 + 1e-9:
             raise ValueError(
-                "Qwen2.5 FlashVID exceeds the nominal layer-average token budget: "
+                "Qwen-family FlashVID exceeds the nominal layer-average token budget: "
                 f"multiplier={average_multiplier:.10f} > 1.0 "
                 f"(E={expansion}, K={pruning_layer}, "
                 f"r={llm_retention_ratio}, L={num_hidden_layers})"
