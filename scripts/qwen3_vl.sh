@@ -57,10 +57,12 @@ TASKS="${TASKS:-videomme,egoschema,mvbench,longvideobench_val_v}"
 OUTPUT_PATH="${OUTPUT_PATH:-./logs/lmms_eval_qwen3_8b}"
 LOG_SAMPLES_SUFFIX="${LOG_SAMPLES_SUFFIX:-qwen3_vl}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
-GEN_KWARGS="${GEN_KWARGS:-max_new_tokens=16,temperature=0}"
+# Leave generation settings to each lmms-eval task by default, matching the
+# LLaVA-OneVision and Qwen2.5-VL runners. Set GEN_KWARGS to override them.
+GEN_KWARGS="${GEN_KWARGS:-}"
 VERBOSITY="${VERBOSITY:-INFO}"
 LIMIT="${LIMIT:-}"
-LOG_SAMPLES="${LOG_SAMPLES:-1}"
+LOG_SAMPLES="${LOG_SAMPLES:-0}"
 FADVISE_DURING_RUN="${FADVISE_DURING_RUN:-1}"
 FADVISE_INTERVAL="${FADVISE_INTERVAL:-20}"
 FADVISE_ROOTS="${FADVISE_ROOTS:-$HF_HOME/videomme:$HF_HOME/egoschema:$HF_HOME/mvbench_video:$HF_HOME/longvideobench}"
@@ -683,23 +685,29 @@ method_flash_args() {
   esac
 }
 
-for method in $(split_csv "$METHODS"); do
-  for retention_ratio in $(split_csv "$RATES"); do
+for retention_ratio in $(split_csv "$RATES"); do
+  for method in $(split_csv "$METHODS"); do
     model_args="$(base_model_args),$(common_flash_args "$retention_ratio" "$method"),$(method_flash_args "$method")"
     for task in $(split_csv "$TASKS"); do
+      run_output="$OUTPUT_PATH/${method}_r${retention_ratio}_${task}"
       cmd=(
         "$ACCELERATE" launch
         --main_process_port "$MAIN_PROCESS_PORT"
         --num_processes "$NUM_PROCESSES"
+        --num_machines 1
+        --mixed_precision no
+        --dynamo_backend no
         -m lmms_eval
         --model qwen3_vl
         --model_args "$model_args"
         --tasks "$task"
         --batch_size "$BATCH_SIZE"
-        --gen_kwargs "$GEN_KWARGS"
         --verbosity "$VERBOSITY"
-        --output_path "$OUTPUT_PATH"
+        --output_path "$run_output"
       )
+      if [[ -n "$GEN_KWARGS" ]]; then
+        cmd+=(--gen_kwargs "$GEN_KWARGS")
+      fi
       if [[ "$LOG_SAMPLES" == "1" || "$LOG_SAMPLES" == "true" || "$LOG_SAMPLES" == "True" ]]; then
         cmd+=(
           --log_samples
@@ -716,7 +724,7 @@ for method in $(split_csv "$METHODS"); do
         start_fadvise_loop "${method}_r${retention_ratio}_${task}"
         set +e
         if [[ "$method" == "certvid_v8" ]]; then
-          diagnostics_path="${CERTV8_DIAGNOSTICS_JSONL:-$OUTPUT_PATH/certvid_v8_r${retention_ratio}_${task}.jsonl}"
+          diagnostics_path="${CERTV8_DIAGNOSTICS_JSONL:-$run_output/certvid_v8_diagnostics.jsonl}"
           echo "[certvid-v8] diagnostics=$diagnostics_path detail=$CERTV8_DIAGNOSTICS_DETAIL"
           env \
             CERTV8_DIAGNOSTICS_JSONL="$diagnostics_path" \
@@ -725,26 +733,26 @@ for method in $(split_csv "$METHODS"); do
         elif [[ "$method" == "certvid_v9" ]]; then
           diagnostics_path="${CERTV9_DIAGNOSTICS_JSONL:-}"
           if [[ -z "$diagnostics_path" ]]; then
-            diagnostics_path="$OUTPUT_PATH/certvid_v9_r${retention_ratio}_${task}_rank{rank}.jsonl"
+            diagnostics_path="$run_output/certvid_v9_diagnostics_rank{rank}.jsonl"
           fi
           echo "[certvid-v9] diagnostics=$diagnostics_path"
           env CERTV9_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
         elif [[ "$method" == "certvid_v10" ]]; then
           diagnostics_path="${CERTV10_DIAGNOSTICS_JSONL:-}"
           if [[ -z "$diagnostics_path" ]]; then
-            diagnostics_path="$OUTPUT_PATH/certvid_v10_r${retention_ratio}_${task}_rank{rank}.jsonl"
+            diagnostics_path="$run_output/certvid_v10_diagnostics_rank{rank}.jsonl"
           fi
           echo "[certvid-v10] diagnostics=$diagnostics_path"
           env CERTV10_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
         elif [[ "$method" == "certvid_v11" ]]; then
           diagnostics_path="${CERTV11_DIAGNOSTICS_JSONL:-}"
           if [[ -z "$diagnostics_path" ]]; then
-            diagnostics_path="$OUTPUT_PATH/certvid_v11_r${retention_ratio}_${task}_rank{rank}.jsonl"
+            diagnostics_path="$run_output/certvid_v11_diagnostics_rank{rank}.jsonl"
           fi
           echo "[certvid-v11] diagnostics=$diagnostics_path"
           env CERTV11_DIAGNOSTICS_JSONL="$diagnostics_path" "${cmd[@]}"
         elif [[ "$method" == "flashvid" ]]; then
-          diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$OUTPUT_PATH/flashvid_r${retention_ratio}_${task}.jsonl}"
+          diagnostics_path="${FLASHVID_DIAGNOSTICS_JSONL:-$run_output/flashvid_diagnostics.jsonl}"
           echo "[flashvid] diagnostics=$diagnostics_path detail=$FLASHVID_DIAGNOSTICS_DETAIL"
           env \
             FLASHVID_DIAGNOSTICS_JSONL="$diagnostics_path" \
