@@ -8,14 +8,26 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ -z "${HF_HOME:-}" ]]; then
-  if [[ -d /root/autodl-tmp/hf_home ]]; then
-    export HF_HOME=/root/autodl-tmp/hf_home
+  if [[ -d /home/xuyouwen/hf_home_local ]]; then
+    export HF_HOME=/home/xuyouwen/hf_home_local
   else
-    export HF_HOME=/gluster/envs/users/wuzhijian/hf_home
+    export HF_HOME="${HOME}/.cache/huggingface"
   fi
 fi
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+if [[ -z "${HF_HUB_CACHE:-}" ]]; then
+  if [[ -d /home/xuyouwen/hf_hub_local ]]; then
+    export HF_HUB_CACHE=/home/xuyouwen/hf_hub_local
+  else
+    export HF_HUB_CACHE="$HF_HOME/hub"
+  fi
+fi
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+export HF_EVALUATE_OFFLINE="${HF_EVALUATE_OFFLINE:-1}"
+export HF_HUB_DISABLE_TELEMETRY="${HF_HUB_DISABLE_TELEMETRY:-1}"
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export LMMS_EVAL_SERIALIZE_DATASET_LOAD="${LMMS_EVAL_SERIALIZE_DATASET_LOAD:-1}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export DECORD_EOF_RETRY_MAX="${DECORD_EOF_RETRY_MAX:-20480}"
@@ -30,7 +42,15 @@ ACCELERATE="${ACCELERATE:-accelerate}"
 MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-18888}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 
-PRETRAINED="${PRETRAINED:-$HF_HOME/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b}"
+if [[ -z "${PRETRAINED:-}" ]]; then
+  model_repo="$HF_HUB_CACHE/models--Qwen--Qwen3-VL-8B-Instruct"
+  if [[ -f "$model_repo/refs/main" ]]; then
+    revision="$(tr -d '\r\n' < "$model_repo/refs/main")"
+    PRETRAINED="$(readlink -f "$model_repo/snapshots/$revision")"
+  else
+    PRETRAINED="Qwen/Qwen3-VL-8B-Instruct"
+  fi
+fi
 METHODS="${METHODS:-flashvid,graphvid,fastgraphvid}"
 RATES="${RATES:-0.10,0.15,0.20,0.25}"
 TASKS="${TASKS:-videomme,egoschema,mvbench,longvideobench_val_v}"
@@ -42,7 +62,7 @@ LIMIT="${LIMIT:-}"
 LOG_SAMPLES="${LOG_SAMPLES:-1}"
 FADVISE_DURING_RUN="${FADVISE_DURING_RUN:-1}"
 FADVISE_INTERVAL="${FADVISE_INTERVAL:-20}"
-FADVISE_ROOTS="${FADVISE_ROOTS:-$HF_HOME/videomme/data:$HF_HOME/videomme:/root/autodl-tmp/videomme_raw}"
+FADVISE_ROOTS="${FADVISE_ROOTS:-$HF_HOME/videomme:$HF_HOME/egoschema:$HF_HOME/mvbench_video:$HF_HOME/longvideobench}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
 MAX_NUM_FRAMES="${MAX_NUM_FRAMES:-32}"
@@ -453,20 +473,27 @@ roots = [Path(p) for p in os.environ.get("FADVISE_ROOTS", "").split(":") if p]
 suffixes = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".zip"}
 count = 0
 for root in roots:
-    if not root.exists():
+    try:
+        exists = root.exists()
+    except OSError:
         continue
-    for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in suffixes:
-            continue
-        try:
-            fd = os.open(str(path), os.O_RDONLY)
+    if not exists:
+        continue
+    try:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in suffixes:
+                continue
             try:
-                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-            finally:
-                os.close(fd)
-            count += 1
-        except Exception:
-            pass
+                fd = os.open(str(path), os.O_RDONLY)
+                try:
+                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                finally:
+                    os.close(fd)
+                count += 1
+            except Exception:
+                pass
+    except OSError:
+        continue
 print(f"[fadvise-loop] files={count}", flush=True)
 PY
 }
