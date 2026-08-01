@@ -177,6 +177,39 @@ def _talon_should_keep_deepstack(flashvid_config: FlashVidConfig) -> bool:
     return memory_mode in ("raw", "anchor", "anchors", "select")
 
 
+def _apply_rotary_pos_emb_vision_inplace(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    chunk_size: int = 1024,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply the official FP32 vision RoPE formula without full-size temporaries."""
+    if torch.is_grad_enabled() and (query_states.requires_grad or key_states.requires_grad):
+        return apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
+
+    cos = cos.unsqueeze(-2).float()
+    sin = sin.unsqueeze(-2).float()
+    sequence_length = int(query_states.shape[0])
+
+    for start in range(0, sequence_length, int(chunk_size)):
+        end = min(start + int(chunk_size), sequence_length)
+        cos_chunk = cos[start:end]
+        sin_chunk = sin[start:end]
+
+        for states in (query_states, key_states):
+            states_chunk = states[start:end].float()
+            split = states_chunk.shape[-1] // 2
+            rotated_chunk = torch.cat(
+                (-states_chunk[..., split:], states_chunk[..., :split]),
+                dim=-1,
+            )
+            transformed_chunk = states_chunk * cos_chunk + rotated_chunk * sin_chunk
+            states[start:end].copy_(transformed_chunk.to(dtype=states.dtype))
+
+    return query_states, key_states
+
+
 def Qwen3VLVisionAttention_forward(
     self: Qwen3VLVisionAttention,
     hidden_states: torch.Tensor,
@@ -199,10 +232,16 @@ def Qwen3VLVisionAttention_forward(
     query_states, key_states, value_states = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
     if getattr(self, "capture_visionzip", False):
         # VisionZip ranks contextual tokens with the vision transformer's key
-        # metric. Capture it before RoPE, matching the released operator.
-        self.visionzip_metric = key_states.detach().reshape(seq_length, -1)
+        # metric. Clone it before the in-place RoPE path so it remains the
+        # released operator's pre-RoPE key representation.
+        self.visionzip_metric = key_states.detach().reshape(seq_length, -1).clone()
     cos, sin = position_embeddings
-    query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
+    query_states, key_states = _apply_rotary_pos_emb_vision_inplace(
+        query_states,
+        key_states,
+        cos,
+        sin,
+    )
 
     query_states = query_states.transpose(0, 1).unsqueeze(0)
     key_states = key_states.transpose(0, 1).unsqueeze(0)
@@ -255,13 +294,13 @@ def Qwen3VLVisionAttention_forward(
             num_frames,
             raw_tokens_per_frame,
             self.head_dim,
-        ).permute(1, 0, 2, 3).contiguous()
+        ).permute(1, 0, 2, 3)
         k_by_frame = k_heads.view(
             self.num_heads,
             num_frames,
             raw_tokens_per_frame,
             self.head_dim,
-        ).permute(1, 0, 2, 3).contiguous()
+        ).permute(1, 0, 2, 3)
         incoming_mass = torch.zeros(
             (num_frames, raw_tokens_per_frame),
             dtype=torch.float32,
