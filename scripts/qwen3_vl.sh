@@ -58,6 +58,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-./logs/lmms_eval_qwen3_8b}"
 LOG_SAMPLES_SUFFIX="${LOG_SAMPLES_SUFFIX:-qwen3_vl}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 GEN_KWARGS="${GEN_KWARGS:-max_new_tokens=16,temperature=0}"
+VERBOSITY="${VERBOSITY:-INFO}"
 LIMIT="${LIMIT:-}"
 LOG_SAMPLES="${LOG_SAMPLES:-1}"
 FADVISE_DURING_RUN="${FADVISE_DURING_RUN:-1}"
@@ -67,7 +68,9 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 
 MAX_NUM_FRAMES="${MAX_NUM_FRAMES:-32}"
 MIN_PIXELS="${MIN_PIXELS:-200704}"
-MAX_PIXELS="${MAX_PIXELS:-1605632}"
+# qwen_vl_utils caps Qwen3 video inputs at 786432 pixels. Using the effective
+# limit directly avoids repeated warnings without changing processed inputs.
+MAX_PIXELS="${MAX_PIXELS:-786432}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
 DO_SEGMENT="${DO_SEGMENT:-True}"
@@ -694,6 +697,7 @@ for method in $(split_csv "$METHODS"); do
         --tasks "$task"
         --batch_size "$BATCH_SIZE"
         --gen_kwargs "$GEN_KWARGS"
+        --verbosity "$VERBOSITY"
         --output_path "$OUTPUT_PATH"
       )
       if [[ "$LOG_SAMPLES" == "1" || "$LOG_SAMPLES" == "true" || "$LOG_SAMPLES" == "True" ]]; then

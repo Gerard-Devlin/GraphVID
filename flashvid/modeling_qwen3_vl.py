@@ -237,16 +237,54 @@ def Qwen3VLVisionAttention_forward(
 
     attn_weights = None
     if return_logits:
-        # Calculate attention weights manually.
+        # Accumulate mean incoming attention in query chunks. This is
+        # mathematically equivalent to averaging the full per-frame attention
+        # matrix, without materializing F x H x S x S logits.
         num_frames = cu_seqlens.shape[0] - 1
-        q, k = query_states.squeeze(0), key_states.squeeze(0)
-        # reshape to (seq_length, num_heads, head_dim)
-        q, k = q.transpose(0, 1), k.transpose(0, 1)
-        q = q.reshape(num_frames, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
-        k = k.reshape(num_frames, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
-        attn_weights = torch.matmul(q, k.transpose(-1, -2)) / self.head_dim**0.5
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-        attn_weights = attn_weights.mean(1).mean(1)
+        q_heads = query_states.squeeze(0)
+        k_heads = key_states.squeeze(0)
+        total_tokens = int(q_heads.shape[-2])
+        if total_tokens % int(num_frames) != 0:
+            raise RuntimeError(
+                "Qwen3 vision tokens cannot be evenly divided into frames: "
+                f"tokens={total_tokens}, frames={int(num_frames)}"
+            )
+        raw_tokens_per_frame = total_tokens // int(num_frames)
+        q_by_frame = q_heads.view(
+            self.num_heads,
+            num_frames,
+            raw_tokens_per_frame,
+            self.head_dim,
+        ).permute(1, 0, 2, 3).contiguous()
+        k_by_frame = k_heads.view(
+            self.num_heads,
+            num_frames,
+            raw_tokens_per_frame,
+            self.head_dim,
+        ).permute(1, 0, 2, 3).contiguous()
+        incoming_mass = torch.zeros(
+            (num_frames, raw_tokens_per_frame),
+            dtype=torch.float32,
+            device=q_heads.device,
+        )
+        query_chunk = 32
+        key_transposed = k_by_frame.transpose(-1, -2)
+        for start in range(0, raw_tokens_per_frame, query_chunk):
+            logits = torch.matmul(
+                q_by_frame[:, :, start : start + query_chunk],
+                key_transposed,
+            ) / self.head_dim**0.5
+            probabilities = nn.functional.softmax(
+                logits,
+                dim=-1,
+                dtype=torch.float32,
+            ).to(q_heads.dtype)
+            incoming_mass.add_(
+                probabilities.mean(dim=1).float().sum(dim=1)
+            )
+        attn_weights = (
+            incoming_mass / float(raw_tokens_per_frame)
+        ).to(dtype=q_heads.dtype)
     attn_output = attn_output.reshape(seq_length, -1).contiguous()
     attn_output = self.proj(attn_output)
     return attn_output, attn_weights

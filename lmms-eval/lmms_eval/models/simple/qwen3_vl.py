@@ -1301,6 +1301,11 @@ class Qwen3_VL(lmms):
                     raise
                 _set_video_frame_limit(batched_messages, fallback_nframes)
 
+        # qwen_vl_utils already consumed these while sampling the video;
+        # Qwen3Processor does not accept frame-count loader options.
+        processed_video_kwargs.pop("nframes", None)
+        processed_video_kwargs.pop("max_frames", None)
+
         video_metadata = None
         if video_inputs is not None and len(video_inputs) > 0 and isinstance(video_inputs[0], tuple):
             video_inputs, video_metadata = zip(*video_inputs)
