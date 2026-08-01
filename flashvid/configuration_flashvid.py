@@ -132,6 +132,8 @@ class FlashVidConfig:
     certv3_cell_coverage_ratio: float = field(default=0.50)
     certv3_query_threshold: float = field(default=0.10)
     certv3_query_per_atom: int = field(default=1)
+    # Applied only to the exact CertVID V3 variant on Qwen-family backbones.
+    certv3_qwen_certificate_budget_ratio: float = field(default=0.35)
     certv3_structural_weight: float = field(default=0.32)
     certv3_whitening_strength: float = field(default=0.50)
     certv3_quality_floor: float = field(default=0.15)

@@ -237,6 +237,217 @@ def _hard_certificates(
     return mandatory, query_seeds
 
 
+def _qwen_budget_aware_certificates(
+    *,
+    budget: int,
+    certificate_ratio: float,
+    quality: torch.Tensor,
+    event_score: torch.Tensor,
+    frame_ids: torch.Tensor,
+    temporal_ids: torch.Tensor,
+    spatial_ids: torch.Tensor,
+    query_relevance: torch.Tensor,
+    atom_weights: torch.Tensor,
+    query_confidence: float,
+    frame_count: int,
+    temporal_count: int,
+    spatial_count: int,
+    frame_coverage_ratio: float,
+    cell_coverage_ratio: float,
+    query_threshold: float,
+    query_per_atom: int,
+) -> tuple[list[int], list[int], dict[str, int]]:
+    """Build a budget-feasible certificate subset for low-budget Qwen V3."""
+    Request = tuple[float, float, int, bool]
+    requests: dict[str, list[Request]] = {
+        "query": [],
+        "frame": [],
+        "temporal": [],
+        "spatial": [],
+    }
+
+    frame_keep = max(
+        1,
+        int(
+            math.ceil(
+                frame_count
+                * min(1.0, max(0.0, frame_coverage_ratio))
+            )
+        ),
+    )
+    for frame_id in _evenly_spaced_ids(
+        frame_count,
+        frame_keep,
+        quality.device,
+    ).tolist():
+        members = torch.where(frame_ids == int(frame_id))[0]
+        if members.numel() > 0:
+            token = int(members[torch.argmax(quality[members])].item())
+            requests["frame"].append(
+                (5.0, float(quality[token].item()), token, False)
+            )
+
+    for temporal_id in range(temporal_count):
+        members = torch.where(temporal_ids == temporal_id)[0]
+        if members.numel() > 0:
+            token = int(members[torch.argmax(event_score[members])].item())
+            requests["temporal"].append(
+                (4.5, float(event_score[token].item()), token, False)
+            )
+
+    cells_per_interval = max(
+        0,
+        min(
+            spatial_count,
+            int(
+                math.ceil(
+                    spatial_count
+                    * min(1.0, max(0.0, cell_coverage_ratio))
+                )
+            ),
+        ),
+    )
+    for temporal_id in range(temporal_count):
+        cell_representatives: list[tuple[float, int]] = []
+        for spatial_id in range(spatial_count):
+            members = torch.where(
+                (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
+            )[0]
+            if members.numel() == 0:
+                continue
+            token = int(members[torch.argmax(quality[members])].item())
+            cell_representatives.append((float(quality[token].item()), token))
+        cell_representatives.sort(key=lambda item: (-item[0], item[1]))
+        for score, token in cell_representatives[:cells_per_interval]:
+            requests["spatial"].append((3.0, score, token, False))
+
+    if query_relevance.numel() > 0 and query_confidence >= float(query_threshold):
+        per_atom = max(1, int(query_per_atom))
+        for atom_idx, atom_scores in enumerate(query_relevance):
+            per_interval: list[tuple[float, int]] = []
+            for temporal_id in range(temporal_count):
+                members = torch.where(temporal_ids == temporal_id)[0]
+                if members.numel() == 0:
+                    continue
+                token = int(members[torch.argmax(atom_scores[members])].item())
+                per_interval.append((float(atom_scores[token].item()), token))
+            per_interval.sort(key=lambda item: (-item[0], item[1]))
+            atom_priority = 6.0 + float(atom_weights[atom_idx].item())
+            for score, token in per_interval[:per_atom]:
+                requests["query"].append((atom_priority, score, token, True))
+
+    # Keep frame requests temporally spread; rank all other categories by evidence.
+    category_order = ("query", "frame", "temporal", "spatial")
+    for category in category_order:
+        if category != "frame":
+            requests[category].sort(
+                key=lambda item: (-item[0], -item[1], item[2])
+            )
+
+    ratio = min(1.0, max(0.0, float(certificate_ratio)))
+    certificate_limit = max(1, min(budget, int(math.floor(budget * ratio))))
+    category_weights = {"query": 2, "frame": 2, "temporal": 2, "spatial": 1}
+    active = [category for category in category_order if requests[category]]
+    total_weight = sum(category_weights[category] for category in active)
+    quotas = {category: 0 for category in category_order}
+    if total_weight > 0:
+        exact = {
+            category: certificate_limit
+            * category_weights[category]
+            / float(total_weight)
+            for category in active
+        }
+        for category in active:
+            quotas[category] = int(math.floor(exact[category]))
+        remainder = certificate_limit - sum(quotas.values())
+        remainder_order = sorted(
+            active,
+            key=lambda category: (
+                -(exact[category] - quotas[category]),
+                category_order.index(category),
+            ),
+        )
+        for category in remainder_order[:remainder]:
+            quotas[category] += 1
+
+    selected: list[int] = []
+    selected_set: set[int] = set()
+    covered_by_category = {category: 0 for category in category_order}
+
+    def admit(entry: Request) -> None:
+        token = int(entry[2])
+        if token not in selected_set and len(selected) < certificate_limit:
+            selected.append(token)
+            selected_set.add(token)
+
+    for category in category_order:
+        category_requests = requests[category]
+        quota = quotas[category]
+        if quota <= 0:
+            continue
+        if category == "frame" and len(category_requests) > quota:
+            positions = _evenly_spaced_ids(
+                len(category_requests),
+                quota,
+                quality.device,
+            ).tolist()
+            position_set = set(positions)
+            ordered_requests = [category_requests[position] for position in positions]
+            ordered_requests.extend(
+                entry
+                for position, entry in enumerate(category_requests)
+                if position not in position_set
+            )
+        else:
+            ordered_requests = category_requests
+
+        covered_tokens: set[int] = set()
+        for entry in ordered_requests:
+            token = int(entry[2])
+            if token in covered_tokens:
+                continue
+            covered_tokens.add(token)
+            covered_by_category[category] += 1
+            admit(entry)
+            if covered_by_category[category] >= quota:
+                break
+
+    # Duplicate requests and empty categories return their unused quota to the
+    # strongest remaining requests while preserving the global certificate cap.
+    all_requests = sorted(
+        (entry for category in category_order for entry in requests[category]),
+        key=lambda item: (-item[0], -item[1], item[2]),
+    )
+    for entry in all_requests:
+        if len(selected) >= certificate_limit:
+            break
+        admit(entry)
+
+    query_tokens = {int(entry[2]) for entry in requests["query"]}
+    query_seeds = [token for token in selected if token in query_tokens]
+    stats = {
+        "limit": int(certificate_limit),
+        "requested_unique": int(
+            len({int(entry[2]) for entry in all_requests})
+        ),
+        **{
+            f"{category}_requested": int(
+                len({int(entry[2]) for entry in requests[category]})
+            )
+            for category in category_order
+        },
+        **{
+            f"{category}_quota": int(quotas[category])
+            for category in category_order
+        },
+        **{
+            f"{category}_covered": int(covered_by_category[category])
+            for category in category_order
+        },
+    }
+    return selected, query_seeds, stats
+
+
 def _candidate_pool(
     *,
     budget: int,
@@ -464,6 +675,31 @@ def certvid_v3_compression(
     ratio = _effective_ratio(flashvid_config)
     budget = max(1, min(total_tokens, int(round(total_tokens * ratio))))
     flat_features = video_features.reshape(total_tokens, -1)
+    backbone = str(
+        getattr(flashvid_config, "_baseline_backbone", "")
+    ).strip().lower()
+    compression_variant = str(
+        getattr(flashvid_config, "compression_variant", "")
+    ).strip().lower()
+    qwen_v3_certificate_policy = (
+        backbone in {"qwen2_5_vl", "qwen3_vl"}
+        and compression_variant == "certvid_v3"
+    )
+    qwen_certificate_ratio = min(
+        1.0,
+        max(
+            0.0,
+            _cfg_float(
+                flashvid_config,
+                "certv3_qwen_certificate_budget_ratio",
+                0.35,
+            ),
+        ),
+    )
+    qwen_certificate_limit = budget
+    qwen_certificate_cap_active = False
+    qwen_certificate_stats: dict[str, int] = {}
+    original_certificate_count = budget
 
     if budget >= total_tokens:
         plan = _identity_plan(total_tokens, video_features.device)
@@ -605,6 +841,54 @@ def certvid_v3_compression(
             query_threshold=_cfg_float(flashvid_config, "certv3_query_threshold", 0.10),
             query_per_atom=_cfg_int(flashvid_config, "certv3_query_per_atom", 1),
         )
+        original_certificate_count = len(mandatory)
+        if qwen_v3_certificate_policy:
+            qwen_certificate_limit = max(
+                1,
+                min(
+                    budget,
+                    int(math.floor(budget * qwen_certificate_ratio)),
+                ),
+            )
+            if original_certificate_count > qwen_certificate_limit:
+                mandatory, query_seeds, qwen_certificate_stats = (
+                    _qwen_budget_aware_certificates(
+                        budget=budget,
+                        certificate_ratio=qwen_certificate_ratio,
+                        quality=quality,
+                        event_score=event_score,
+                        frame_ids=frame_ids,
+                        temporal_ids=temporal_ids,
+                        spatial_ids=spatial_ids,
+                        query_relevance=query_relevance,
+                        atom_weights=atom_weights,
+                        query_confidence=query_confidence,
+                        frame_count=frame_count,
+                        temporal_count=temporal_count,
+                        spatial_count=spatial_count,
+                        frame_coverage_ratio=_cfg_float(
+                            flashvid_config,
+                            "certv3_frame_coverage_ratio",
+                            1.0,
+                        ),
+                        cell_coverage_ratio=_cfg_float(
+                            flashvid_config,
+                            "certv3_cell_coverage_ratio",
+                            0.50,
+                        ),
+                        query_threshold=_cfg_float(
+                            flashvid_config,
+                            "certv3_query_threshold",
+                            0.10,
+                        ),
+                        query_per_atom=_cfg_int(
+                            flashvid_config,
+                            "certv3_query_per_atom",
+                            1,
+                        ),
+                    )
+                )
+                qwen_certificate_cap_active = True
         candidate_indices = _candidate_pool(
             budget=budget,
             quality=quality,
@@ -723,6 +1007,21 @@ def certvid_v3_compression(
     setattr(flashvid_config, "last_certv3_candidate_tokens", float(candidates))
     setattr(flashvid_config, "last_certv3_component_count", float(components))
     setattr(flashvid_config, "last_certv3_certificate_count", float(len(mandatory)))
+    setattr(
+        flashvid_config,
+        "last_certv3_original_certificate_count",
+        float(original_certificate_count),
+    )
+    setattr(
+        flashvid_config,
+        "last_certv3_qwen_certificate_cap_active",
+        bool(qwen_certificate_cap_active),
+    )
+    setattr(
+        flashvid_config,
+        "last_certv3_qwen_certificate_limit",
+        float(qwen_certificate_limit),
+    )
     free_dopt_slots = max(0, int(budget) - len(mandatory))
     certificate_pressure = len(mandatory) / float(max(1, budget))
     dopt_slot_ratio = free_dopt_slots / float(max(1, budget))
@@ -762,10 +1061,19 @@ def certvid_v3_compression(
         "raw_tokens": int(total_tokens),
         "target_tokens": int(budget),
         "output_tokens": int(output.shape[0]),
+        "backbone": backbone,
         "certificate_count": int(len(mandatory)),
+        "original_certificate_count": int(original_certificate_count),
         "certificate_pressure": float(certificate_pressure),
+        "original_certificate_pressure": float(
+            original_certificate_count / float(max(1, budget))
+        ),
         "free_dopt_slots": int(free_dopt_slots),
         "dopt_slot_ratio": float(dopt_slot_ratio),
+        "qwen_certificate_policy": bool(qwen_v3_certificate_policy),
+        "qwen_certificate_cap_active": bool(qwen_certificate_cap_active),
+        "qwen_certificate_budget_ratio": float(qwen_certificate_ratio),
+        "qwen_certificate_limit": int(qwen_certificate_limit),
         "candidate_count": int(candidates),
         "component_count": int(components),
         "query_seed_count": int(len(query_seeds)),
@@ -773,6 +1081,12 @@ def certvid_v3_compression(
         "swap_count": int(swaps),
         "logdet": float(logdet),
     }
+    diagnostics.update(
+        {
+            f"qwen_certificate_{key}": int(value)
+            for key, value in qwen_certificate_stats.items()
+        }
+    )
     setattr(flashvid_config, "last_certv3_diagnostics", diagnostics)
     _write_certv3_diagnostics(flashvid_config, diagnostics)
     return output, plan.anchor_indices
