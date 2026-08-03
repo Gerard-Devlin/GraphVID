@@ -497,6 +497,7 @@ class Llava_OneVision(lmms):
         expansion: float = 1.25,
         pruning_layer: int = 20,
         llm_retention_ratio: float = 0.3,
+        strict_token_budget: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -889,6 +890,7 @@ class Llava_OneVision(lmms):
                 expansion=expansion,
                 pruning_layer=pruning_layer,
                 llm_retention_ratio=llm_retention_ratio,
+                strict_token_budget=strict_token_budget,
             )
             # print(f"[INFO] Enable FlashVID with retention_ratio={retention_ratio}, expansion={expansion}, do_segment={do_segment}, segment_threshold={segment_threshold}, min_segment_num={min_segment_num}, complementary_segment={complementary_segment}, token_selection_method={token_selection_method}, alpha={alpha}, temporal_threshold={temporal_threshold}, pruning_layer={pruning_layer}, llm_retention_ratio={llm_retention_ratio}")
 

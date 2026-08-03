@@ -35,6 +35,7 @@ TEMPORAL_THRESHOLD="${TEMPORAL_THRESHOLD:-0.8}"
 EXPANSION="${EXPANSION:-1.25}"
 PRUNING_LAYER="${PRUNING_LAYER:-20}"
 LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-0.3}"
+STRICT_TOKEN_BUDGET="${STRICT_TOKEN_BUDGET:-False}"
 FASTV_PRUNING_LAYER="${FASTV_PRUNING_LAYER:-2}"
 ADAPTER_BUDGET_USES_EXPANSION="${ADAPTER_BUDGET_USES_EXPANSION:-False}"
 FASTVID_DYSEG_C="${FASTVID_DYSEG_C:-8}"
@@ -454,7 +455,8 @@ method_args() {
         "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
       ;;
     flashvid)
-      printf 'compression_variant=flashvid,token_selection_method=%s' "$FLASHVID_TOKEN_SELECTION_METHOD"
+      printf 'compression_variant=flashvid,token_selection_method=%s,strict_token_budget=%s' \
+        "$FLASHVID_TOKEN_SELECTION_METHOD" "$STRICT_TOKEN_BUDGET"
       ;;
     certvid)
       printf 'compression_variant=certvid,token_selection_method=%s,cert_budget_uses_expansion=%s,cert_query_atoms=%s,cert_temporal_bins=%s,cert_spatial_bins=%s,cert_candidate_multiplier=%s,cert_query_weight=%s,cert_temporal_weight=%s,cert_detail_weight=%s,cert_repair_ratio=%s,cert_fusion_alpha=%s,cert_assignment_temperature=%s,cert_track_threshold=%s,cert_spatial_penalty=%s,cert_metric_dim=%s' \

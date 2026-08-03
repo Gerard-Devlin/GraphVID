@@ -676,6 +676,7 @@ def flashvid(
     prism_coverage_weight: float = 0.68,
     prism_pareto_weight: float = 0.20,
     prism_batch_size: int = 8,
+    strict_token_budget=None,
 ) -> nn.Module:
     """Apply FlashVID to the model.
 
@@ -1452,13 +1453,20 @@ def flashvid(
         decode_update_interval=decode_update_interval,
         decode_start_layer=decode_start_layer,
     )
-    # Qwen-family evaluations include very small retention ratios where
-    # per-stage ceil rounding is material. Cap FlashVID to a non-exceeding
-    # global budget; LLaVA and other compression variants remain unchanged.
-    flashvid_config.strict_token_budget = bool(
+    # Qwen-family runs default to strict accounting. Other model families can
+    # opt in explicitly without changing their established default behavior.
+    automatic_strict_budget = bool(
         variant == "flashvid"
         and type(model)
         in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration)
+    )
+    flashvid_config.strict_token_budget = bool(
+        variant == "flashvid"
+        and (
+            automatic_strict_budget
+            if strict_token_budget is None
+            else bool(strict_token_budget)
+        )
     )
     if flashvid_config.strict_token_budget:
         num_hidden_layers = _text_layer_count(model)
