@@ -14,9 +14,10 @@
 
 EgoSchema is intended for a 0-shot evaluation benchmark, hence the entire correct answer file will not be make public. 
 
-`lmms-eval` automatically generates both `inference_results_egoschema_{taskname}_{now_date_time}.json`
-for the validation server and `inference_results_egoschema_{taskname}_{now_date_time}.csv` for
-Kaggle. The CSV contains the columns `q_uid,answer`, where `answer` is an integer from 0 to 4.
+`lmms-eval` automatically generates both JSON and CSV submissions whose names include the model,
+compression method, retention ratio, and hybrid pruning schedule. For example:
+`inference_results_egoschema_qwen3_vl_certvid_v3_r1pct_e1p25_k28_inner0p1_MC_{now_date_time}.csv`.
+The CSV contains the columns `q_uid,answer`, where `answer` is an integer from 0 to 4.
 To evaluate through the validation server, submit the generated JSON using CURL:
 
 `curl -X POST -H "Content-Type: application/json" -d @<path_to_json_file> https://validation-server.onrender.com/api/upload/`

@@ -3,7 +3,9 @@ import datetime
 import json
 import os
 import random
+import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import numpy as np
@@ -189,9 +191,72 @@ def egoschema_process_results_generation(doc, result):
     return {"submission": {doc["video_idx"]: index}, "score": {"pred": index, "ground_truth": doc["answer"]}}
 
 
+def _model_arg(args, key, default=None):
+    model_args = getattr(args, "model_args", "") if args is not None else ""
+    if isinstance(model_args, dict):
+        return model_args.get(key, default)
+
+    match = re.search(rf"(?:^|,){re.escape(key)}=([^,]+)", str(model_args))
+    return match.group(1).strip() if match else default
+
+
+def _filename_slug(value):
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value).strip())
+    return slug.strip("-._") or "unknown"
+
+
+def _decimal_slug(value):
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return _filename_slug(value)
+
+    text = format(number.normalize(), "f")
+    return text.replace("-", "m").replace(".", "p")
+
+
+def _retention_slug(value):
+    try:
+        percentage = Decimal(str(value)) * 100
+    except (InvalidOperation, TypeError, ValueError):
+        return f"r{_filename_slug(value)}"
+
+    text = format(percentage.normalize(), "f").replace("-", "m").replace(".", "p")
+    return f"r{text}pct"
+
+
+def _submission_run_slug(args):
+    model = _filename_slug(getattr(args, "model", "model") if args is not None else "model")
+    method = _filename_slug(_model_arg(args, "compression_variant", "vanilla"))
+    retention = _retention_slug(_model_arg(args, "retention_ratio", "1.0"))
+
+    parts = [model, method, retention]
+    schedule = (
+        ("e", "expansion"),
+        ("k", "pruning_layer"),
+        ("inner", "llm_retention_ratio"),
+    )
+    for prefix, key in schedule:
+        value = _model_arg(args, key)
+        if value is not None:
+            parts.append(f"{prefix}{_decimal_slug(value)}")
+
+    return "_".join(parts)
+
+
+def _egoschema_task_slug(args):
+    tasks = str(getattr(args, "tasks", "egoschema") if args is not None else "egoschema")
+    if "egoschema_subset" in tasks:
+        return "egoschema_subset"
+    return "egoschema"
+
+
 def egoschema_aggregate_submissions(results, args, task):
     now_date_time = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    submission_stem = f"inference_results_egoschema_{task}_{now_date_time}"
+    submission_stem = (
+        f"inference_results_{_egoschema_task_slug(args)}_"
+        f"{_submission_run_slug(args)}_{task}_{now_date_time}"
+    )
     json_path = file_utils.generate_submission_file(f"{submission_stem}.json", args)
     csv_path = file_utils.generate_submission_file(f"{submission_stem}.csv", args)
 
