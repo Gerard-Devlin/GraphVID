@@ -58,6 +58,7 @@ ADD_TIME_INSTRUCTION="${ADD_TIME_INSTRUCTION:-False}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
 
 FLASHVID_TOKEN_SELECTION_METHOD="${FLASHVID_TOKEN_SELECTION_METHOD:-attn_div_v2}"
+STRICT_TOKEN_BUDGET="${STRICT_TOKEN_BUDGET:-False}"
 CERTV3_TOKEN_SELECTION_METHOD="${CERTV3_TOKEN_SELECTION_METHOD:-attn_div_stable}"
 FAITH_TOKEN_SELECTION_METHOD="${FAITH_TOKEN_SELECTION_METHOD:-$CERTV3_TOKEN_SELECTION_METHOD}"
 
@@ -193,7 +194,8 @@ method_args() {
         "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
       ;;
     flashvid)
-      printf 'compression_variant=flashvid,token_selection_method=%s' "$FLASHVID_TOKEN_SELECTION_METHOD"
+      printf 'compression_variant=flashvid,token_selection_method=%s,strict_token_budget=%s' \
+        "$FLASHVID_TOKEN_SELECTION_METHOD" "$STRICT_TOKEN_BUDGET"
       ;;
     certvid_v3)
       printf 'compression_variant=certvid_v3,token_selection_method=%s,' "$CERTV3_TOKEN_SELECTION_METHOD"

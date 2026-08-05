@@ -117,6 +117,7 @@ class LlavaVid(lmms):
         complementary_segment: bool = True,
         # ADTS and TSTM parameters
         token_selection_method: str = "attn_div_v2",
+        strict_token_budget: bool = False,
         alpha: float = 0.7,
         temporal_threshold: float = 0.8,
         compression_variant: str = "flashvid",
@@ -300,6 +301,7 @@ class LlavaVid(lmms):
                 complementary_segment=complementary_segment,
                 alpha=alpha,
                 token_selection_method=token_selection_method,
+                strict_token_budget=strict_token_budget,
                 temporal_threshold=temporal_threshold,
                 compression_variant=compression_variant,
                 adapter_budget_uses_expansion=adapter_budget_uses_expansion,
