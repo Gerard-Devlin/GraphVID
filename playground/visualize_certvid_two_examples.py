@@ -532,21 +532,10 @@ def run_one_example(
     )
 
 
-def fit_image(image: Image.Image, size: int) -> Image.Image:
-    fitted = image.copy()
-    resampling = getattr(Image, "Resampling", Image)
-    fitted.thumbnail((size, size), resampling.LANCZOS)
-    canvas = Image.new("RGB", (size, size), "white")
-    x = (size - fitted.width) // 2
-    y = (size - fitted.height) // 2
-    canvas.paste(fitted, (x, y))
-    return canvas
-
-
 def save_image(image: Image.Image, output_path: Path) -> None:
-    """Save one standalone square image without labels or annotations."""
+    """Save the visualization directly without padding, borders, or labels."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fit_image(image, 512).save(output_path, format="PNG")
+    image.convert("RGB").save(output_path, format="PNG")
 
 
 def example_metadata(
