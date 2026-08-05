@@ -94,6 +94,14 @@ def parse_args() -> argparse.Namespace:
         default="assets/videomme.jsonl",
         help="Optional JSONL with video IDs and questions; pass an empty string to disable.",
     )
+    parser.add_argument(
+        "--video-id",
+        default="",
+        help=(
+            "Optional comma-separated video stems/q_uids to visualize instead "
+            "of random sampling. The count must match --num-examples."
+        ),
+    )
     parser.add_argument("--output-dir", default="logs/visualizations/certvid_examples")
     parser.add_argument("--num-examples", type=int, default=2)
     parser.add_argument("--num-frames", type=int, default=32)
@@ -179,17 +187,33 @@ def _parse_options(record: dict[str, Any], prompt: str) -> tuple[tuple[str, str]
     return tuple(parsed)
 
 
-def _question_record(record: dict[str, Any]) -> QuestionRecord | None:
+def _normalize_answer(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip().upper()
+    if text.isdigit() and 0 <= int(text) < 5:
+        return chr(ord("A") + int(text))
+    match = re.search(r"[A-E]", text)
+    return match.group(0) if match else None
+
+
+def _question_record(
+    record: dict[str, Any],
+    fallback_question_id: str | None = None,
+) -> QuestionRecord | None:
     prompt = _first_present(record, ("input", "prompt", "query", "question"))
     if prompt is None:
         return None
     question = _first_present(record, ("question",)) or display_question(prompt)
     options = _parse_options(record, prompt)
     answer_raw = _first_present(record, ("answer", "target", "label"))
-    answer = answer_raw.strip().upper()[:1] if answer_raw else None
+    answer = _normalize_answer(answer_raw)
     answer_lookup = dict(options)
     return QuestionRecord(
-        question_id=_first_present(record, ("question_id", "questionID", "qid", "id")),
+        question_id=(
+            _first_present(record, ("question_id", "questionID", "qid", "id"))
+            or fallback_question_id
+        ),
         prompt=prompt,
         question=question,
         options=options,
@@ -211,7 +235,9 @@ def load_questions(path: Path | None) -> dict[str, list[QuestionRecord]]:
                 record,
                 ("videoID", "video_id", "video_idx", "video", "video_name"),
             )
-            question_record = _question_record(record)
+            if video_id is None and isinstance(record.get("submission"), dict):
+                video_id = next(iter(record["submission"]), None)
+            question_record = _question_record(record, video_id)
             if video_id and question_record is not None:
                 questions.setdefault(Path(video_id).stem, []).append(question_record)
     return questions
@@ -423,7 +449,10 @@ def run_one_example(
     display_frames = tensor_frames_to_pil(pixel_values_cpu, image_processor)
     pixel_values = pixel_values_cpu.to(device=device, dtype=torch.float16)
     input_ids, attention_mask = prepare_prompt(tokenizer, question_record.prompt, device)
+    valid_labels = [label for label, _ in question_record.options]
+    target = question_record.answer
 
+    print(f"[inference] {path.name}: full-token start", flush=True)
     without_prediction, without_attention, _ = generate_once(
         model=model,
         tokenizer=tokenizer,
@@ -435,6 +464,13 @@ def run_one_example(
         llm_retention_ratio=1.0,
         max_new_tokens=args.max_new_tokens,
     )
+    without_answer = extract_answer_label(without_prediction, valid_labels)
+    print(
+        f"[inference] {path.name}: full-token done "
+        f"prediction={without_answer!r} target={target!r}",
+        flush=True,
+    )
+    print(f"[inference] {path.name}: CertVID V3 start", flush=True)
     certvid_prediction, cls_attention, plan = generate_once(
         model=model,
         tokenizer=tokenizer,
@@ -445,6 +481,12 @@ def run_one_example(
         expansion=args.expansion,
         llm_retention_ratio=args.llm_retention_ratio,
         max_new_tokens=args.max_new_tokens,
+    )
+    certvid_answer = extract_answer_label(certvid_prediction, valid_labels)
+    print(
+        f"[inference] {path.name}: CertVID V3 done "
+        f"prediction={certvid_answer!r} target={target!r}",
+        flush=True,
     )
     del pixel_values, input_ids, attention_mask
 
@@ -521,10 +563,6 @@ def run_one_example(
     timestamp = (
         float(source_indices[representative]) / fps if fps is not None else None
     )
-    valid_labels = [label for label, _ in question_record.options]
-    without_answer = extract_answer_label(without_prediction, valid_labels)
-    certvid_answer = extract_answer_label(certvid_prediction, valid_labels)
-    target = question_record.answer
     return Example(
         video_path=path,
         question_record=question_record,
@@ -623,8 +661,20 @@ def example_metadata(
 
 def main() -> None:
     args = parse_args()
-    if args.num_examples != 2:
-        raise ValueError("this visualizer always outputs exactly two examples")
+    if args.num_examples <= 0:
+        raise ValueError("num-examples must be positive")
+    requested_video_ids = [
+        Path(value.strip()).stem
+        for value in args.video_id.split(",")
+        if value.strip()
+    ]
+    if requested_video_ids and len(requested_video_ids) != args.num_examples:
+        raise ValueError(
+            "the number of comma-separated --video-id values must match "
+            "--num-examples"
+        )
+    if len(requested_video_ids) != len(set(requested_video_ids)):
+        raise ValueError("--video-id values must be unique")
     if args.num_frames <= 0:
         raise ValueError("num-frames must be positive")
     if not (0.0 < args.retention_ratio <= 1.0):
@@ -632,9 +682,10 @@ def main() -> None:
 
     output_dir = Path(args.output_dir).expanduser().resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
+        png_count = 2 * args.num_examples
         raise RuntimeError(
-            "output directory must be empty so it contains only the four PNG "
-            f"files and examples.json: {output_dir}"
+            "output directory must be empty so it contains only "
+            f"{png_count} PNG files and examples.json: {output_dir}"
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_root = Path(args.dataset_root).expanduser().resolve()
@@ -648,7 +699,18 @@ def main() -> None:
         )
     candidates = discover_videos(dataset_root)
     rng = random.Random(args.seed)
-    rng.shuffle(candidates)
+    if requested_video_ids:
+        paths_by_id = {path.stem: path for path in candidates}
+        missing_ids = [
+            video_id for video_id in requested_video_ids if video_id not in paths_by_id
+        ]
+        if missing_ids:
+            raise FileNotFoundError(
+                f"video IDs {missing_ids!r} were not found under {dataset_root}"
+            )
+        candidates = [paths_by_id[video_id] for video_id in requested_video_ids]
+    else:
+        rng.shuffle(candidates)
 
     print(f"[setup] dataset={dataset_root}")
     print(f"[setup] discovered_videos={len(candidates)} seed={args.seed}")
@@ -657,10 +719,16 @@ def main() -> None:
     tokenizer, model, image_processor, device = load_certvid_model(args)
 
     examples: list[Example] = []
-    for path in candidates[: max(args.max_attempts, args.num_examples)]:
+    attempt_limit = min(len(candidates), max(args.max_attempts, args.num_examples))
+    for attempt, path in enumerate(candidates[:attempt_limit], start=1):
+        print(
+            f"[try] {attempt}/{attempt_limit} video={path.name} "
+            f"accepted={len(examples)}/{args.num_examples}",
+            flush=True,
+        )
         video_questions = questions.get(path.stem)
         if not video_questions:
-            print(f"[skip] {path.name}: no matching question metadata")
+            print(f"[skip] {path.name}: no matching question metadata", flush=True)
             continue
         question_record = rng.choice(video_questions)
         try:
@@ -674,7 +742,7 @@ def main() -> None:
                 args,
             )
         except Exception as exc:
-            print(f"[skip] {path.name}: {exc}")
+            print(f"[skip] {path.name}: {exc}", flush=True)
             continue
 
         if args.selection_mode == "improvement" and not (
@@ -684,7 +752,8 @@ def main() -> None:
             print(
                 f"[reject] {path.name}: full={example.without_certvid_answer}/"
                 f"{example.without_certvid_correct} certvid={example.certvid_answer}/"
-                f"{example.certvid_correct}"
+                f"{example.certvid_correct}",
+                flush=True,
             )
             continue
 
@@ -693,7 +762,8 @@ def main() -> None:
             f"[ok] {len(examples)}/{args.num_examples} {path.name} "
             f"full={example.without_certvid_answer} certvid={example.certvid_answer} "
             f"target={example.question_record.answer} "
-            f"anchors={example.output_token_count}/{example.raw_token_count}"
+            f"anchors={example.output_token_count}/{example.raw_token_count}",
+            flush=True,
         )
         if len(examples) >= args.num_examples:
             break
@@ -724,6 +794,7 @@ def main() -> None:
                 "Frame with the most CertVID anchors absent from global attention Top-K"
             ),
             "selection_mode": args.selection_mode,
+            "requested_video_ids": requested_video_ids or None,
         },
         "examples": metadata_examples,
     }
@@ -731,7 +802,10 @@ def main() -> None:
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"[done] generated four PNG files and examples.json in {output_dir}")
+    print(
+        f"[done] generated {2 * len(examples)} PNG files and examples.json "
+        f"in {output_dir}"
+    )
 
 
 if __name__ == "__main__":
