@@ -768,15 +768,13 @@ def main() -> None:
         if len(examples) >= args.num_examples:
             break
 
-    if len(examples) < args.num_examples:
-        raise RuntimeError(
-            f"only produced {len(examples)}/{args.num_examples} examples"
-        )
-
     metadata_examples: list[dict[str, Any]] = []
     for number, example in enumerate(examples, start=1):
-        attention_name = f"example_{number:02d}_without_certvid_v3.png"
-        certvid_name = f"example_{number:02d}_with_certvid_v3.png"
+        video_id = example.video_path.stem
+        attention_name = (
+            f"example_{number:02d}_{video_id}_without_certvid_v3.png"
+        )
+        certvid_name = f"example_{number:02d}_{video_id}_with_certvid_v3.png"
         save_image(example.attention_overlay, output_dir / attention_name)
         save_image(example.certvid_overlay, output_dir / certvid_name)
         metadata_examples.append(
@@ -795,6 +793,8 @@ def main() -> None:
             ),
             "selection_mode": args.selection_mode,
             "requested_video_ids": requested_video_ids or None,
+            "requested_examples": args.num_examples,
+            "produced_examples": len(examples),
         },
         "examples": metadata_examples,
     }
@@ -806,6 +806,11 @@ def main() -> None:
         f"[done] generated {2 * len(examples)} PNG files and examples.json "
         f"in {output_dir}"
     )
+    if len(examples) < args.num_examples:
+        raise RuntimeError(
+            f"only produced {len(examples)}/{args.num_examples} examples; "
+            "accepted examples were saved before this error"
+        )
 
 
 if __name__ == "__main__":
