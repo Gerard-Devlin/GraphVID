@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Create two standalone visualizations of CertVID token selection.
+"""Compare vanilla visual attention with CertVID V3 on two videos.
 
 The script samples videos directly from a dataset directory, runs the real
-LLaVA-OneVision + CertVID V3 path once per video, and overlays the selected
-outer anchors on a representative frame. It intentionally does not depend on
+LLaVA-OneVision path with and without CertVID V3, and exports separate token
+maps plus question/answer metadata. It intentionally does not depend on
 lmms-eval result files or precomputed diagnostics.
 """
 
@@ -15,6 +15,7 @@ import json
 import math
 import os
 import random
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -32,26 +33,43 @@ from llava.model.builder import load_pretrained_model
 
 
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".MP4"}
-GENERIC_QUESTION = "What are the most important visual events in this video?"
+OPTION_PATTERN = re.compile(r"^\s*([A-E])\s*[.)]\s*(.+?)\s*$")
+
+
+@dataclass(frozen=True)
+class QuestionRecord:
+    question_id: str | None
+    prompt: str
+    question: str
+    options: tuple[tuple[str, str], ...]
+    answer: str | None
+    answer_text: str | None
 
 
 @dataclass
 class Example:
     video_path: Path
-    question: str
-    display_question: str
+    question_record: QuestionRecord
     frame: Image.Image
-    overlay: Image.Image
+    attention_overlay: Image.Image
+    certvid_overlay: Image.Image
     sampled_frame_index: int
     source_frame_index: int
     timestamp_seconds: float | None
     grid_height: int
     grid_width: int
+    attention_selected_in_frame: list[int]
     selected_in_frame: list[int]
     per_frame_counts: list[int]
     anchor_indices: list[int]
     raw_token_count: int
     output_token_count: int
+    without_certvid_prediction: str
+    without_certvid_answer: str | None
+    without_certvid_correct: bool | None
+    certvid_prediction: str
+    certvid_answer: str | None
+    certvid_correct: bool | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,7 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pruning-layer", type=int, default=20)
     parser.add_argument("--llm-retention-ratio", type=float, default=0.1923076923)
     parser.add_argument("--pool-mode", choices=("bilinear", "average", "max"), default="bilinear")
-    parser.add_argument("--max-new-tokens", type=int, default=1)
+    parser.add_argument("--max-new-tokens", type=int, default=8)
     parser.add_argument(
         "--max-attempts",
         type=int,
@@ -116,25 +134,6 @@ def _first_present(record: dict[str, Any], keys: Iterable[str]) -> str | None:
     return None
 
 
-def load_questions(path: Path | None) -> dict[str, list[str]]:
-    questions: dict[str, list[str]] = {}
-    if path is None or not path.is_file():
-        return questions
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            video_id = _first_present(
-                record,
-                ("videoID", "video_id", "video_idx", "video", "video_name", "id"),
-            )
-            question = _first_present(record, ("input", "question", "prompt", "query"))
-            if video_id and question:
-                questions.setdefault(Path(video_id).stem, []).append(question)
-    return questions
-
-
 def display_question(question: str) -> str:
     lines = [line.strip() for line in question.splitlines() if line.strip()]
     candidates = [
@@ -147,6 +146,66 @@ def display_question(question: str) -> str:
     interrogatives = [line for line in candidates if "?" in line]
     text = interrogatives[-1] if interrogatives else (candidates[-1] if candidates else question)
     return " ".join(text.split())
+
+
+def _parse_options(record: dict[str, Any], prompt: str) -> tuple[tuple[str, str], ...]:
+    raw_options = record.get("options")
+    parsed: list[tuple[str, str]] = []
+    if isinstance(raw_options, dict):
+        for label, text in raw_options.items():
+            parsed.append((str(label).strip().upper(), str(text).strip()))
+    elif isinstance(raw_options, (list, tuple)):
+        for index, value in enumerate(raw_options):
+            text = str(value).strip()
+            match = OPTION_PATTERN.match(text)
+            if match:
+                parsed.append((match.group(1), match.group(2)))
+            else:
+                parsed.append((chr(ord("A") + index), text))
+    else:
+        for line in prompt.splitlines():
+            match = OPTION_PATTERN.match(line)
+            if match:
+                parsed.append((match.group(1), match.group(2)))
+    return tuple(parsed)
+
+
+def _question_record(record: dict[str, Any]) -> QuestionRecord | None:
+    prompt = _first_present(record, ("input", "prompt", "query", "question"))
+    if prompt is None:
+        return None
+    question = _first_present(record, ("question",)) or display_question(prompt)
+    options = _parse_options(record, prompt)
+    answer_raw = _first_present(record, ("answer", "target", "label"))
+    answer = answer_raw.strip().upper()[:1] if answer_raw else None
+    answer_lookup = dict(options)
+    return QuestionRecord(
+        question_id=_first_present(record, ("question_id", "questionID", "qid", "id")),
+        prompt=prompt,
+        question=question,
+        options=options,
+        answer=answer,
+        answer_text=answer_lookup.get(answer) if answer else None,
+    )
+
+
+def load_questions(path: Path | None) -> dict[str, list[QuestionRecord]]:
+    questions: dict[str, list[QuestionRecord]] = {}
+    if path is None or not path.is_file():
+        return questions
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            video_id = _first_present(
+                record,
+                ("videoID", "video_id", "video_idx", "video", "video_name"),
+            )
+            question_record = _question_record(record)
+            if video_id and question_record is not None:
+                questions.setdefault(Path(video_id).stem, []).append(question_record)
+    return questions
 
 
 def sample_video(path: Path, num_frames: int) -> tuple[np.ndarray, np.ndarray, float | None]:
@@ -227,6 +286,27 @@ def prepare_prompt(tokenizer, question: str, device: torch.device) -> tuple[torc
     return input_ids, torch.ones_like(input_ids)
 
 
+def extract_answer_label(text: str, valid_labels: Iterable[str]) -> str | None:
+    labels = "".join(
+        label for label in (str(item).strip().upper()[:1] for item in valid_labels) if label
+    )
+    labels = "".join(dict.fromkeys(labels)) or "ABCD"
+    choice_class = re.escape(labels)
+    patterns = (
+        rf"^\s*[\(\[]?\s*([{choice_class}])\s*[\)\].,:;!?]?\s*$",
+        rf"\b(?:ANSWER|OPTION|CHOICE)\b\s*(?:IS)?\s*[:=\-]?\s*[\(\[]?\s*([{choice_class}])\b",
+        rf"\b(?:THE\s+ANSWER\s+IS|I\s+CHOOSE|I\s+PICK)\b\s*[:=\-]?\s*[\(\[]?\s*([{choice_class}])\b",
+        rf"[\(\[]\s*([{choice_class}])\s*[\)\]]",
+        rf"\b([{choice_class}])\s*\.",
+        rf"\b([{choice_class}])\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
 def load_certvid_model(args: argparse.Namespace):
     model_path = str(Path(args.model_path).expanduser().resolve())
     if not Path(model_path, "config.json").is_file():
@@ -273,27 +353,29 @@ def load_certvid_model(args: argparse.Namespace):
         alpha=0.70,
         temporal_threshold=0.8,
     )
+    setattr(model.flashvid_config, "_capture_visualization_attention", True)
     device = next(model.parameters()).device
     return tokenizer, model, image_processor, device
 
 
-def run_one_example(
-    path: Path,
-    question: str,
-    tokenizer,
+def generate_once(
+    *,
     model,
-    image_processor,
-    device: torch.device,
-    args: argparse.Namespace,
-) -> Example:
-    frames, source_indices, fps = sample_video(path, args.num_frames)
-    pixel_values_cpu = image_processor.preprocess(frames, return_tensors="pt")["pixel_values"]
-    display_frames = tensor_frames_to_pil(pixel_values_cpu, image_processor)
-    pixel_values = pixel_values_cpu.to(device=device, dtype=torch.float16)
-    input_ids, attention_mask = prepare_prompt(tokenizer, question, device)
-
+    tokenizer,
+    pixel_values: torch.Tensor,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    retention_ratio: float,
+    expansion: float,
+    llm_retention_ratio: float,
+    max_new_tokens: int,
+) -> tuple[str, torch.Tensor, Any]:
     config = model.flashvid_config
+    config.retention_ratio = retention_ratio
+    config.expansion = expansion
+    config.llm_retention_ratio = llm_retention_ratio
     setattr(config, "_certvid_plan", None)
+    setattr(config, "_visualization_cls_attention", None)
     pad_token_id = (
         tokenizer.pad_token_id
         if tokenizer.pad_token_id is not None
@@ -307,12 +389,56 @@ def run_one_example(
             images=[pixel_values],
             modalities=["video"],
             do_sample=False,
-            max_new_tokens=args.max_new_tokens,
+            max_new_tokens=max_new_tokens,
             use_cache=True,
         )
-    del generated, pixel_values, input_ids, attention_mask
-
+    prediction = tokenizer.batch_decode(generated, skip_special_tokens=True)[0].strip()
+    cls_attention = getattr(config, "_visualization_cls_attention", None)
+    if not torch.is_tensor(cls_attention) or cls_attention.ndim != 2:
+        raise RuntimeError("visual hook did not publish pre-compression attention")
     plan = getattr(config, "_certvid_plan", None)
+    return prediction, cls_attention.detach().float().cpu().clone(), plan
+
+
+def run_one_example(
+    path: Path,
+    question_record: QuestionRecord,
+    tokenizer,
+    model,
+    image_processor,
+    device: torch.device,
+    args: argparse.Namespace,
+) -> Example:
+    frames, source_indices, fps = sample_video(path, args.num_frames)
+    pixel_values_cpu = image_processor.preprocess(frames, return_tensors="pt")["pixel_values"]
+    display_frames = tensor_frames_to_pil(pixel_values_cpu, image_processor)
+    pixel_values = pixel_values_cpu.to(device=device, dtype=torch.float16)
+    input_ids, attention_mask = prepare_prompt(tokenizer, question_record.prompt, device)
+
+    without_prediction, without_attention, _ = generate_once(
+        model=model,
+        tokenizer=tokenizer,
+        pixel_values=pixel_values,
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        retention_ratio=1.0,
+        expansion=1.0,
+        llm_retention_ratio=1.0,
+        max_new_tokens=args.max_new_tokens,
+    )
+    certvid_prediction, cls_attention, plan = generate_once(
+        model=model,
+        tokenizer=tokenizer,
+        pixel_values=pixel_values,
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        retention_ratio=args.retention_ratio,
+        expansion=args.expansion,
+        llm_retention_ratio=args.llm_retention_ratio,
+        max_new_tokens=args.max_new_tokens,
+    )
+    del pixel_values, input_ids, attention_mask
+
     if plan is None:
         raise RuntimeError("CertVID did not publish an anchor plan")
     anchors = plan.anchor_indices.detach().long().cpu().tolist()
@@ -323,6 +449,16 @@ def run_one_example(
             f"raw token count {raw_token_count} is not divisible by {frame_count} frames"
         )
     tokens_per_frame = raw_token_count // frame_count
+    if tuple(cls_attention.shape) != (frame_count, tokens_per_frame):
+        raise RuntimeError(
+            "pre-compression attention shape mismatch: "
+            f"expected {(frame_count, tokens_per_frame)}, got {tuple(cls_attention.shape)}"
+        )
+    if tuple(without_attention.shape) != (frame_count, tokens_per_frame):
+        raise RuntimeError(
+            "uncompressed attention shape mismatch: "
+            f"expected {(frame_count, tokens_per_frame)}, got {tuple(without_attention.shape)}"
+        )
     grid_height, grid_width = factor_grid(tokens_per_frame)
 
     per_frame: list[list[int]] = [[] for _ in range(frame_count)]
@@ -338,27 +474,61 @@ def run_one_example(
         key=lambda index: (abs(index - (frame_count - 1) / 2.0), index),
     )
     selected_local = sorted(per_frame[representative])
+    attention_count = len(selected_local)
+    attention_selected = (
+        torch.argsort(
+            without_attention[representative].float(),
+            descending=True,
+            stable=True,
+        )[:attention_count]
+        .sort()
+        .values.tolist()
+        if attention_count > 0
+        else []
+    )
     frame = display_frames[representative]
-    overlay = overlay_selection(frame, selected_local, grid_height, grid_width)
+    attention_overlay = overlay_selection(
+        frame,
+        attention_selected,
+        grid_height,
+        grid_width,
+    )
+    certvid_overlay = overlay_selection(
+        frame,
+        selected_local,
+        grid_height,
+        grid_width,
+    )
     timestamp = (
         float(source_indices[representative]) / fps if fps is not None else None
     )
+    valid_labels = [label for label, _ in question_record.options]
+    without_answer = extract_answer_label(without_prediction, valid_labels)
+    certvid_answer = extract_answer_label(certvid_prediction, valid_labels)
+    target = question_record.answer
     return Example(
         video_path=path,
-        question=question,
-        display_question=display_question(question),
+        question_record=question_record,
         frame=frame,
-        overlay=overlay,
+        attention_overlay=attention_overlay,
+        certvid_overlay=certvid_overlay,
         sampled_frame_index=representative,
         source_frame_index=int(source_indices[representative]),
         timestamp_seconds=timestamp,
         grid_height=grid_height,
         grid_width=grid_width,
+        attention_selected_in_frame=[int(index) for index in attention_selected],
         selected_in_frame=selected_local,
         per_frame_counts=counts,
         anchor_indices=[int(index) for index in anchors],
         raw_token_count=raw_token_count,
         output_token_count=len(anchors),
+        without_certvid_prediction=without_prediction,
+        without_certvid_answer=without_answer,
+        without_certvid_correct=(without_answer == target) if target else None,
+        certvid_prediction=certvid_prediction,
+        certvid_answer=certvid_answer,
+        certvid_correct=(certvid_answer == target) if target else None,
     )
 
 
@@ -373,19 +543,66 @@ def fit_image(image: Image.Image, size: int) -> Image.Image:
     return canvas
 
 
-def render_pair(example: Example, output_path: Path) -> None:
-    """Save only the original/CertVID image pair, without paper annotations."""
-    tile = 512
-    gap = 24
-    original = fit_image(example.frame, tile)
-    selected = fit_image(example.overlay, tile)
-    canvas = Image.new("RGB", (tile * 2 + gap, tile), "white")
-    canvas.paste(original, (0, 0))
-    canvas.paste(selected, (tile + gap, 0))
-    draw = ImageDraw.Draw(canvas)
-    draw.line((tile + gap // 2, 0, tile + gap // 2, tile), fill=(0, 166, 167), width=3)
+def save_image(image: Image.Image, output_path: Path) -> None:
+    """Save one standalone square image without labels or annotations."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(output_path, format="PNG")
+    fit_image(image, 512).save(output_path, format="PNG")
+
+
+def example_metadata(
+    example: Example,
+    example_number: int,
+    attention_name: str,
+    certvid_name: str,
+) -> dict[str, Any]:
+    question = example.question_record
+    return {
+        "example_id": example_number,
+        "video_id": example.video_path.stem,
+        "video_file": example.video_path.name,
+        "question_id": question.question_id,
+        "question": question.question,
+        "options": [
+            {"label": label, "text": text} for label, text in question.options
+        ],
+        "answer": {
+            "label": question.answer,
+            "text": question.answer_text,
+        },
+        "model_outputs": {
+            "without_certvid_v3": {
+                "raw_prediction": example.without_certvid_prediction,
+                "predicted_answer": example.without_certvid_answer,
+                "correct": example.without_certvid_correct,
+            },
+            "with_certvid_v3": {
+                "raw_prediction": example.certvid_prediction,
+                "predicted_answer": example.certvid_answer,
+                "correct": example.certvid_correct,
+            },
+        },
+        "without_certvid_v3_correct": example.without_certvid_correct,
+        "with_certvid_v3_correct": example.certvid_correct,
+        "images": {
+            "attention_without_certvid_v3": attention_name,
+            "with_certvid_v3": certvid_name,
+        },
+        "visualized_frame": {
+            "sampled_index": example.sampled_frame_index,
+            "source_index": example.source_frame_index,
+            "timestamp_seconds": example.timestamp_seconds,
+        },
+        "certvid": {
+            "raw_tokens": example.raw_token_count,
+            "selected_tokens": example.output_token_count,
+            "attention_topk_in_visualized_frame": len(
+                example.attention_selected_in_frame
+            ),
+            "selected_tokens_in_visualized_frame": len(example.selected_in_frame),
+            "grid_height": example.grid_height,
+            "grid_width": example.grid_width,
+        },
+    }
 
 
 def main() -> None:
@@ -400,7 +617,8 @@ def main() -> None:
     output_dir = Path(args.output_dir).expanduser().resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
         raise RuntimeError(
-            f"output directory must be empty so it contains only the two PNG files: {output_dir}"
+            "output directory must be empty so it contains only the four PNG "
+            f"files and examples.json: {output_dir}"
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_root = Path(args.dataset_root).expanduser().resolve()
@@ -408,6 +626,10 @@ def main() -> None:
         Path(args.metadata_jsonl).expanduser().resolve() if args.metadata_jsonl.strip() else None
     )
     questions = load_questions(metadata_path)
+    if not questions:
+        raise RuntimeError(
+            "metadata JSONL is required to export questions, options, and answers"
+        )
     candidates = discover_videos(dataset_root)
     rng = random.Random(args.seed)
     rng.shuffle(candidates)
@@ -420,12 +642,15 @@ def main() -> None:
 
     examples: list[Example] = []
     for path in candidates[: max(args.max_attempts, args.num_examples)]:
-        video_questions = questions.get(path.stem, [GENERIC_QUESTION])
-        question = rng.choice(video_questions)
+        video_questions = questions.get(path.stem)
+        if not video_questions:
+            print(f"[skip] {path.name}: no matching question metadata")
+            continue
+        question_record = rng.choice(video_questions)
         try:
             example = run_one_example(
                 path,
-                question,
+                question_record,
                 tokenizer,
                 model,
                 image_processor,
@@ -437,12 +662,9 @@ def main() -> None:
             continue
 
         examples.append(example)
-        per_example_path = output_dir / f"certvid_example_{len(examples):02d}.png"
-        render_pair(example, per_example_path)
         print(
             f"[ok] {len(examples)}/{args.num_examples} {path.name} "
-            f"anchors={example.output_token_count}/{example.raw_token_count} "
-            f"figure={per_example_path}"
+            f"anchors={example.output_token_count}/{example.raw_token_count}"
         )
         if len(examples) >= args.num_examples:
             break
@@ -451,7 +673,32 @@ def main() -> None:
         raise RuntimeError(
             f"only produced {len(examples)}/{args.num_examples} examples"
         )
-    print(f"[done] generated {len(examples)} separate PNG files in {output_dir}")
+
+    metadata_examples: list[dict[str, Any]] = []
+    for number, example in enumerate(examples, start=1):
+        attention_name = f"example_{number:02d}_without_certvid_v3.png"
+        certvid_name = f"example_{number:02d}_with_certvid_v3.png"
+        save_image(example.attention_overlay, output_dir / attention_name)
+        save_image(example.certvid_overlay, output_dir / certvid_name)
+        metadata_examples.append(
+            example_metadata(example, number, attention_name, certvid_name)
+        )
+
+    metadata = {
+        "visualization": {
+            "without_certvid_v3": (
+                "Top-k pre-compression visual-attention tokens on the displayed frame"
+            ),
+            "with_certvid_v3": "CertVID V3 anchors on the same displayed frame",
+            "matched_topk": True,
+        },
+        "examples": metadata_examples,
+    }
+    (output_dir / "examples.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[done] generated four PNG files and examples.json in {output_dir}")
 
 
 if __name__ == "__main__":

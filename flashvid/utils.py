@@ -300,6 +300,14 @@ def flashvid_compression(
     deepstack_features: Optional[list[torch.Tensor]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
+    if bool(getattr(flashvid_config, "_capture_visualization_attention", False)):
+        # Diagnostics-only sidecar used by the qualitative visualizer. Keeping
+        # it opt-in avoids changing evaluation memory use or algorithm outputs.
+        setattr(
+            flashvid_config,
+            "_visualization_cls_attention",
+            cls_attention.detach().float().cpu(),
+        )
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
     if compression_variant != "fastvid":
         setattr(flashvid_config, "_fastvid_frame_global_features", None)
