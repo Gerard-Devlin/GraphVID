@@ -105,9 +105,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pool-mode", choices=("bilinear", "average", "max"), default="bilinear")
     parser.add_argument("--max-new-tokens", type=int, default=8)
     parser.add_argument(
+        "--selection-mode",
+        choices=("improvement", "any"),
+        default="improvement",
+        help=(
+            "improvement keeps only cases where full-token inference is wrong "
+            "and CertVID V3 is correct"
+        ),
+    )
+    parser.add_argument(
         "--max-attempts",
         type=int,
-        default=50,
+        default=20,
         help="Maximum videos attempted while skipping corrupt or incompatible files.",
     )
     return parser.parse_args()
@@ -467,25 +476,35 @@ def run_one_example(
         if 0 <= frame_index < frame_count:
             per_frame[frame_index].append(local_index)
     counts = [len(indices) for indices in per_frame]
-    max_count = max(counts)
-    representative_candidates = [index for index, count in enumerate(counts) if count == max_count]
-    representative = min(
-        representative_candidates,
-        key=lambda index: (abs(index - (frame_count - 1) / 2.0), index),
-    )
-    selected_local = sorted(per_frame[representative])
-    attention_count = len(selected_local)
-    attention_selected = (
+
+    attention_budget = min(len(anchors), int(without_attention.numel()))
+    attention_global = (
         torch.argsort(
-            without_attention[representative].float(),
+            without_attention.reshape(-1).float(),
             descending=True,
             stable=True,
-        )[:attention_count]
+        )[:attention_budget]
         .sort()
         .values.tolist()
-        if attention_count > 0
-        else []
     )
+    attention_per_frame: list[list[int]] = [[] for _ in range(frame_count)]
+    for global_index in attention_global:
+        frame_index, local_index = divmod(int(global_index), tokens_per_frame)
+        attention_per_frame[frame_index].append(local_index)
+
+    # Show the frame where CertVID contributes the most evidence that pure
+    # global attention Top-K would omit. Ties favor richer, central frames.
+    representative = max(
+        range(frame_count),
+        key=lambda index: (
+            len(set(per_frame[index]) - set(attention_per_frame[index])),
+            len(per_frame[index]),
+            -abs(index - (frame_count - 1) / 2.0),
+            -index,
+        ),
+    )
+    selected_local = sorted(per_frame[representative])
+    attention_selected = sorted(attention_per_frame[representative])
     frame = display_frames[representative]
     attention_overlay = overlay_selection(
         frame,
@@ -545,6 +564,8 @@ def example_metadata(
     certvid_name: str,
 ) -> dict[str, Any]:
     question = example.question_record
+    attention_tokens = set(example.attention_selected_in_frame)
+    certvid_tokens = set(example.selected_in_frame)
     return {
         "example_id": example_number,
         "video_id": example.video_path.stem,
@@ -588,6 +609,12 @@ def example_metadata(
                 example.attention_selected_in_frame
             ),
             "selected_tokens_in_visualized_frame": len(example.selected_in_frame),
+            "overlap_with_attention_in_visualized_frame": len(
+                attention_tokens & certvid_tokens
+            ),
+            "new_tokens_vs_attention_in_visualized_frame": len(
+                certvid_tokens - attention_tokens
+            ),
             "grid_height": example.grid_height,
             "grid_width": example.grid_width,
         },
@@ -650,9 +677,22 @@ def main() -> None:
             print(f"[skip] {path.name}: {exc}")
             continue
 
+        if args.selection_mode == "improvement" and not (
+            example.without_certvid_correct is False
+            and example.certvid_correct is True
+        ):
+            print(
+                f"[reject] {path.name}: full={example.without_certvid_answer}/"
+                f"{example.without_certvid_correct} certvid={example.certvid_answer}/"
+                f"{example.certvid_correct}"
+            )
+            continue
+
         examples.append(example)
         print(
             f"[ok] {len(examples)}/{args.num_examples} {path.name} "
+            f"full={example.without_certvid_answer} certvid={example.certvid_answer} "
+            f"target={example.question_record.answer} "
             f"anchors={example.output_token_count}/{example.raw_token_count}"
         )
         if len(examples) >= args.num_examples:
@@ -676,10 +716,14 @@ def main() -> None:
     metadata = {
         "visualization": {
             "without_certvid_v3": (
-                "Top-k pre-compression visual-attention tokens on the displayed frame"
+                "Global Top-K pre-compression visual-attention tokens"
             ),
             "with_certvid_v3": "CertVID V3 anchors on the same displayed frame",
-            "matched_topk": True,
+            "matched_global_token_budget": True,
+            "frame_policy": (
+                "Frame with the most CertVID anchors absent from global attention Top-K"
+            ),
+            "selection_mode": args.selection_mode,
         },
         "examples": metadata_examples,
     }
