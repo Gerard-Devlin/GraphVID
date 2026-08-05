@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 from flashvid import flashvid
 from llava.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX
 from llava.conversation import conv_templates
-from llava.mm_utils import get_model_name_from_path, tokenizer_image_token
+from llava.mm_utils import tokenizer_image_token
 from llava.model.builder import load_pretrained_model
 
 
@@ -256,7 +256,12 @@ def load_certvid_model(args: argparse.Namespace):
     model_path = str(Path(args.model_path).expanduser().resolve())
     if not Path(model_path, "config.json").is_file():
         raise FileNotFoundError(f"model config not found: {model_path}/config.json")
-    model_name = get_model_name_from_path(model_path)
+    # A resolved Hugging Face snapshot ends in a commit hash, so deriving the
+    # architecture from the directory name incorrectly routes OneVision to
+    # LlavaLlamaForCausalLM. This visualizer intentionally supports the
+    # LLaVA-OneVision Qwen2 checkpoint only and therefore uses its canonical
+    # builder name explicitly.
+    model_name = "llava-onevision-qwen2-7b-ov"
     tokenizer, model, image_processor, _ = load_pretrained_model(
         model_path,
         None,
@@ -269,6 +274,11 @@ def load_certvid_model(args: argparse.Namespace):
         },
         multimodal=True,
     )
+    if model.__class__.__name__ != "LlavaQwenForCausalLM":
+        raise RuntimeError(
+            "expected LlavaQwenForCausalLM for LLaVA-OneVision, "
+            f"but loaded {model.__class__.__name__}"
+        )
     model.eval()
     model.config.mm_spatial_pool_stride = 2
     model.config.mm_spatial_pool_mode = args.pool_mode
