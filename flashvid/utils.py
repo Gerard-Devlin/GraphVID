@@ -308,6 +308,11 @@ def flashvid_compression(
             "_visualization_cls_attention",
             cls_attention.detach().float().cpu(),
         )
+    capture_design = bool(
+        getattr(flashvid_config, "_capture_visualization_design", False)
+    )
+    if capture_design:
+        setattr(flashvid_config, "_visualization_certvid_analysis", None)
     compression_variant = str(getattr(flashvid_config, "compression_variant", "flashvid")).lower()
     if compression_variant != "fastvid":
         setattr(flashvid_config, "_fastvid_frame_global_features", None)
@@ -375,12 +380,33 @@ def flashvid_compression(
     if compression_variant == "certvid_v3":
         from .certvid_v3 import certvid_v3_compression
 
-        return certvid_v3_compression(
+        analysis_sink = {} if capture_design else None
+        result = certvid_v3_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
             question_features=question_features,
+            analysis_sink=analysis_sink,
         )
+        if analysis_sink is not None and "design" in analysis_sink:
+            # Publish only the tensors needed by the paper visualizer. This is
+            # opt-in and CPU-backed, so ordinary evaluation keeps its original
+            # numerical path and GPU memory behavior.
+            visualization_analysis = {
+                key: (
+                    value.detach().float().cpu().clone()
+                    if torch.is_tensor(value)
+                    else value
+                )
+                for key, value in analysis_sink.items()
+                if key in {"design", "ridge"}
+            }
+            setattr(
+                flashvid_config,
+                "_visualization_certvid_analysis",
+                visualization_analysis,
+            )
+        return result
     if compression_variant == "certvid_v3plus":
         from .certvid_v3plus import certvid_v3plus_compression
 
