@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create paper-style qualitative visualizations of CertVID token selection.
+"""Create two standalone visualizations of CertVID token selection.
 
 The script samples videos directly from a dataset directory, runs the real
 LLaVA-OneVision + CertVID V3 path once per video, and overlays the selected
@@ -15,7 +15,6 @@ import json
 import math
 import os
 import random
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -23,7 +22,7 @@ from typing import Any, Iterable
 import numpy as np
 import torch
 from decord import VideoReader, cpu
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from flashvid import flashvid
 from llava.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX
@@ -164,30 +163,6 @@ def sample_video(path: Path, num_frames: int) -> tuple[np.ndarray, np.ndarray, f
     except (AttributeError, TypeError, ValueError, RuntimeError):
         fps = None
     return frames, source_indices, fps
-
-
-def load_font(size: int, *, serif: bool = False, bold: bool = False) -> ImageFont.ImageFont:
-    names = []
-    if serif:
-        names.extend(
-            [
-                "DejaVuSerif-Bold.ttf" if bold else "DejaVuSerif.ttf",
-                "LiberationSerif-Bold.ttf" if bold else "LiberationSerif-Regular.ttf",
-            ]
-        )
-    else:
-        names.extend(
-            [
-                "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-                "LiberationSans-Bold.ttf" if bold else "LiberationSans-Regular.ttf",
-            ]
-        )
-    for name in names:
-        try:
-            return ImageFont.truetype(name, size=size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
 
 
 def tensor_frames_to_pil(pixel_values: torch.Tensor, image_processor) -> list[Image.Image]:
@@ -398,140 +373,35 @@ def fit_image(image: Image.Image, size: int) -> Image.Image:
     return canvas
 
 
-def draw_centered(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fill) -> None:
-    box = draw.textbbox((0, 0), text, font=font)
-    draw.text((xy[0] - (box[2] - box[0]) // 2, xy[1]), text, font=font, fill=fill)
-
-
-def render_figure(examples: list[Example], output_path: Path, args: argparse.Namespace) -> None:
-    tile = 430
-    image_gap = 22
-    card_gap = 48
-    margin = 54
-    columns = min(2, len(examples))
-    rows = math.ceil(len(examples) / columns)
-    pair_width = tile * 2 + image_gap
-    question_height = 105
-    caption_height = 92
-    card_height = question_height + tile + caption_height
-    header_height = 155
-    width = margin * 2 + columns * pair_width + (columns - 1) * card_gap
-    height = header_height + margin + rows * card_height + (rows - 1) * card_gap + margin
-
-    canvas = Image.new("RGB", (width, height), "white")
+def render_pair(example: Example, output_path: Path) -> None:
+    """Save only the original/CertVID image pair, without paper annotations."""
+    tile = 512
+    gap = 24
+    original = fit_image(example.frame, tile)
+    selected = fit_image(example.overlay, tile)
+    canvas = Image.new("RGB", (tile * 2 + gap, tile), "white")
+    canvas.paste(original, (0, 0))
+    canvas.paste(selected, (tile + gap, 0))
     draw = ImageDraw.Draw(canvas)
-    title_font = load_font(36, serif=True, bold=True)
-    subtitle_font = load_font(23, serif=True)
-    question_font = load_font(23, serif=True)
-    caption_font = load_font(22, serif=True)
-    detail_font = load_font(18, serif=False)
-
-    draw_centered(
-        draw,
-        (width // 2, 28),
-        "Qualitative visualization of CertVID evidence selection",
-        title_font,
-        (15, 22, 28),
-    )
-    outer_ratio = args.retention_ratio * args.expansion * 100.0
-    subtitle = (
-        f"Random dataset samples | {args.num_frames} frames | nominal R={args.retention_ratio * 100:.2f}% "
-        f"| outer anchor ratio={outer_ratio:.2f}%"
-    )
-    draw_centered(draw, (width // 2, 83), subtitle, subtitle_font, (62, 72, 82))
-    draw.line((margin, 125, width - margin, 125), fill=(182, 188, 193), width=2)
-
-    for index, example in enumerate(examples):
-        row, col = divmod(index, columns)
-        x = margin + col * (pair_width + card_gap)
-        y = header_height + margin + row * (card_height + card_gap)
-
-        wrapped = textwrap.wrap(f"Question: {example.display_question}", width=72)[:3]
-        question_text = "\n".join(wrapped)
-        qbox = draw.multiline_textbbox((0, 0), question_text, font=question_font, spacing=5)
-        qwidth = qbox[2] - qbox[0]
-        draw.multiline_text(
-            (x + pair_width // 2 - qwidth // 2, y),
-            question_text,
-            font=question_font,
-            fill=(18, 26, 33),
-            spacing=5,
-            align="center",
-        )
-
-        image_y = y + question_height
-        original = fit_image(example.frame, tile)
-        selected = fit_image(example.overlay, tile)
-        canvas.paste(original, (x, image_y))
-        canvas.paste(selected, (x + tile + image_gap, image_y))
-        draw.rectangle((x, image_y, x + tile - 1, image_y + tile - 1), outline=(120, 128, 136), width=2)
-        draw.rectangle(
-            (x + tile + image_gap, image_y, x + pair_width - 1, image_y + tile - 1),
-            outline=(0, 154, 155),
-            width=3,
-        )
-
-        caption_y = image_y + tile + 13
-        draw_centered(draw, (x + tile // 2, caption_y), "Original sampled frame", caption_font, (25, 31, 36))
-        draw_centered(
-            draw,
-            (x + tile + image_gap + tile // 2, caption_y),
-            "CertVID selected evidence",
-            caption_font,
-            (0, 132, 133),
-        )
-        time_text = (
-            f"{example.timestamp_seconds:.1f}s" if example.timestamp_seconds is not None else "time unavailable"
-        )
-        details = (
-            f"{example.video_path.stem} | sampled frame {example.sampled_frame_index + 1}/{args.num_frames} "
-            f"({time_text}) | {len(example.selected_in_frame)} selected patches"
-        )
-        draw_centered(draw, (x + pair_width // 2, caption_y + 38), details, detail_font, (82, 89, 96))
-
+    draw.line((tile + gap // 2, 0, tile + gap // 2, tile), fill=(0, 166, 167), width=3)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(output_path, quality=95)
-
-
-def save_manifest(examples: list[Example], output_path: Path, args: argparse.Namespace) -> None:
-    records = []
-    for example in examples:
-        records.append(
-            {
-                "video_path": str(example.video_path),
-                "question": example.question,
-                "display_question": example.display_question,
-                "sampled_frame_index": example.sampled_frame_index,
-                "source_frame_index": example.source_frame_index,
-                "timestamp_seconds": example.timestamp_seconds,
-                "grid": [example.grid_height, example.grid_width],
-                "selected_patch_indices_in_frame": example.selected_in_frame,
-                "anchors_per_frame": example.per_frame_counts,
-                "anchor_indices": example.anchor_indices,
-                "raw_token_count": example.raw_token_count,
-                "output_token_count": example.output_token_count,
-            }
-        )
-    payload = {
-        "seed": args.seed,
-        "num_frames": args.num_frames,
-        "retention_ratio": args.retention_ratio,
-        "expansion": args.expansion,
-        "pruning_layer": args.pruning_layer,
-        "llm_retention_ratio": args.llm_retention_ratio,
-        "examples": records,
-    }
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    canvas.save(output_path, format="PNG")
 
 
 def main() -> None:
     args = parse_args()
-    if args.num_examples <= 0 or args.num_frames <= 0:
-        raise ValueError("num-examples and num-frames must be positive")
+    if args.num_examples != 2:
+        raise ValueError("this visualizer always outputs exactly two examples")
+    if args.num_frames <= 0:
+        raise ValueError("num-frames must be positive")
     if not (0.0 < args.retention_ratio <= 1.0):
         raise ValueError("retention-ratio must be in (0, 1]")
 
     output_dir = Path(args.output_dir).expanduser().resolve()
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise RuntimeError(
+            f"output directory must be empty so it contains only the two PNG files: {output_dir}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_root = Path(args.dataset_root).expanduser().resolve()
     metadata_path = (
@@ -549,7 +419,6 @@ def main() -> None:
     tokenizer, model, image_processor, device = load_certvid_model(args)
 
     examples: list[Example] = []
-    failures: list[dict[str, str]] = []
     for path in candidates[: max(args.max_attempts, args.num_examples)]:
         video_questions = questions.get(path.stem, [GENERIC_QUESTION])
         question = rng.choice(video_questions)
@@ -564,13 +433,12 @@ def main() -> None:
                 args,
             )
         except Exception as exc:
-            failures.append({"video_path": str(path), "error": str(exc)})
             print(f"[skip] {path.name}: {exc}")
             continue
 
         examples.append(example)
-        per_example_path = output_dir / f"example_{len(examples):02d}_{path.stem}.png"
-        render_figure([example], per_example_path, args)
+        per_example_path = output_dir / f"certvid_example_{len(examples):02d}.png"
+        render_pair(example, per_example_path)
         print(
             f"[ok] {len(examples)}/{args.num_examples} {path.name} "
             f"anchors={example.output_token_count}/{example.raw_token_count} "
@@ -579,21 +447,11 @@ def main() -> None:
         if len(examples) >= args.num_examples:
             break
 
-    failures_path = output_dir / "failures.json"
-    failures_path.write_text(
-        json.dumps(failures, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
     if len(examples) < args.num_examples:
         raise RuntimeError(
-            f"only produced {len(examples)}/{args.num_examples} examples; "
-            f"see {failures_path}"
+            f"only produced {len(examples)}/{args.num_examples} examples"
         )
-
-    figure_path = output_dir / "certvid_qualitative_examples.png"
-    render_figure(examples, figure_path, args)
-    save_manifest(examples, output_dir / "manifest.json", args)
-    print(f"[done] combined_figure={figure_path}")
-    print(f"[done] manifest={output_dir / 'manifest.json'}")
+    print(f"[done] generated {len(examples)} separate PNG files in {output_dir}")
 
 
 if __name__ == "__main__":
