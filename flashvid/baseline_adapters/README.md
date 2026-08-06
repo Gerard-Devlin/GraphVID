@@ -19,9 +19,10 @@ to the SigLIP/Qwen2 layout used by LLaVA-OneVision and LLaVA-Video.
   to PLLaVA rather than LLaVA-OneVision.
 
 The runners disable expansion and unrelated inner pruning for the outer-only
-baselines. FastV uses its own target retention directly. PruneVID computes the
-inner ratio needed to reach the requested final token budget after its visual
-merge.
+baselines. FastV uses its own target retention directly. PruneVID maps the
+requested budget to its released inner alpha, then preserves the upstream
+per-group `int(size * alpha)` flooring. It never redistributes group remainders,
+so the realized token count may be below, but never above, the requested budget.
 
 The adapters are model-specific thin patches rather than Qwen3 emulations. The
 runner layout follows the same engineering principle as

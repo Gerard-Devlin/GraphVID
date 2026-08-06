@@ -16,9 +16,9 @@ def _dpc_cluster(
     cluster_count: int,
     neighbors: int = 7,
     *,
-    force_center_labels: bool = False,
+    force_center_labels: bool = True,
 ):
-    """Deterministic DPC-kNN used by the released PruneVID visual merger."""
+    """DPC-kNN used by the released PruneVID visual merger."""
     count, dim = features.shape
     cluster_count = min(max(1, int(cluster_count)), count)
     if cluster_count == count:
@@ -29,6 +29,8 @@ def _dpc_cluster(
     k = min(max(1, int(neighbors)), count)
     nearest = torch.topk(distances, k=k, dim=-1, largest=False).values
     density = (-(nearest.square().mean(dim=-1))).exp()
+    # Upstream PruneVID uses random jitter to break equal-density ties.
+    density = density + torch.rand_like(density) * 1e-6
     higher = density[None, :] > density[:, None]
     max_distance = distances.max().detach()
     distance_to_higher = torch.where(higher, distances, max_distance).min(dim=-1).values
@@ -48,7 +50,7 @@ def _cluster_average(
     features: torch.Tensor,
     cluster_count: int,
     *,
-    force_center_labels: bool = False,
+    force_center_labels: bool = True,
 ):
     labels, centers = _dpc_cluster(
         features,
@@ -126,7 +128,7 @@ def _temporal_windows(
     frame_features: torch.Tensor,
     segment_ratio: float,
     *,
-    refine_labels: bool = False,
+    refine_labels: bool = True,
 ) -> list[tuple[int, int]]:
     frame_count = int(frame_features.shape[0])
     if frame_count <= 1:
@@ -164,11 +166,16 @@ def prunevid_compression(
     spatial DPC merge, and structured text-attention pruning are preserved.
     """
     del cls_attention
-    frame_count, tokens_per_frame, hidden_dim = video_features.shape
+    frame_count, tokens_per_frame, _ = video_features.shape
     device = video_features.device
     raw_tokens = int(frame_count * tokens_per_frame)
     target_ratio = max(0.0, min(1.0, float(flashvid_config.retention_ratio)))
-    target_tokens = max(1, min(raw_tokens, math.ceil(raw_tokens * target_ratio)))
+    # Never exceed the requested integer budget. Upstream's subsequent
+    # per-group int() operations may retain fewer tokens than this target.
+    target_tokens = max(
+        0,
+        min(raw_tokens, math.floor(raw_tokens * target_ratio + 1e-9)),
+    )
     tau = _cfg_float(flashvid_config, "prunevid_tau", 0.8)
     cluster_ratio = max(
         1.0 / max(1, tokens_per_frame),
@@ -179,16 +186,11 @@ def prunevid_compression(
         "prunevid_temporal_segment_ratio",
         0.25,
     )
-    is_qwen25 = (
-        str(getattr(flashvid_config, "_baseline_backbone", "")).strip().lower()
-        == "qwen2_5_vl"
-    )
-
     frame_means = F.normalize(video_features.float().mean(dim=1), dim=-1, eps=1e-6)
     windows = _temporal_windows(
         frame_means,
         segment_ratio,
-        refine_labels=is_qwen25,
+        refine_labels=True,
     )
     global_indices = torch.arange(raw_tokens, dtype=torch.long, device=device).view(
         frame_count,
@@ -219,7 +221,7 @@ def prunevid_compression(
                 static_features, centers = _cluster_average(
                     static_features,
                     static_clusters,
-                    force_center_labels=is_qwen25,
+                    force_center_labels=True,
                 )
                 static_locations = static_locations[centers]
             output_tokens.append(static_features.to(video_features.dtype))
@@ -238,7 +240,7 @@ def prunevid_compression(
                 dynamic_features, centers = _cluster_average(
                     dynamic_features,
                     dynamic_clusters,
-                    force_center_labels=is_qwen25,
+                    force_center_labels=True,
                 )
                 chosen_locations = dynamic_locations[centers]
             output_tokens.append(dynamic_features.to(video_features.dtype))
@@ -246,16 +248,11 @@ def prunevid_compression(
             group_sizes.append(int(dynamic_features.shape[0]))
 
     if not output_tokens:
-        flat = video_features.reshape(-1, hidden_dim)
-        output_tokens = [flat[:1]]
-        output_indices = [torch.zeros(1, dtype=torch.long, device=device)]
-        group_sizes = [1]
+        raise RuntimeError("PruneVID produced no static or dynamic token groups")
 
     merged = torch.cat(output_tokens, dim=0)
     indices = torch.cat(output_indices, dim=0)
     outer_tokens = int(merged.shape[0])
-    # The inner selector reads the exact target instead of relying on floating
-    # point reconstruction of target/outer.
     setattr(flashvid_config, "_prunevid_group_sizes", tuple(group_sizes))
     setattr(flashvid_config, "_prunevid_target_tokens", min(target_tokens, outer_tokens))
     flashvid_config.llm_retention_ratio = min(1.0, target_tokens / max(1, outer_tokens))

@@ -1138,7 +1138,105 @@ def Qwen3VLTextAttention_forward(
             **kwargs,
         )
 
-    if kwargs.get("output_attentions", False) and attn_weights is None:
+    prunevid_attention = None
+    if kwargs.get("output_attentions", False):
+        flashvid_config = getattr(self, "flashvid_config", None)
+        variant = str(
+            getattr(flashvid_config, "compression_variant", "")
+        ).strip().lower()
+        if variant == "prunevid":
+            visual_start = int(
+                getattr(flashvid_config, "visual_token_start_index", 0)
+            )
+            visual_length = int(
+                getattr(flashvid_config, "visual_token_length", 0)
+            )
+            visual_end = visual_start + visual_length
+            key_length = int(key_states.shape[-2])
+            query_length = int(query_states.shape[-2])
+            text_start = min(max(visual_end, 0), query_length)
+            if (
+                visual_length <= 0
+                or visual_start < 0
+                or visual_end > key_length
+                or text_start >= query_length
+            ):
+                raise RuntimeError(
+                    "PruneVID cannot locate post-visual text queries for its "
+                    "language-attention selector"
+                )
+
+            repeated_keys = repeat_kv(key_states, self.num_key_value_groups)
+            visual_scores = torch.zeros(
+                (query_states.shape[0], visual_length),
+                dtype=torch.float32,
+                device=query_states.device,
+            )
+            key_positions = torch.arange(key_length, device=query_states.device)
+            for start in range(text_start, query_length, 16):
+                end = min(query_length, start + 16)
+                logits = torch.matmul(
+                    query_states[:, :, start:end],
+                    repeated_keys.transpose(2, 3),
+                ) * self.scaling
+                query_positions = torch.arange(
+                    start,
+                    end,
+                    device=query_states.device,
+                )
+                causal = key_positions.view(1, 1, 1, -1) > query_positions.view(
+                    1,
+                    1,
+                    -1,
+                    1,
+                )
+                logits = logits.masked_fill(
+                    causal,
+                    torch.finfo(logits.dtype).min,
+                )
+                if attention_mask is not None:
+                    if attention_mask.ndim == 4:
+                        if int(attention_mask.shape[-2]) == 1:
+                            additive_mask = attention_mask[..., :1, :key_length]
+                        else:
+                            additive_mask = attention_mask[
+                                ...,
+                                start:end,
+                                :key_length,
+                            ]
+                        logits = logits + additive_mask
+                    elif attention_mask.ndim == 2:
+                        invalid_keys = (
+                            attention_mask[:, None, None, :key_length] == 0
+                        )
+                        logits = logits.masked_fill(
+                            invalid_keys,
+                            torch.finfo(logits.dtype).min,
+                        )
+                probabilities = nn.functional.softmax(
+                    logits,
+                    dim=-1,
+                    dtype=torch.float32,
+                )
+                chunk_scores = probabilities[
+                    ...,
+                    visual_start:visual_end,
+                ].amax(dim=(1, 2))
+                visual_scores = torch.maximum(visual_scores, chunk_scores)
+
+            prunevid_attention = torch.zeros(
+                (query_states.shape[0], 1, 1, key_length),
+                dtype=query_states.dtype,
+                device=query_states.device,
+            )
+            prunevid_attention[
+                ...,
+                visual_start:visual_end,
+            ] = visual_scores[:, None, None].to(query_states.dtype)
+
+    if prunevid_attention is not None:
+        attn_weights = prunevid_attention
+    elif kwargs.get("output_attentions", False) and attn_weights is None:
         # * Calculate attention weights manually if not provided
         last_query = query_states[:, :, -1:, :]
         key_states = repeat_kv(key_states, self.num_key_value_groups)

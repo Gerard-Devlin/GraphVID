@@ -1344,7 +1344,7 @@ def fastv_prune(
             getattr(
                 flashvid_config,
                 "_prunevid_target_tokens",
-                math.ceil(visual_token_length * retention_ratio),
+                math.floor(visual_token_length * retention_ratio + 1e-9),
             )
         )
     elif strict_flashvid_budget:
@@ -1353,7 +1353,11 @@ def fastv_prune(
         )
     else:
         num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
-    num_retained_tokens = min(max(1, num_retained_tokens), int(visual_global_indices.numel()))
+    minimum_tokens = 0 if variant == "prunevid" else 1
+    num_retained_tokens = min(
+        max(minimum_tokens, num_retained_tokens),
+        int(visual_global_indices.numel()),
+    )
     if strict_flashvid_budget:
         flashvid_config.last_flashvid_strict_inner_target = int(num_retained_tokens)
     if variant == "certvid_v3plusplus":
@@ -1411,6 +1415,20 @@ def fastv_prune(
     inner_mode = str(getattr(flashvid_config, "v3plus_inner_mode", "structured")).strip().lower()
     if variant == "certvid_v3plusplus":
         attn = None
+    elif variant == "prunevid":
+        if attentions is None or attentions.ndim != 4:
+            raise RuntimeError("PruneVID requires four-dimensional text attention")
+        # Patched model attention returns the upstream PruneVID score in a
+        # compact [batch, 1, 1, sequence] tensor. Keep the reductions explicit
+        # so eager/full-attention execution remains equivalent.
+        if int(attentions.shape[-2]) == 1:
+            prunevid_attention = attentions.amax(dim=(1, 2))
+        else:
+            text_start = visual_token_end_index
+            if text_start >= int(attentions.shape[-2]):
+                raise RuntimeError("PruneVID cannot locate post-visual text queries")
+            prunevid_attention = attentions[:, :, text_start:, :].amax(dim=(1, 2))
+        attn = prunevid_attention[visual_pos_masks]
     elif variant == "certvid_v3plus" and inner_mode == "structured":
         # The FA2 fallback may return either a compact last-query row or a full
         # attention matrix. Normalize both shapes without touching legacy paths.
@@ -1467,28 +1485,11 @@ def fastv_prune(
                 raise RuntimeError(
                     "PruneVID group metadata does not match the visual token span"
                 )
-            exact = [
-                size * num_retained_tokens / max(1, int(visual_features.shape[0]))
-                for size in group_sizes
-            ]
-            quotas = [min(size, int(value)) for size, value in zip(group_sizes, exact)]
-            remaining = num_retained_tokens - sum(quotas)
-            order = sorted(
-                range(len(group_sizes)),
-                key=lambda idx: (exact[idx] - quotas[idx], group_sizes[idx], -idx),
-                reverse=True,
-            )
-            while remaining > 0:
-                progressed = False
-                for idx in order:
-                    if quotas[idx] < group_sizes[idx]:
-                        quotas[idx] += 1
-                        remaining -= 1
-                        progressed = True
-                        if remaining == 0:
-                            break
-                if not progressed:
-                    break
+            # Match upstream exactly: independently floor each static group and
+            # each frame's dynamic group. Do not redistribute discarded
+            # fractional quotas to improve coverage or fill the global target.
+            alpha = max(0.0, min(1.0, float(retention_ratio)))
+            quotas = [min(size, int(size * alpha)) for size in group_sizes]
 
             selected_groups = []
             offset = 0
@@ -1500,7 +1501,7 @@ def fastv_prune(
             topk_indices = (
                 torch.cat(selected_groups).sort().values
                 if selected_groups
-                else torch.topk(attn, k=1).indices
+                else torch.empty(0, dtype=torch.long, device=attn.device)
             )
         else:
             _, topk_indices = attn_based_token_selection(
@@ -1553,6 +1554,9 @@ def fastv_prune(
         # Use index-select instead of naive truncation because keep_indices is a sparse subset.
         causal_mask = causal_mask.index_select(2, keep_indices).index_select(3, keep_indices)
     # Update flashvid config.
-    flashvid_config.llm_token_length = num_retained_tokens
-    flashvid_config.visual_token_length = num_retained_tokens
+    retained_visual_tokens = (
+        int(topk_indices.numel()) if variant == "prunevid" else num_retained_tokens
+    )
+    flashvid_config.llm_token_length = retained_visual_tokens
+    flashvid_config.visual_token_length = retained_visual_tokens
     return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices

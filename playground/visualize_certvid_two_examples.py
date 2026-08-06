@@ -6,7 +6,6 @@ LLaVA-OneVision path with and without CertVID V3, and exports separate token
 maps plus question/answer metadata. It intentionally does not depend on
 lmms-eval result files or precomputed diagnostics.
 """
-
 from __future__ import annotations
 
 import argparse
