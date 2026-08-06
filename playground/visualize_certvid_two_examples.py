@@ -16,6 +16,7 @@ import math
 import os
 import random
 import re
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -122,6 +123,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llm-retention-ratio", type=float, default=0.1923076923)
     parser.add_argument("--pool-mode", choices=("bilinear", "average", "max"), default="bilinear")
     parser.add_argument("--max-new-tokens", type=int, default=8)
+    parser.add_argument(
+        "--device-map",
+        default="cuda:0",
+        help="Transformers device map. Single-GPU visualization should use cuda:0.",
+    )
     parser.add_argument(
         "--selection-mode",
         choices=("improvement", "any"),
@@ -453,7 +459,7 @@ def load_certvid_model(args: argparse.Namespace):
         model_path,
         None,
         model_name,
-        device_map="auto",
+        device_map=args.device_map,
         attn_implementation="flash_attention_2",
         overwrite_config={
             "mm_spatial_pool_stride": 2,
@@ -465,6 +471,15 @@ def load_certvid_model(args: argparse.Namespace):
         raise RuntimeError(
             "expected LlavaQwenForCausalLM for LLaVA-OneVision, "
             f"but loaded {model.__class__.__name__}"
+        )
+    meta_parameters = [
+        name for name, parameter in model.named_parameters() if parameter.is_meta
+    ]
+    if meta_parameters:
+        preview = ", ".join(meta_parameters[:8])
+        raise RuntimeError(
+            f"model still contains {len(meta_parameters)} meta parameters after loading: "
+            f"{preview}. Use --device-map cuda:0 and ensure the GPU has enough memory."
         )
     model.eval()
     model.config.mm_spatial_pool_stride = 2
@@ -853,6 +868,7 @@ def main() -> None:
             )
         except Exception as exc:
             print(f"[skip] {path.name}: {exc}", flush=True)
+            traceback.print_exc()
             continue
 
         if args.selection_mode == "improvement" and not (
