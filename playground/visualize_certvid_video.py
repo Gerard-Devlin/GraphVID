@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Render CertVID token maps as videos over the actual model input frames.
+"""Render CertVID token maps as videos over sampled or original video frames.
 
-The exported MP4 follows the 32 sampled frames consumed by LLaVA-OneVision.
-It deliberately does not interpolate attention onto frames the model never saw.
+The ``recompute`` timeline mode runs CertVID on contiguous source-frame windows,
+so every rendered frame receives a token map that was actually computed for it.
 """
 
 from __future__ import annotations
@@ -11,21 +11,27 @@ import argparse
 import json
 import os
 import random
+import time
 import traceback
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
+import torch
 from decord import VideoReader, cpu
 
 from visualize_certvid_two_examples import (
     Example,
+    QuestionRecord,
     discover_videos,
     example_metadata,
+    factor_grid,
+    generate_once,
     load_certvid_model,
     load_questions,
     overlay_selection,
+    prepare_prompt,
     run_one_example,
 )
 
@@ -99,9 +105,31 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeline-mode",
-        choices=("full", "sampled"),
+        choices=("recompute", "full", "sampled"),
         default="full",
-        help="full preserves every source-video frame; sampled exports only model inputs.",
+        help=(
+            "recompute runs CertVID over contiguous source-frame windows; full "
+            "preserves every source frame but only displays sampled maps near their "
+            "timestamps; sampled exports only the original model inputs."
+        ),
+    )
+    parser.add_argument(
+        "--recompute-window-frames",
+        type=int,
+        default=32,
+        help="Number of contiguous source frames jointly processed per recompute pass.",
+    )
+    parser.add_argument(
+        "--recompute-max-frames",
+        type=int,
+        default=0,
+        help="Maximum source frames to recompute; 0 processes the complete video.",
+    )
+    parser.add_argument(
+        "--recompute-max-new-tokens",
+        type=int,
+        default=1,
+        help="Generation length used only to trigger each recompute compression pass.",
     )
     parser.add_argument(
         "--overlay-hold-seconds",
@@ -142,6 +170,16 @@ def _validate_args(args: argparse.Namespace) -> list[str]:
         raise ValueError("max-output-width must be non-negative")
     if args.decode_batch_size <= 0:
         raise ValueError("decode-batch-size must be positive")
+    if args.recompute_window_frames <= 0:
+        raise ValueError("recompute-window-frames must be positive")
+    if args.recompute_max_frames < 0:
+        raise ValueError("recompute-max-frames must be non-negative")
+    if args.recompute_max_new_tokens <= 0:
+        raise ValueError("recompute-max-new-tokens must be positive")
+    if args.timeline_mode == "recompute" and args.overlay_mode != "certvid":
+        raise ValueError("recompute currently supports --overlay-mode certvid only")
+    if args.timeline_mode == "recompute" and args.selection_mode != "any":
+        raise ValueError("recompute requires --selection-mode any")
     if len(args.codec) != 4:
         raise ValueError("codec must contain exactly four characters")
     if not (0.0 < args.retention_ratio <= 1.0):
@@ -261,6 +299,256 @@ def _draw_selection_boxes_bgr(
             thickness=line_width,
         )
     return result
+
+
+def _certvid_maps_for_window(
+    frames: np.ndarray,
+    *,
+    tokenizer,
+    model,
+    image_processor,
+    device: torch.device,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    args: argparse.Namespace,
+) -> tuple[list[list[int]], int, int, dict[str, Any]]:
+    """Run one real CertVID pass and return each input frame's anchor map."""
+    pixel_values_cpu = image_processor.preprocess(
+        frames,
+        return_tensors="pt",
+    )["pixel_values"]
+    frame_count = int(pixel_values_cpu.shape[0])
+    if frame_count != len(frames):
+        raise RuntimeError(
+            f"processor changed frame count from {len(frames)} to {frame_count}"
+        )
+    pixel_values = pixel_values_cpu.to(device=device, dtype=torch.float16)
+    config = model.flashvid_config
+    started = time.perf_counter()
+    try:
+        prediction, cls_attention, plan = generate_once(
+            model=model,
+            tokenizer=tokenizer,
+            pixel_values=pixel_values,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            retention_ratio=args.retention_ratio,
+            expansion=args.expansion,
+            llm_retention_ratio=args.llm_retention_ratio,
+            max_new_tokens=args.recompute_max_new_tokens,
+        )
+        elapsed = time.perf_counter() - started
+        if plan is None:
+            raise RuntimeError("CertVID did not publish an anchor plan")
+
+        anchors = plan.anchor_indices.detach().long().cpu().tolist()
+        raw_token_count = int(plan.raw_token_count)
+        if raw_token_count % frame_count:
+            raise RuntimeError(
+                f"raw token count {raw_token_count} is not divisible by "
+                f"{frame_count} frames"
+            )
+        tokens_per_frame = raw_token_count // frame_count
+        if tuple(cls_attention.shape) != (frame_count, tokens_per_frame):
+            raise RuntimeError(
+                "pre-compression attention shape mismatch: "
+                f"expected {(frame_count, tokens_per_frame)}, "
+                f"got {tuple(cls_attention.shape)}"
+            )
+        grid_height, grid_width = factor_grid(tokens_per_frame)
+        per_frame: list[list[int]] = [[] for _ in range(frame_count)]
+        for anchor in anchors:
+            frame_index, local_index = divmod(int(anchor), tokens_per_frame)
+            if 0 <= frame_index < frame_count:
+                per_frame[frame_index].append(local_index)
+        per_frame = [sorted(indices) for indices in per_frame]
+        diagnostics = {
+            "input_frames": frame_count,
+            "raw_tokens": raw_token_count,
+            "selected_tokens": len(anchors),
+            "tokens_per_frame": tokens_per_frame,
+            "selected_per_frame": [len(indices) for indices in per_frame],
+            "inference_seconds": elapsed,
+            "trigger_prediction": prediction,
+        }
+        return per_frame, grid_height, grid_width, diagnostics
+    finally:
+        setattr(config, "_certvid_plan", None)
+        setattr(config, "_visualization_cls_attention", None)
+        del pixel_values, pixel_values_cpu
+
+
+def _write_recomputed_overlay_video(
+    video_path: Path,
+    question_record: QuestionRecord,
+    output_path: Path,
+    *,
+    tokenizer,
+    model,
+    image_processor,
+    device: torch.device,
+    max_width: int,
+    codec: str,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Recompute CertVID in local windows and render every original frame once."""
+    reader = VideoReader(str(video_path), ctx=cpu(0))
+    total_source_frames = len(reader)
+    if total_source_frames <= 0:
+        raise RuntimeError("source video contains no decodable frames")
+    frame_limit = total_source_frames
+    if args.recompute_max_frames > 0:
+        frame_limit = min(frame_limit, args.recompute_max_frames)
+    try:
+        source_fps = float(reader.get_avg_fps())
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        source_fps = 30.0
+    if not np.isfinite(source_fps) or source_fps <= 0.0:
+        source_fps = 30.0
+
+    first = reader[0].asnumpy()
+    output_width, output_height = _output_size(
+        int(first.shape[1]),
+        int(first.shape[0]),
+        max_width,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    partial_path = output_path.with_name(f"{output_path.stem}.partial.mp4")
+    writer = cv2.VideoWriter(
+        str(partial_path),
+        cv2.VideoWriter_fourcc(*codec),
+        source_fps,
+        (output_width, output_height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(
+            f"OpenCV could not open MP4 writer for {partial_path} with codec {codec!r}"
+        )
+
+    input_ids, attention_mask = prepare_prompt(
+        tokenizer,
+        question_record.prompt,
+        device,
+    )
+    window_size = args.recompute_window_frames
+    output_ranges = [
+        (start, min(frame_limit, start + window_size))
+        for start in range(0, frame_limit, window_size)
+    ]
+    window_records: list[dict[str, Any]] = []
+    selected_counts: list[int] = []
+    boxed_frames = 0
+    expected_grid: tuple[int, int] | None = None
+    succeeded = False
+    try:
+        for window_number, (output_start, output_end) in enumerate(
+            output_ranges,
+            start=1,
+        ):
+            context_start = output_start
+            context_end = output_end
+            if output_end - output_start < window_size and frame_limit >= window_size:
+                # Reuse preceding context for the short tail instead of padding it
+                # with duplicated frames, then emit only the previously unseen tail.
+                context_end = frame_limit
+                context_start = frame_limit - window_size
+            local_start = output_start - context_start
+            local_end = local_start + (output_end - output_start)
+            source_indices = list(range(context_start, context_end))
+            frames = reader.get_batch(source_indices).asnumpy()
+            print(
+                f"[recompute] window {window_number}/{len(output_ranges)} "
+                f"context=[{context_start},{context_end}) "
+                f"output=[{output_start},{output_end})",
+                flush=True,
+            )
+            per_frame, grid_height, grid_width, diagnostics = (
+                _certvid_maps_for_window(
+                    frames,
+                    tokenizer=tokenizer,
+                    model=model,
+                    image_processor=image_processor,
+                    device=device,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    args=args,
+                )
+            )
+            grid = (grid_height, grid_width)
+            if expected_grid is None:
+                expected_grid = grid
+            elif grid != expected_grid:
+                raise RuntimeError(
+                    f"visual token grid changed from {expected_grid} to {grid}"
+                )
+
+            output_maps = per_frame[local_start:local_end]
+            output_frames = frames[local_start:local_end]
+            if len(output_maps) != len(output_frames):
+                raise RuntimeError("recomputed frame/token-map count mismatch")
+            output_counts = [len(indices) for indices in output_maps]
+            selected_counts.extend(output_counts)
+            for rgb, selected in zip(output_frames, output_maps):
+                bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                if bgr.shape[1] != output_width or bgr.shape[0] != output_height:
+                    bgr = cv2.resize(
+                        bgr,
+                        (output_width, output_height),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                bgr = _draw_selection_boxes_bgr(
+                    bgr,
+                    selected,
+                    grid_height,
+                    grid_width,
+                )
+                boxed_frames += int(bool(selected))
+                writer.write(bgr)
+
+            diagnostics.update(
+                {
+                    "window": window_number,
+                    "context_start": context_start,
+                    "context_end_exclusive": context_end,
+                    "output_start": output_start,
+                    "output_end_exclusive": output_end,
+                    "output_selected_per_frame": output_counts,
+                }
+            )
+            window_records.append(diagnostics)
+            print(
+                f"[recompute] window {window_number} done: "
+                f"selected={diagnostics['selected_tokens']} "
+                f"time={diagnostics['inference_seconds']:.2f}s",
+                flush=True,
+            )
+            del frames, per_frame, output_frames, output_maps
+            if window_number % 8 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        succeeded = True
+    finally:
+        writer.release()
+        del input_ids, attention_mask
+
+    if not succeeded or not partial_path.is_file() or partial_path.stat().st_size <= 0:
+        raise RuntimeError(
+            f"video encoder did not complete a valid recomputed video: {partial_path}"
+        )
+    partial_path.replace(output_path)
+    return {
+        "source_frames": total_source_frames,
+        "rendered_frames": frame_limit,
+        "boxed_frames": boxed_frames,
+        "unboxed_frames": frame_limit - boxed_frames,
+        "source_fps": source_fps,
+        "output_width": output_width,
+        "output_height": output_height,
+        "overlay_hold_seconds": None,
+        "recompute_window_frames": window_size,
+        "recompute_passes": len(output_ranges),
+        "selected_tokens_per_rendered_frame": selected_counts,
+        "windows": window_records,
+    }
 
 
 def _write_full_overlay_video(
@@ -480,7 +768,20 @@ def main() -> None:
             )
             output_name = f"example_{number:02d}_{example.video_path.stem}_{mode}.mp4"
             print(f"[encode] {output_name}", flush=True)
-            if args.timeline_mode == "full":
+            if args.timeline_mode == "recompute":
+                render_stats[mode] = _write_recomputed_overlay_video(
+                    example.video_path,
+                    example.question_record,
+                    output_dir / output_name,
+                    tokenizer=tokenizer,
+                    model=model,
+                    image_processor=image_processor,
+                    device=device,
+                    max_width=args.max_output_width,
+                    codec=args.codec,
+                    args=args,
+                )
+            elif args.timeline_mode == "full":
                 render_stats[mode] = _write_full_overlay_video(
                     example,
                     selected,
@@ -521,15 +822,37 @@ def main() -> None:
         "visualization": {
             "overlay_mode": args.overlay_mode,
             "timeline_mode": args.timeline_mode,
-            "timeline": (
-                "all original source frames; sampled token maps are briefly held "
-                "around their true timestamps"
-                if args.timeline_mode == "full"
-                else "actual model-input sampled frames in temporal order"
-            ),
+            "timeline": {
+                "recompute": (
+                    "all original source frames; each frame's token map is genuinely "
+                    "recomputed in a contiguous local CertVID window"
+                ),
+                "full": (
+                    "all original source frames; sampled token maps are briefly held "
+                    "around their true timestamps"
+                ),
+                "sampled": "actual model-input sampled frames in temporal order",
+            }[args.timeline_mode],
             "interpolated_attention": False,
             "overlay_hold_seconds": (
                 args.overlay_hold_seconds if args.timeline_mode == "full" else None
+            ),
+            "recompute_window_frames": (
+                args.recompute_window_frames
+                if args.timeline_mode == "recompute"
+                else None
+            ),
+            "recompute_max_frames": (
+                args.recompute_max_frames
+                if args.timeline_mode == "recompute"
+                else None
+            ),
+            "evaluation_equivalent": args.timeline_mode != "recompute",
+            "recompute_scope_note": (
+                "Visualization only: each local window receives its own retention "
+                "budget, so this is not the fixed-budget 32-frame benchmark setting."
+                if args.timeline_mode == "recompute"
+                else None
             ),
             "audio_preserved": False,
             "sampled_frames": args.num_frames,
