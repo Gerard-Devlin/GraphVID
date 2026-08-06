@@ -97,7 +97,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--metadata-jsonl",
         default="assets/videomme.jsonl",
-        help="Optional JSONL with video IDs and questions; pass an empty string to disable.",
+        help="JSON or JSONL with video IDs and questions.",
+    )
+    parser.add_argument(
+        "--answers-json",
+        default="",
+        help="Optional JSON answer map, such as EgoSchema subset_answers.json.",
     )
     parser.add_argument(
         "--video-id",
@@ -171,7 +176,7 @@ def display_question(question: str) -> str:
 
 
 def _parse_options(record: dict[str, Any], prompt: str) -> tuple[tuple[str, str], ...]:
-    raw_options = record.get("options")
+    raw_options = record.get("options") or record.get("option")
     parsed: list[tuple[str, str]] = []
     if isinstance(raw_options, dict):
         for label, text in raw_options.items():
@@ -184,6 +189,24 @@ def _parse_options(record: dict[str, Any], prompt: str) -> tuple[tuple[str, str]
                 parsed.append((match.group(1), match.group(2)))
             else:
                 parsed.append((chr(ord("A") + index), text))
+    elif any(
+        any(
+            record.get(key) is not None
+            for key in (f"option{index}", f"option {index}", f"option_{index}")
+        )
+        for index in range(5)
+    ):
+        for index in range(5):
+            value = next(
+                (
+                    record[key]
+                    for key in (f"option{index}", f"option {index}", f"option_{index}")
+                    if record.get(key) is not None
+                ),
+                None,
+            )
+            if value is not None and str(value).strip():
+                parsed.append((chr(ord("A") + index), str(value).strip()))
     else:
         for line in prompt.splitlines():
             match = OPTION_PATTERN.match(line)
@@ -206,17 +229,31 @@ def _question_record(
     record: dict[str, Any],
     fallback_question_id: str | None = None,
 ) -> QuestionRecord | None:
-    prompt = _first_present(record, ("input", "prompt", "query", "question"))
-    if prompt is None:
+    prompt = _first_present(record, ("input", "prompt", "query"))
+    question = _first_present(record, ("question",))
+    if prompt is None and question is None:
         return None
-    question = _first_present(record, ("question",)) or display_question(prompt)
-    options = _parse_options(record, prompt)
+    if question is None:
+        question = display_question(prompt or "")
+    options = _parse_options(record, prompt or question)
+    if prompt is None:
+        option_lines = [f"{label}. {text}" for label, text in options]
+        prompt = "\n".join(
+            [
+                question,
+                *option_lines,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
     answer_raw = _first_present(record, ("answer", "target", "label"))
     answer = _normalize_answer(answer_raw)
     answer_lookup = dict(options)
     return QuestionRecord(
         question_id=(
-            _first_present(record, ("question_id", "questionID", "qid", "id"))
+            _first_present(
+                record,
+                ("question_id", "questionID", "q_uid", "qid", "id"),
+            )
             or fallback_question_id
         ),
         prompt=prompt,
@@ -227,24 +264,79 @@ def _question_record(
     )
 
 
-def load_questions(path: Path | None) -> dict[str, list[QuestionRecord]]:
+def _load_json_records(path: Path) -> list[dict[str, Any]]:
+    text = path.read_text(encoding="utf-8-sig")
+    if not text.strip():
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return [
+            json.loads(line)
+            for line in text.splitlines()
+            if line.strip()
+        ]
+    if isinstance(payload, list):
+        return [record for record in payload if isinstance(record, dict)]
+    if isinstance(payload, dict):
+        for key in ("questions", "records", "data"):
+            records = payload.get(key)
+            if isinstance(records, list):
+                return [record for record in records if isinstance(record, dict)]
+        if any(key in payload for key in ("q_uid", "question", "input")):
+            return [payload]
+    return []
+
+
+def _load_answer_map(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    if isinstance(payload, dict):
+        return {str(key): value for key, value in payload.items()}
+    if isinstance(payload, list):
+        answers: dict[str, Any] = {}
+        for record in payload:
+            if not isinstance(record, dict):
+                continue
+            question_id = _first_present(
+                record,
+                ("q_uid", "question_id", "questionID", "qid", "id"),
+            )
+            if question_id is not None and "answer" in record:
+                answers[question_id] = record["answer"]
+        return answers
+    return {}
+
+
+def load_questions(
+    path: Path | None,
+    answers_path: Path | None = None,
+) -> dict[str, list[QuestionRecord]]:
     questions: dict[str, list[QuestionRecord]] = {}
     if path is None or not path.is_file():
         return questions
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            video_id = _first_present(
-                record,
-                ("videoID", "video_id", "video_idx", "video", "video_name"),
-            )
-            if video_id is None and isinstance(record.get("submission"), dict):
-                video_id = next(iter(record["submission"]), None)
-            question_record = _question_record(record, video_id)
-            if video_id and question_record is not None:
-                questions.setdefault(Path(video_id).stem, []).append(question_record)
+    answers = _load_answer_map(answers_path)
+    for source_record in _load_json_records(path):
+        record = dict(source_record)
+        video_id = _first_present(
+            record,
+            (
+                "videoID",
+                "video_id",
+                "video_idx",
+                "video",
+                "video_name",
+                "q_uid",
+            ),
+        )
+        if video_id is None and isinstance(record.get("submission"), dict):
+            video_id = next(iter(record["submission"]), None)
+        if video_id in answers:
+            record["answer"] = answers[video_id]
+        question_record = _question_record(record, video_id)
+        if video_id and question_record is not None:
+            questions.setdefault(Path(video_id).stem, []).append(question_record)
     return questions
 
 
@@ -707,7 +799,10 @@ def main() -> None:
     metadata_path = (
         Path(args.metadata_jsonl).expanduser().resolve() if args.metadata_jsonl.strip() else None
     )
-    questions = load_questions(metadata_path)
+    answers_path = (
+        Path(args.answers_json).expanduser().resolve() if args.answers_json.strip() else None
+    )
+    questions = load_questions(metadata_path, answers_path)
     if not questions:
         raise RuntimeError(
             "metadata JSONL is required to export questions, options, and answers"

@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
         default=str(hf_home / "videomme" / "data"),
     )
     parser.add_argument("--metadata-jsonl", default="assets/videomme.jsonl")
+    parser.add_argument("--answers-json", default="")
     parser.add_argument(
         "--video-id",
         default="",
@@ -210,9 +211,14 @@ def main() -> None:
 
     dataset_root = Path(args.dataset_root).expanduser().resolve()
     metadata_path = Path(args.metadata_jsonl).expanduser().resolve()
-    questions = load_questions(metadata_path)
+    answers_path = (
+        Path(args.answers_json).expanduser().resolve() if args.answers_json.strip() else None
+    )
+    questions = load_questions(metadata_path, answers_path)
     if not questions:
-        raise RuntimeError("metadata JSONL is required")
+        raise RuntimeError(
+            f"no question records were loaded from metadata file: {metadata_path}"
+        )
     candidates = discover_videos(dataset_root)
     rng = random.Random(args.seed)
     if requested_video_ids:
