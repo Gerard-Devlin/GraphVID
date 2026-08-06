@@ -53,6 +53,11 @@ class Example:
     frame: Image.Image
     attention_overlay: Image.Image
     certvid_overlay: Image.Image
+    timeline_frames: list[Image.Image]
+    source_frame_indices: list[int]
+    video_fps: float | None
+    attention_per_frame: list[list[int]]
+    certvid_per_frame: list[list[int]]
     sampled_frame_index: int
     source_frame_index: int
     timestamp_seconds: float | None
@@ -569,6 +574,16 @@ def run_one_example(
         frame=frame,
         attention_overlay=attention_overlay,
         certvid_overlay=certvid_overlay,
+        timeline_frames=display_frames,
+        source_frame_indices=[int(index) for index in source_indices.tolist()],
+        video_fps=fps,
+        attention_per_frame=[
+            sorted(int(index) for index in indices)
+            for indices in attention_per_frame
+        ],
+        certvid_per_frame=[
+            sorted(int(index) for index in indices) for indices in per_frame
+        ],
         sampled_frame_index=representative,
         source_frame_index=int(source_indices[representative]),
         timestamp_seconds=timestamp,
