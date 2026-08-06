@@ -300,6 +300,14 @@ def flashvid_compression(
     deepstack_features: Optional[list[torch.Tensor]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
+    capture_layer_attention = bool(
+        getattr(flashvid_config, "_capture_layer_frame_attention", False)
+    )
+    if capture_layer_attention:
+        # These tensors are prefill-local. Reset them before constructing the
+        # next sample so an interrupted generation cannot leak stale figures.
+        setattr(flashvid_config, "_visualization_current_frame_ids", None)
+        setattr(flashvid_config, "_visualization_layer_attention", {})
     if bool(getattr(flashvid_config, "_capture_visualization_attention", False)):
         # Diagnostics-only sidecar used by the qualitative visualizer. Keeping
         # it opt-in avoids changing evaluation memory use or algorithm outputs.
@@ -388,6 +396,22 @@ def flashvid_compression(
             question_features=question_features,
             analysis_sink=analysis_sink,
         )
+        if capture_layer_attention:
+            from .attention_visualization import (
+                initialize_certvid_attention_capture,
+            )
+
+            plan = getattr(flashvid_config, "_certvid_plan", None)
+            if plan is None:
+                raise RuntimeError(
+                    "CertVID V3 did not publish a plan for attention visualization"
+                )
+            initialize_certvid_attention_capture(
+                flashvid_config,
+                plan,
+                frame_count=num_frames,
+                tokens_per_frame=num_visual_tokens,
+            )
         if analysis_sink is not None and "design" in analysis_sink:
             # Publish only the tensors needed by the paper visualizer. This is
             # opt-in and CPU-backed, so ordinary evaluation keeps its original

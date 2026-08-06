@@ -107,13 +107,19 @@ def Qwen2Model_forward(
             elif layer_idx == flashvid_config.pruning_layer:
                 kwargs["output_attentions"] = False
                 attn: torch.Tensor = attn_weights
+                visual_start_before_prune = int(
+                    flashvid_config.visual_token_start_index
+                )
+                visual_length_before_prune = int(
+                    flashvid_config.visual_token_length
+                )
                 (
                     hidden_states,
                     causal_mask,
                     position_ids,
                     cache_position,
                     position_embeddings,
-                    _,
+                    keep_indices,
                 ) = fastv_prune(
                     hidden_states=hidden_states,
                     causal_mask=causal_mask,
@@ -126,6 +132,23 @@ def Qwen2Model_forward(
                     output_norm=self.norm,
                     output_head=getattr(self, "_v3plusplus_output_head", None),
                 )
+                if bool(
+                    getattr(
+                        flashvid_config,
+                        "_capture_layer_frame_attention",
+                        False,
+                    )
+                ):
+                    from .attention_visualization import (
+                        update_visualization_after_inner_prune,
+                    )
+
+                    update_visualization_after_inner_prune(
+                        flashvid_config,
+                        keep_indices,
+                        visual_start=visual_start_before_prune,
+                        visual_length=visual_length_before_prune,
+                    )
         hidden_states, attn_weights = decoder_layer(
             hidden_states,
             attention_mask=causal_mask,
@@ -202,6 +225,24 @@ def Qwen2Attention_forward(
         # sin and cos are specific to RoPE models; cache_position needed for the static cache
         cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
         key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+    flashvid_config = getattr(self, "flashvid_config", None)
+    if bool(
+        getattr(flashvid_config, "_capture_layer_frame_attention", False)
+    ):
+        from .attention_visualization import (
+            capture_qwen2_layer_frame_attention,
+        )
+
+        capture_qwen2_layer_frame_attention(
+            config=flashvid_config,
+            layer_index=self.layer_idx,
+            query_states=query_states,
+            key_states=key_states,
+            attention_mask=attention_mask,
+            scaling=self.scaling,
+            num_key_value_groups=self.num_key_value_groups,
+        )
 
     dropout = 0.0 if not self.training else self.attention_dropout
     faith_output = faithvid_attention_forward(
