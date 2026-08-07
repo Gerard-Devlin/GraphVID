@@ -143,6 +143,11 @@ class FlashVidConfig:
     certv3_swap_margin: float = field(default=1e-4)
     certv3_fusion_alpha: float = field(default=0.12)
     certv3_assignment_temperature: float = field(default=0.07)
+    # Paper ablations. Defaults preserve the released CertVID V3 path.
+    certv3_selection_objective: str = field(default="d_optimal")
+    certv3_use_spatiotemporal_certificates: bool = field(default=True)
+    certv3_use_trajectory: bool = field(default=True)
+    certv3_use_query: bool = field(default=True)
 
     # CertVID V3Plus: V3 outer coreset with structure-aware inner pruning.
     v3plus_inner_mode: str = field(default="structured")

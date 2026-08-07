@@ -1347,13 +1347,20 @@ def fastv_prune(
                 math.floor(visual_token_length * retention_ratio + 1e-9),
             )
         )
+    elif variant == "fastv":
+        # FastV consumes an explicit integer attention rank upstream. When a
+        # ratio is used by our common benchmark interface, floor it so the
+        # retained rank never exceeds the advertised token budget.
+        num_retained_tokens = int(
+            math.floor(visual_token_length * retention_ratio + 1e-9)
+        )
     elif strict_flashvid_budget:
         num_retained_tokens = int(
             math.floor(visual_token_length * retention_ratio + 1e-9)
         )
     else:
         num_retained_tokens = math.ceil(visual_token_length * retention_ratio)
-    minimum_tokens = 0 if variant == "prunevid" else 1
+    minimum_tokens = 0 if variant in ("fastv", "prunevid") else 1
     num_retained_tokens = min(
         max(minimum_tokens, num_retained_tokens),
         int(visual_global_indices.numel()),
