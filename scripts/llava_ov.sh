@@ -627,6 +627,12 @@ for method in $(split_csv "$METHODS"); do
       else
         "${cmd[@]}"
       fi
+      status=$?
+      if [[ "$status" -ne 0 ]]; then
+        printf '[lmms-eval] FAILED method=%s rate=%s task=%s exit=%s\n' \
+          "$method" "$rate" "$task" "$status" >&2
+        exit "$status"
+      fi
     done
   done
 done

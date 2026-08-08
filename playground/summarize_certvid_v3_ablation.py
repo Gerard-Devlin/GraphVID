@@ -20,6 +20,13 @@ ABLATIONS = [
     ("no_fusion", "w/o Residual Fusion"),
 ]
 
+EXPANSION_ABLATIONS = [
+    ("e130", "Expansion 1.30 (20+8, r=0.1923)"),
+    ("e125", "Expansion 1.25 (20+8, r=0.3000)"),
+    ("e120", "Expansion 1.20 (20+8, r=0.4167)"),
+    ("e115", "Expansion 1.15 (20+8, r=0.5435)"),
+]
+
 TASK_METRICS = {
     "videomme": ("videomme", "videomme_perception_score"),
     "egoschema_subset": ("egoschema_subset", "score"),
@@ -120,9 +127,13 @@ def _average(values: list[float | None]) -> float | None:
     return sum(present) / len(present) if present else None
 
 
-def build_table(root: Path, rate: str) -> list[dict[str, Any]]:
+def build_table(
+    root: Path,
+    rate: str,
+    configurations: list[tuple[str, str]] = ABLATIONS,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for slug, label in ABLATIONS:
+    for slug, label in configurations:
         duration = _videomme_duration_scores(root / slug / "videomme.log")
         row: dict[str, Any] = {
             "configuration": label,
@@ -148,7 +159,7 @@ def build_table(root: Path, rate: str) -> list[dict[str, Any]]:
     return rows
 
 
-def write_outputs(root: Path, rows: list[dict[str, Any]]) -> None:
+def write_outputs(root: Path, rows: list[dict[str, Any]], stem: str = "certvid_v3_ablation_table") -> None:
     fields = [
         "configuration",
         "videomme_short",
@@ -161,7 +172,7 @@ def write_outputs(root: Path, rows: list[dict[str, Any]]) -> None:
         "mvbench",
         "average",
     ]
-    csv_path = root / "certvid_v3_ablation_table.csv"
+    csv_path = root / f"{stem}.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -187,9 +198,9 @@ def write_outputs(root: Path, rows: list[dict[str, Any]]) -> None:
                 average=_fmt(row["average"]),
             )
         )
-    markdown_path = root / "certvid_v3_ablation_table.md"
+    markdown_path = root / f"{stem}.md"
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (root / "certvid_v3_ablation_table.json").write_text(
+    (root / f"{stem}.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -202,8 +213,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--rate", default="0.10")
+    parser.add_argument("--mode", choices=("components", "expansion"), default="components")
     args = parser.parse_args()
-    write_outputs(args.root, build_table(args.root, args.rate))
+    if args.mode == "expansion":
+        configurations = EXPANSION_ABLATIONS
+        stem = "certvid_v3_expansion_ablation_table"
+    else:
+        configurations = ABLATIONS
+        stem = "certvid_v3_ablation_table"
+    write_outputs(
+        args.root,
+        build_table(args.root, args.rate, configurations),
+        stem=stem,
+    )
 
 
 if __name__ == "__main__":
