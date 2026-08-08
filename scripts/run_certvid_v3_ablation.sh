@@ -9,6 +9,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+ABLATIONS="${ABLATIONS:-full,no_doptimal,no_certificates,no_trajectory,no_query,no_fusion}"
 
 mkdir -p "$OUTPUT_PATH"
 
@@ -24,18 +25,9 @@ has_result() {
   [[ -d "$directory" ]] && find "$directory" -type f \( -name '*results*.json' -o -name 'results.json' \) -print -quit | grep -q .
 }
 
-ABLATIONS=(
-  full
-  no_doptimal
-  no_certificates
-  no_trajectory
-  no_query
-  no_fusion
-)
-
 FAILURES=0
 
-for ablation in "${ABLATIONS[@]}"; do
+for ablation in $(split_csv "$ABLATIONS"); do
   selection_objective=d_optimal
   use_spatiotemporal_certificates=True
   use_trajectory=True
