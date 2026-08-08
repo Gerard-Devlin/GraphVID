@@ -4,7 +4,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 RATE="${RATE:-0.10}"
-TASKS="${TASKS:-videomme,egoschema_subset,longvideobench_val_v,mvbench}"
+TASKS="${TASKS:-videomme,egoschema_subset,egoschema,longvideobench_val_v,mvbench}"
 OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"

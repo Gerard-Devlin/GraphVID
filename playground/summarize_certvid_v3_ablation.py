@@ -23,6 +23,10 @@ ABLATIONS = [
 TASK_METRICS = {
     "videomme": ("videomme", "videomme_perception_score"),
     "egoschema_subset": ("egoschema_subset", "score"),
+    # EgoSchema total is a hidden-label test set. This remains empty until the
+    # generated CSV is scored by Kaggle, but keeping the column makes the
+    # paper table ready for the returned score.
+    "egoschema": ("egoschema", "score"),
     "longvideobench_val_v": ("longvideobench_val_v", "lvb_acc"),
     "mvbench": ("mvbench", "mvbench_accuracy"),
 }
@@ -127,6 +131,7 @@ def build_table(root: Path, rate: str) -> list[dict[str, Any]]:
             "videomme_long": duration["long"],
             "videomme_overall": _load_metric(root, slug, rate, "videomme"),
             "egoschema_subset": _load_metric(root, slug, rate, "egoschema_subset"),
+            "egoschema_total": _load_metric(root, slug, rate, "egoschema"),
             "longvideobench": _load_metric(root, slug, rate, "longvideobench_val_v"),
             "mvbench": _load_metric(root, slug, rate, "mvbench"),
         }
@@ -134,6 +139,7 @@ def build_table(root: Path, rate: str) -> list[dict[str, Any]]:
             [
                 row["videomme_overall"],
                 row["egoschema_subset"],
+                row["egoschema_total"],
                 row["longvideobench"],
                 row["mvbench"],
             ]
@@ -150,6 +156,7 @@ def write_outputs(root: Path, rows: list[dict[str, Any]]) -> None:
         "videomme_long",
         "videomme_overall",
         "egoschema_subset",
+        "egoschema_total",
         "longvideobench",
         "mvbench",
         "average",
@@ -162,18 +169,19 @@ def write_outputs(root: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({field: _fmt(row[field]) if field != "configuration" else row[field] for field in fields})
 
     lines = [
-        "| Configuration | VideoMME Short | Medium | Long | Overall | EgoSchema Subset | LongVideoBench | MVBench | Avg. |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Configuration | VideoMME Short | Medium | Long | Overall | EgoSchema Subset | EgoSchema Total | LongVideoBench | MVBench | Avg. |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {configuration} | {short} | {medium} | {long} | {overall} | {ego} | {lvb} | {mvbench} | {average} |".format(
+            "| {configuration} | {short} | {medium} | {long} | {overall} | {ego_subset} | {ego_total} | {lvb} | {mvbench} | {average} |".format(
                 configuration=row["configuration"],
                 short=_fmt(row["videomme_short"]),
                 medium=_fmt(row["videomme_medium"]),
                 long=_fmt(row["videomme_long"]),
                 overall=_fmt(row["videomme_overall"]),
-                ego=_fmt(row["egoschema_subset"]),
+                ego_subset=_fmt(row["egoschema_subset"]),
+                ego_total=_fmt(row["egoschema_total"]),
                 lvb=_fmt(row["longvideobench"]),
                 mvbench=_fmt(row["mvbench"]),
                 average=_fmt(row["average"]),
