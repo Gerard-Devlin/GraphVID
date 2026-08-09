@@ -112,6 +112,7 @@ CERTV3_SWAP_POOL="${CERTV3_SWAP_POOL:-24}"
 CERTV3_SWAP_MARGIN="${CERTV3_SWAP_MARGIN:-0.0001}"
 CERTV3_FUSION_ALPHA="${CERTV3_FUSION_ALPHA:-0.12}"
 CERTV3_ASSIGNMENT_TEMPERATURE="${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}"
+CERTV3_CERTIFICATE_BUDGET_RATIO="${CERTV3_CERTIFICATE_BUDGET_RATIO:-1.0}"
 
 FASTV_PRUNING_LAYER="${FASTV_PRUNING_LAYER:-2}"
 OUTER_ONLY_PRUNING_LAYER="${OUTER_ONLY_PRUNING_LAYER:-999}"
@@ -266,7 +267,7 @@ method_flash_args() {
         "$ALPHA" "$TEMPORAL_THRESHOLD"
       ;;
     certvid_v3)
-      printf 'compression_variant=certvid_v3,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s' \
+      printf 'compression_variant=certvid_v3,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv3_certificate_budget_ratio=%s' \
         "$CERTV3_BUDGET_USES_EXPANSION" \
         "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" \
         "$CERTV3_CANDIDATE_MULTIPLIER" "$CERTV3_QUERY_WEIGHT" \
@@ -276,7 +277,7 @@ method_flash_args() {
         "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" \
         "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" \
         "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" \
-        "$CERTV3_ASSIGNMENT_TEMPERATURE"
+        "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTV3_CERTIFICATE_BUDGET_RATIO"
       ;;
     *)
       echo "Unsupported Qwen2.5 method: $method" >&2

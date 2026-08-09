@@ -251,7 +251,7 @@ def _hard_certificates(
     return mandatory, query_seeds
 
 
-def _qwen_budget_aware_certificates(
+def _budget_aware_certificates(
     *,
     budget: int,
     certificate_ratio: float,
@@ -270,8 +270,9 @@ def _qwen_budget_aware_certificates(
     cell_coverage_ratio: float,
     query_threshold: float,
     query_per_atom: int,
+    use_spatiotemporal: bool = True,
 ) -> tuple[list[int], list[int], dict[str, int]]:
-    """Build a budget-feasible certificate subset for low-budget Qwen V3."""
+    """Build a category-balanced certificate subset under a hard budget cap."""
     Request = tuple[float, float, int, bool]
     requests: dict[str, list[Request]] = {
         "query": [],
@@ -280,60 +281,61 @@ def _qwen_budget_aware_certificates(
         "spatial": [],
     }
 
-    frame_keep = max(
-        1,
-        int(
-            math.ceil(
-                frame_count
-                * min(1.0, max(0.0, frame_coverage_ratio))
-            )
-        ),
-    )
-    for frame_id in _evenly_spaced_ids(
-        frame_count,
-        frame_keep,
-        quality.device,
-    ).tolist():
-        members = torch.where(frame_ids == int(frame_id))[0]
-        if members.numel() > 0:
-            token = int(members[torch.argmax(quality[members])].item())
-            requests["frame"].append(
-                (5.0, float(quality[token].item()), token, False)
-            )
-
-    for temporal_id in range(temporal_count):
-        members = torch.where(temporal_ids == temporal_id)[0]
-        if members.numel() > 0:
-            token = int(members[torch.argmax(event_score[members])].item())
-            requests["temporal"].append(
-                (4.5, float(event_score[token].item()), token, False)
-            )
-
-    cells_per_interval = max(
-        0,
-        min(
-            spatial_count,
+    if use_spatiotemporal:
+        frame_keep = max(
+            1,
             int(
                 math.ceil(
-                    spatial_count
-                    * min(1.0, max(0.0, cell_coverage_ratio))
+                    frame_count
+                    * min(1.0, max(0.0, frame_coverage_ratio))
                 )
             ),
-        ),
-    )
-    for temporal_id in range(temporal_count):
-        cell_representatives: list[tuple[float, int]] = []
-        for spatial_id in range(spatial_count):
-            members = torch.where(
-                (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
-            )[0]
-            if members.numel() == 0:
-                continue
-            token = int(members[torch.argmax(quality[members])].item())
-            cell_representatives.append((float(quality[token].item()), token))
-        cell_representatives.sort(key=lambda item: (-item[0], item[1]))
-        for score, token in cell_representatives[:cells_per_interval]:
-            requests["spatial"].append((3.0, score, token, False))
+        )
+        for frame_id in _evenly_spaced_ids(
+            frame_count,
+            frame_keep,
+            quality.device,
+        ).tolist():
+            members = torch.where(frame_ids == int(frame_id))[0]
+            if members.numel() > 0:
+                token = int(members[torch.argmax(quality[members])].item())
+                requests["frame"].append(
+                    (5.0, float(quality[token].item()), token, False)
+                )
+
+        for temporal_id in range(temporal_count):
+            members = torch.where(temporal_ids == temporal_id)[0]
+            if members.numel() > 0:
+                token = int(members[torch.argmax(event_score[members])].item())
+                requests["temporal"].append(
+                    (4.5, float(event_score[token].item()), token, False)
+                )
+
+        cells_per_interval = max(
+            0,
+            min(
+                spatial_count,
+                int(
+                    math.ceil(
+                        spatial_count
+                        * min(1.0, max(0.0, cell_coverage_ratio))
+                    )
+                ),
+            ),
+        )
+        for temporal_id in range(temporal_count):
+            cell_representatives: list[tuple[float, int]] = []
+            for spatial_id in range(spatial_count):
+                members = torch.where(
+                    (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
+                )[0]
+                if members.numel() == 0:
+                    continue
+                token = int(members[torch.argmax(quality[members])].item())
+                cell_representatives.append((float(quality[token].item()), token))
+            cell_representatives.sort(key=lambda item: (-item[0], item[1]))
+            for score, token in cell_representatives[:cells_per_interval]:
+                requests["spatial"].append((3.0, score, token, False))
 
     if query_relevance.numel() > 0 and query_confidence >= float(query_threshold):
         per_atom = max(1, int(query_per_atom))
@@ -359,7 +361,7 @@ def _qwen_budget_aware_certificates(
             )
 
     ratio = min(1.0, max(0.0, float(certificate_ratio)))
-    certificate_limit = max(1, min(budget, int(math.floor(budget * ratio))))
+    certificate_limit = min(budget, int(math.floor(budget * ratio)))
     category_weights = {"query": 2, "frame": 2, "temporal": 2, "spatial": 1}
     active = [category for category in category_order if requests[category]]
     total_weight = sum(category_weights[category] for category in active)
@@ -750,9 +752,32 @@ def certvid_v3_compression(
             ),
         ),
     )
-    qwen_certificate_limit = budget
+    certificate_ratio = min(
+        1.0,
+        max(
+            0.0,
+            _cfg_float(
+                flashvid_config,
+                "certv3_certificate_budget_ratio",
+                1.0,
+            ),
+        ),
+    )
+    effective_certificate_ratio = (
+        min(certificate_ratio, qwen_certificate_ratio)
+        if qwen_v3_certificate_policy
+        else certificate_ratio
+    )
+    certificate_limit = min(
+        budget,
+        int(math.floor(budget * effective_certificate_ratio)),
+    )
+    certificate_cap_active = False
+    certificate_stats: dict[str, int] = {}
+    qwen_certificate_limit = (
+        certificate_limit if qwen_v3_certificate_policy else budget
+    )
     qwen_certificate_cap_active = False
-    qwen_certificate_stats: dict[str, int] = {}
     original_certificate_count = budget
     selection_objective = str(
         getattr(flashvid_config, "certv3_selection_objective", "d_optimal")
@@ -920,52 +945,47 @@ def certvid_v3_compression(
             use_spatiotemporal=use_spatiotemporal_certificates,
         )
         original_certificate_count = len(mandatory)
-        if qwen_v3_certificate_policy and use_spatiotemporal_certificates:
-            qwen_certificate_limit = max(
-                1,
-                min(
-                    budget,
-                    int(math.floor(budget * qwen_certificate_ratio)),
-                ),
-            )
-            if original_certificate_count > qwen_certificate_limit:
-                mandatory, query_seeds, qwen_certificate_stats = (
-                    _qwen_budget_aware_certificates(
-                        budget=budget,
-                        certificate_ratio=qwen_certificate_ratio,
-                        quality=quality,
-                        event_score=event_score,
-                        frame_ids=frame_ids,
-                        temporal_ids=temporal_ids,
-                        spatial_ids=spatial_ids,
-                        query_relevance=query_relevance,
-                        atom_weights=atom_weights,
-                        query_confidence=query_confidence,
-                        frame_count=frame_count,
-                        temporal_count=temporal_count,
-                        spatial_count=spatial_count,
-                        frame_coverage_ratio=_cfg_float(
-                            flashvid_config,
-                            "certv3_frame_coverage_ratio",
-                            1.0,
-                        ),
-                        cell_coverage_ratio=_cfg_float(
-                            flashvid_config,
-                            "certv3_cell_coverage_ratio",
-                            0.50,
-                        ),
-                        query_threshold=_cfg_float(
-                            flashvid_config,
-                            "certv3_query_threshold",
-                            0.10,
-                        ),
-                        query_per_atom=_cfg_int(
-                            flashvid_config,
-                            "certv3_query_per_atom",
-                            1,
-                        ),
-                    )
+        if original_certificate_count > certificate_limit:
+            mandatory, query_seeds, certificate_stats = (
+                _budget_aware_certificates(
+                    budget=budget,
+                    certificate_ratio=effective_certificate_ratio,
+                    quality=quality,
+                    event_score=event_score,
+                    frame_ids=frame_ids,
+                    temporal_ids=temporal_ids,
+                    spatial_ids=spatial_ids,
+                    query_relevance=query_relevance,
+                    atom_weights=atom_weights,
+                    query_confidence=query_confidence,
+                    frame_count=frame_count,
+                    temporal_count=temporal_count,
+                    spatial_count=spatial_count,
+                    frame_coverage_ratio=_cfg_float(
+                        flashvid_config,
+                        "certv3_frame_coverage_ratio",
+                        1.0,
+                    ),
+                    cell_coverage_ratio=_cfg_float(
+                        flashvid_config,
+                        "certv3_cell_coverage_ratio",
+                        0.50,
+                    ),
+                    query_threshold=_cfg_float(
+                        flashvid_config,
+                        "certv3_query_threshold",
+                        0.10,
+                    ),
+                    query_per_atom=_cfg_int(
+                        flashvid_config,
+                        "certv3_query_per_atom",
+                        1,
+                    ),
+                    use_spatiotemporal=use_spatiotemporal_certificates,
                 )
+            )
+            certificate_cap_active = True
+            if qwen_v3_certificate_policy:
                 qwen_certificate_cap_active = True
         candidate_indices = _candidate_pool(
             budget=budget,
@@ -1103,6 +1123,21 @@ def certvid_v3_compression(
     )
     setattr(
         flashvid_config,
+        "last_certv3_certificate_budget_ratio",
+        float(effective_certificate_ratio),
+    )
+    setattr(
+        flashvid_config,
+        "last_certv3_certificate_limit",
+        float(certificate_limit),
+    )
+    setattr(
+        flashvid_config,
+        "last_certv3_certificate_cap_active",
+        bool(certificate_cap_active),
+    )
+    setattr(
+        flashvid_config,
         "last_certv3_qwen_certificate_cap_active",
         bool(qwen_certificate_cap_active),
     )
@@ -1159,6 +1194,10 @@ def certvid_v3_compression(
         ),
         "free_dopt_slots": int(free_dopt_slots),
         "dopt_slot_ratio": float(dopt_slot_ratio),
+        "certificate_budget_ratio": float(effective_certificate_ratio),
+        "configured_certificate_budget_ratio": float(certificate_ratio),
+        "certificate_limit": int(certificate_limit),
+        "certificate_cap_active": bool(certificate_cap_active),
         "qwen_certificate_policy": bool(qwen_v3_certificate_policy),
         "qwen_certificate_cap_active": bool(qwen_certificate_cap_active),
         "qwen_certificate_budget_ratio": float(qwen_certificate_ratio),
@@ -1176,10 +1215,17 @@ def certvid_v3_compression(
     }
     diagnostics.update(
         {
-            f"qwen_certificate_{key}": int(value)
-            for key, value in qwen_certificate_stats.items()
+            f"certificate_{key}": int(value)
+            for key, value in certificate_stats.items()
         }
     )
+    if qwen_v3_certificate_policy:
+        diagnostics.update(
+            {
+                f"qwen_certificate_{key}": int(value)
+                for key, value in certificate_stats.items()
+            }
+        )
     setattr(flashvid_config, "last_certv3_diagnostics", diagnostics)
     _write_certv3_diagnostics(flashvid_config, diagnostics)
     return output, plan.anchor_indices
