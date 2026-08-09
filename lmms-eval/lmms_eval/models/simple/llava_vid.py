@@ -165,6 +165,7 @@ class LlavaVid(lmms):
         certv3_swap_margin: float = 1e-4,
         certv3_fusion_alpha: float = 0.12,
         certv3_assignment_temperature: float = 0.07,
+        certv3_certificate_budget_ratio: float = 1.0,
         # FaithVID functional-faithfulness parameters.
         faith_budget_uses_expansion: bool = True,
         faith_mass_strength: float = 1.0,
@@ -347,6 +348,7 @@ class LlavaVid(lmms):
                 certv3_swap_margin=certv3_swap_margin,
                 certv3_fusion_alpha=certv3_fusion_alpha,
                 certv3_assignment_temperature=certv3_assignment_temperature,
+                certv3_certificate_budget_ratio=certv3_certificate_budget_ratio,
                 faith_budget_uses_expansion=faith_budget_uses_expansion,
                 faith_mass_strength=faith_mass_strength,
                 faith_variance_strength=faith_variance_strength,
