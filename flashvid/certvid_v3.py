@@ -1104,6 +1104,57 @@ def certvid_v3_compression(
                     "ridge": float(ridge),
                 }
             )
+            if bool(
+                getattr(
+                    flashvid_config,
+                    "_capture_visualization_trajectory",
+                    False,
+                )
+            ):
+                match_previous = (
+                    torch.stack([entry[0] for entry in matches], dim=0)
+                    if matches
+                    else torch.empty(
+                        (0, tokens_per_frame),
+                        dtype=torch.long,
+                        device=video_features.device,
+                    )
+                )
+                match_mutual = (
+                    torch.stack([entry[1] for entry in matches], dim=0)
+                    if matches
+                    else torch.empty(
+                        (0, tokens_per_frame),
+                        dtype=torch.bool,
+                        device=video_features.device,
+                    )
+                )
+                match_similarity = (
+                    torch.stack([entry[2] for entry in matches], dim=0)
+                    if matches
+                    else torch.empty(
+                        (0, tokens_per_frame),
+                        dtype=torch.float32,
+                        device=video_features.device,
+                    )
+                )
+                analysis_sink.update(
+                    {
+                        "component_sizes": component_sizes,
+                        "component_support": component_value,
+                        "frame_event": frame_event,
+                        "novelty": novelty,
+                        "curvature": curvature,
+                        "spatial_coords": coords,
+                        "match_previous": match_previous,
+                        "match_mutual": match_mutual,
+                        "match_similarity": match_similarity,
+                        "frame_count": int(frame_count),
+                        "tokens_per_frame": int(tokens_per_frame),
+                        "grid_height": int(height),
+                        "grid_width": int(width),
+                    }
+                )
 
     setattr(flashvid_config, "_certvid_plan", plan)
     flashvid_config.vision_token_length = int(output.shape[0])

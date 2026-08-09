@@ -423,7 +423,27 @@ def flashvid_compression(
                     else value
                 )
                 for key, value in analysis_sink.items()
-                if key in {"design", "ridge"}
+                if key
+                in {
+                    "design",
+                    "ridge",
+                    "component_ids",
+                    "component_sizes",
+                    "component_support",
+                    "frame_ids",
+                    "temporal_ids",
+                    "frame_event",
+                    "novelty",
+                    "curvature",
+                    "spatial_coords",
+                    "match_previous",
+                    "match_mutual",
+                    "match_similarity",
+                    "frame_count",
+                    "tokens_per_frame",
+                    "grid_height",
+                    "grid_width",
+                }
             }
             setattr(
                 flashvid_config,
