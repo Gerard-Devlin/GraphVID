@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Create a paper-ready spatial token-demand comparison for VOLT-Vid.
-
-The script compares the complete CertVID V3 selector (hard certificates off)
-against the exact same selector with trajectory signals disabled. Both variants
-use the same model, video, question, token budget, and D-optimal objective.
-"""
+"""Visualize CertVID V3 question relevance on its most relevant video frame."""
 
 from __future__ import annotations
 
@@ -34,7 +29,7 @@ from visualize_certvid_two_examples import (
 def parse_args() -> argparse.Namespace:
     hf_home = Path(os.environ.get("HF_HOME", "/home/xuyouwen/hf_home_local"))
     parser = argparse.ArgumentParser(
-        description="Compare spatial token demand with and without trajectory structure."
+        description="Visualize CertVID V3 query relevance without hard certificates."
     )
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--dataset-root", default=str(hf_home / "videomme" / "data"))
@@ -81,7 +76,7 @@ def _choose_videos(
     return eligible[:count]
 
 
-def _run_variant(
+def _run_certvid(
     *,
     model,
     tokenizer,
@@ -92,12 +87,11 @@ def _run_variant(
     expansion: float,
     llm_retention_ratio: float,
     max_new_tokens: int,
-    use_trajectory: bool,
 ) -> tuple[str, np.ndarray, dict[str, Any]]:
     config = model.flashvid_config
     config.certv3_certificate_budget_ratio = 0.0
     config.certv3_selection_objective = "d_optimal"
-    config.certv3_use_trajectory = bool(use_trajectory)
+    config.certv3_use_trajectory = True
     setattr(config, "_capture_visualization_design", True)
     setattr(config, "_capture_visualization_trajectory", True)
     prediction, _, plan = generate_once(
@@ -131,111 +125,79 @@ def _tensor(analysis: dict[str, Any], name: str, dtype) -> np.ndarray:
     return value.numpy().astype(dtype, copy=False)
 
 
-def _focus_frame(
-    full_demand: np.ndarray,
-    no_trajectory_demand: np.ndarray,
-    state_change: np.ndarray,
-    frame_event: np.ndarray,
-) -> int:
-    frame_count = int(full_demand.shape[0])
-    distribution_shift = np.abs(full_demand - no_trajectory_demand).sum(axis=1)
-    state_score = state_change.max(axis=1)
-
-    def normalize(values: np.ndarray) -> np.ndarray:
-        low = float(values.min())
-        high = float(values.max())
-        return (values - low) / max(1e-12, high - low)
-
-    score = (
-        0.60 * normalize(distribution_shift)
-        + 0.25 * normalize(state_score)
-        + 0.15 * normalize(frame_event)
-    )
-    return int(np.argmax(score[:frame_count]))
+def _focus_frame(query_score: np.ndarray) -> tuple[int, np.ndarray]:
+    tokens_per_frame = int(query_score.shape[1])
+    topk = max(1, int(round(0.08 * tokens_per_frame)))
+    partitioned = np.partition(query_score, tokens_per_frame - topk, axis=1)
+    frame_relevance = partitioned[:, -topk:].mean(axis=1)
+    return int(np.argmax(frame_relevance)), frame_relevance
 
 
-def _plot_demand_panel(
-    ax,
-    frame: Any,
-    demand_grid: np.ndarray,
-    low: float,
-    high: float,
-):
-    image = np.asarray(frame)
-    normalized = np.clip((demand_grid - low) / max(1e-12, high - low), 0.0, 1.0)
-    extent = (0, image.shape[1], image.shape[0], 0)
-    ax.imshow(image)
-    heatmap = ax.imshow(
-        normalized,
-        extent=extent,
-        interpolation="nearest",
-        vmin=0.0,
-        vmax=1.0,
-        cmap="turbo",
-        alpha=0.54,
-    )
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    return heatmap
-
-
-def _plot_spatial_comparison(
+def _plot_relevance(
     *,
     output_path: Path,
     frame: Any,
-    frame_index: int,
-    full_demand: np.ndarray,
-    no_trajectory_demand: np.ndarray,
-    frame_event: np.ndarray,
+    relevance: np.ndarray,
     grid_height: int,
     grid_width: int,
     question: str,
-    video_id: str,
+    frame_index: int,
 ) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    full_grid = full_demand.reshape(grid_height, grid_width)
-    no_grid = no_trajectory_demand.reshape(grid_height, grid_width)
-    compared = np.concatenate([full_grid.reshape(-1), no_grid.reshape(-1)])
-    low = float(np.quantile(compared, 0.02))
-    high = float(np.quantile(compared, 0.98))
+    image = np.asarray(frame)
+    relevance_grid = relevance.reshape(grid_height, grid_width)
+    low = float(np.quantile(relevance_grid, 0.05))
+    high = float(np.quantile(relevance_grid, 0.95))
     if high - low <= 1e-12:
-        low = float(compared.min())
-        high = float(compared.max()) + 1e-12
-
-    fig, axes = plt.subplots(1, 2, figsize=(10.4, 6.1))
-    fig.subplots_adjust(left=0.025, right=0.975, top=0.80, bottom=0.22, wspace=0.045)
-    panels = (
-        (no_grid, "(a) Without trajectory structure"),
-        (full_grid, "(b) Ours: trajectory-aware"),
+        low = float(relevance_grid.min())
+        high = float(relevance_grid.max()) + 1e-12
+    normalized = np.clip(
+        (relevance_grid - low) / max(1e-12, high - low), 0.0, 1.0
     )
-    for ax, (demand, label) in zip(axes, panels):
-        _plot_demand_panel(ax, frame, demand, low, high)
-        ax.set_title(label, fontsize=12, fontweight="bold", color="#17212B", pad=9)
 
-    fig.suptitle(
-        f"Blue: low token demand     Red: high token demand\n"
-        f"Frame {frame_index + 1} | Event {frame_event[frame_index]:.2f} | {video_id}",
-        fontsize=11,
+    fig = plt.figure(figsize=(6.0, 6.7), facecolor="white")
+    ax = fig.add_axes((0.04, 0.19, 0.92, 0.70))
+    extent = (0, image.shape[1], image.shape[0], 0)
+    ax.imshow(image)
+    ax.imshow(
+        normalized,
+        extent=extent,
+        interpolation="nearest",
+        vmin=0.0,
+        vmax=1.0,
+        cmap="turbo",
+        alpha=0.50,
+    )
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    fig.text(
+        0.5,
+        0.935,
+        f"CertVID V3 relevance | Frame {frame_index + 1} | "
+        "Blue: low, Red: high",
+        ha="center",
+        va="center",
+        fontsize=10.5,
         color="#17212B",
-        y=0.965,
     )
     fig.text(
         0.5,
-        0.065,
-        textwrap.fill(question, width=88),
+        0.085,
+        textwrap.fill(question, width=60),
         ha="center",
         va="center",
-        fontsize=14,
+        fontsize=15,
         fontfamily="serif",
         color="#111111",
     )
-    fig.savefig(output_path, dpi=240, bbox_inches="tight", facecolor="white")
+    fig.savefig(output_path, dpi=240, facecolor="white")
     plt.close(fig)
 
 
@@ -267,7 +229,7 @@ def main() -> None:
         pixels = pixels_cpu.to(device=device, dtype=torch.float16)
         input_ids, attention_mask = prepare_prompt(tokenizer, record.prompt, device)
 
-        no_prediction_raw, no_selected, no_analysis = _run_variant(
+        prediction_raw, selected, analysis = _run_certvid(
             model=model,
             tokenizer=tokenizer,
             pixel_values=pixels,
@@ -277,19 +239,6 @@ def main() -> None:
             expansion=args.expansion,
             llm_retention_ratio=args.llm_retention_ratio,
             max_new_tokens=args.max_new_tokens,
-            use_trajectory=False,
-        )
-        full_prediction_raw, full_selected, analysis = _run_variant(
-            model=model,
-            tokenizer=tokenizer,
-            pixel_values=pixels,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            retention_ratio=args.retention_ratio,
-            expansion=args.expansion,
-            llm_retention_ratio=args.llm_retention_ratio,
-            max_new_tokens=args.max_new_tokens,
-            use_trajectory=True,
         )
 
         frame_count = int(analysis["frame_count"])
@@ -300,46 +249,24 @@ def main() -> None:
             raise RuntimeError("display-frame count does not match CertVID geometry")
         if grid_height * grid_width != tokens_per_frame:
             raise RuntimeError("patch grid does not match tokens_per_frame")
-        if full_selected.size != no_selected.size:
-            raise RuntimeError("full and no-trajectory token budgets differ")
-        no_frame_count = int(no_analysis["frame_count"])
-        no_tokens_per_frame = int(no_analysis["tokens_per_frame"])
-        if (no_frame_count, no_tokens_per_frame) != (frame_count, tokens_per_frame):
-            raise RuntimeError("full and no-trajectory visual geometries differ")
-        novelty = _tensor(analysis, "novelty", np.float32)
-        curvature = _tensor(analysis, "curvature", np.float32)
-        frame_event = _tensor(analysis, "frame_event", np.float32)
-        full_demand = _tensor(analysis, "demand_weight", np.float32)
-        no_demand = _tensor(no_analysis, "demand_weight", np.float32)
+        query_score = _tensor(analysis, "query_score", np.float32)
         expected_tokens = frame_count * tokens_per_frame
-        if full_demand.size != expected_tokens or no_demand.size != expected_tokens:
-            raise RuntimeError("captured demand weights do not match the visual grid")
-        full_demand_matrix = full_demand.reshape(frame_count, tokens_per_frame)
-        no_demand_matrix = no_demand.reshape(frame_count, tokens_per_frame)
-        state_change = np.maximum(novelty, curvature).reshape(
-            frame_count, tokens_per_frame
-        )
-        focus_frame = _focus_frame(
-            full_demand_matrix,
-            no_demand_matrix,
-            state_change,
-            frame_event,
-        )
+        if query_score.size != expected_tokens:
+            raise RuntimeError("captured query scores do not match the visual grid")
+        query_matrix = query_score.reshape(frame_count, tokens_per_frame)
+        focus_frame, frame_relevance = _focus_frame(query_matrix)
+        query_confidence = float(analysis.get("query_confidence", 0.0))
         labels = [label for label, _ in record.options]
-        full_prediction = extract_answer_label(full_prediction_raw, labels)
-        no_prediction = extract_answer_label(no_prediction_raw, labels)
-        image_name = f"trajectory_relevance_{number:02d}_{video_path.stem}.png"
-        _plot_spatial_comparison(
+        prediction = extract_answer_label(prediction_raw, labels)
+        image_name = f"certvid_relevance_{number:02d}_{video_path.stem}.png"
+        _plot_relevance(
             output_path=output_dir / image_name,
             frame=display_frames[focus_frame],
-            frame_index=focus_frame,
-            full_demand=full_demand_matrix[focus_frame],
-            no_trajectory_demand=no_demand_matrix[focus_frame],
-            frame_event=frame_event,
+            relevance=query_matrix[focus_frame],
             grid_height=grid_height,
             grid_width=grid_width,
             question=record.question,
-            video_id=video_path.stem,
+            frame_index=focus_frame,
         )
         records.append(
             {
@@ -348,20 +275,20 @@ def main() -> None:
                 "question": record.question,
                 "options": [{"label": a, "text": b} for a, b in record.options],
                 "target": record.answer,
-                "full_prediction": full_prediction,
-                "without_trajectory_prediction": no_prediction,
-                "full_correct": full_prediction == record.answer,
-                "without_trajectory_correct": no_prediction == record.answer,
+                "prediction": prediction,
+                "correct": prediction == record.answer,
                 "raw_tokens": frame_count * tokens_per_frame,
-                "selected_tokens": int(full_selected.size),
+                "selected_tokens": int(selected.size),
                 "certificate_budget_ratio": 0.0,
+                "query_confidence": query_confidence,
+                "focus_frame_relevance": float(frame_relevance[focus_frame]),
                 "focus_sampled_frame": focus_frame,
                 "focus_source_frame": int(source_indices[focus_frame]),
                 "video_fps": fps,
                 "figure": image_name,
             }
         )
-        (output_dir / "trajectory_relevance_metadata.json").write_text(
+        (output_dir / "certvid_relevance_metadata.json").write_text(
             json.dumps({"examples": records}, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
