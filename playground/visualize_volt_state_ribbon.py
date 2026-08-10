@@ -138,6 +138,8 @@ def _plot_relevance(
     output_path: Path,
     frame: Any,
     relevance: np.ndarray,
+    relevance_low: float,
+    relevance_high: float,
     grid_height: int,
     grid_width: int,
     question: str,
@@ -150,14 +152,14 @@ def _plot_relevance(
 
     image = np.asarray(frame)
     relevance_grid = relevance.reshape(grid_height, grid_width)
-    low = float(np.quantile(relevance_grid, 0.05))
-    high = float(np.quantile(relevance_grid, 0.95))
-    if high - low <= 1e-12:
-        low = float(relevance_grid.min())
-        high = float(relevance_grid.max()) + 1e-12
     normalized = np.clip(
-        (relevance_grid - low) / max(1e-12, high - low), 0.0, 1.0
+        (relevance_grid - relevance_low)
+        / max(1e-12, relevance_high - relevance_low),
+        0.0,
+        1.0,
     )
+    # Keep ordinary patches cool while preserving the ordering of rare peaks.
+    normalized = normalized**1.6
 
     fig = plt.figure(figsize=(6.0, 6.7), facecolor="white")
     ax = fig.add_axes((0.04, 0.19, 0.92, 0.70))
@@ -169,7 +171,7 @@ def _plot_relevance(
         interpolation="nearest",
         vmin=0.0,
         vmax=1.0,
-        cmap="turbo",
+        cmap="coolwarm",
         alpha=0.50,
     )
     ax.set_xticks([])
@@ -255,6 +257,11 @@ def main() -> None:
             raise RuntimeError("captured query scores do not match the visual grid")
         query_matrix = query_score.reshape(frame_count, tokens_per_frame)
         focus_frame, frame_relevance = _focus_frame(query_matrix)
+        relevance_low = float(np.quantile(query_matrix, 0.85))
+        relevance_high = float(np.quantile(query_matrix, 0.995))
+        if relevance_high - relevance_low <= 1e-12:
+            relevance_low = float(query_matrix.min())
+            relevance_high = float(query_matrix.max()) + 1e-12
         query_confidence = float(analysis.get("query_confidence", 0.0))
         labels = [label for label, _ in record.options]
         prediction = extract_answer_label(prediction_raw, labels)
@@ -263,6 +270,8 @@ def main() -> None:
             output_path=output_dir / image_name,
             frame=display_frames[focus_frame],
             relevance=query_matrix[focus_frame],
+            relevance_low=relevance_low,
+            relevance_high=relevance_high,
             grid_height=grid_height,
             grid_width=grid_width,
             question=record.question,
@@ -282,6 +291,8 @@ def main() -> None:
                 "certificate_budget_ratio": 0.0,
                 "query_confidence": query_confidence,
                 "focus_frame_relevance": float(frame_relevance[focus_frame]),
+                "visualization_relevance_low": relevance_low,
+                "visualization_relevance_high": relevance_high,
                 "focus_sampled_frame": focus_frame,
                 "focus_source_frame": int(source_indices[focus_frame]),
                 "video_fps": fps,
