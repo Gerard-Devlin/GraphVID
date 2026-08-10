@@ -67,8 +67,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-examples", type=int, default=1)
     parser.add_argument("--num-frames", type=int, default=32)
     parser.add_argument("--filmstrip-frames", type=int, default=8)
-    parser.add_argument("--top-components", type=int, default=10)
+    parser.add_argument("--top-components", type=int, default=5)
     parser.add_argument("--min-component-frames", type=int, default=2)
+    parser.add_argument("--heatmap-alpha", type=float, default=0.58)
     parser.add_argument("--seed", type=int, default=20260810)
     parser.add_argument("--retention-ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.30)
@@ -213,10 +214,12 @@ def _plot_trajectory_graph(
     frames: list[Any],
     window: list[int],
     components: list[ComponentSummary],
-    novelty: np.ndarray,
-    curvature: np.ndarray,
     frame_event: np.ndarray,
     selected_mask: np.ndarray,
+    component_ids: np.ndarray,
+    match_previous: np.ndarray,
+    match_mutual: np.ndarray,
+    match_similarity: np.ndarray,
     grid_height: int,
     grid_width: int,
     tokens_per_frame: int,
@@ -230,10 +233,9 @@ def _plot_trajectory_graph(
     from matplotlib.lines import Line2D
 
     teal = "#00AEB3"
-    orange = "#F28E2B"
     red = "#E64B35"
     ink = "#17212B"
-    colors = plt.get_cmap("tab20")(np.linspace(0.0, 1.0, max(2, len(components))))
+    colors = plt.get_cmap("Dark2")(np.linspace(0.0, 1.0, max(3, len(components))))
     gap = 0.075
     panel_width = 1.0
     total_width = len(window) * panel_width + (len(window) - 1) * gap
@@ -268,10 +270,52 @@ def _plot_trajectory_graph(
             color=ink,
         )
 
+    displayed_components = {
+        component.component_id: rank for rank, component in enumerate(components)
+    }
+    visible_nodes: dict[int, set[int]] = {
+        component.component_id: set() for component in components
+    }
+    for frame_idx in window[1:]:
+        match_row = frame_idx - 1
+        if match_row >= match_previous.shape[0]:
+            continue
+        for local in range(tokens_per_frame):
+            if not bool(match_mutual[match_row, local]):
+                continue
+            current_global = frame_idx * tokens_per_frame + local
+            component_id = int(component_ids[current_global])
+            rank = displayed_components.get(component_id)
+            if rank is None:
+                continue
+            previous_local = int(match_previous[match_row, local])
+            previous_global = (frame_idx - 1) * tokens_per_frame + previous_local
+            # Equal component ids mean this exact mutual edge survived CertVID's
+            # similarity and event-boundary gates when components were built.
+            if int(component_ids[previous_global]) != component_id:
+                continue
+            previous_row, previous_col = divmod(previous_local, grid_width)
+            current_row, current_col = divmod(local, grid_width)
+            x0 = frame_x[frame_idx - 1] + (previous_col + 0.5) / grid_width
+            y0 = 1.0 - (previous_row + 0.5) / grid_height
+            x1 = frame_x[frame_idx] + (current_col + 0.5) / grid_width
+            y1 = 1.0 - (current_row + 0.5) / grid_height
+            similarity = float(match_similarity[match_row, local])
+            support = components[rank].support
+            ax.plot(
+                [x0, x1],
+                [y0, y1],
+                color=colors[rank],
+                linewidth=1.4 + 2.0 * support,
+                alpha=0.42 + 0.48 * max(0.0, min(1.0, similarity)),
+                zorder=5,
+            )
+            visible_nodes[component_id].update((previous_global, current_global))
+
     for rank, component in enumerate(components):
         color = colors[rank]
         points: list[tuple[int, int, float, float]] = []
-        for global_index in component.members:
+        for global_index in sorted(visible_nodes[component.component_id]):
             frame_idx, local = divmod(int(global_index), tokens_per_frame)
             if frame_idx not in frame_x:
                 continue
@@ -280,63 +324,27 @@ def _plot_trajectory_graph(
             y = 1.0 - (row + 0.5) / grid_height
             points.append((frame_idx, int(global_index), x, y))
         points.sort()
-        for left, right in zip(points, points[1:]):
-            if right[0] - left[0] == 1:
-                ax.plot(
-                    [left[2], right[2]],
-                    [left[3], right[3]],
-                    color=color,
-                    linewidth=1.2 + 3.2 * component.support,
-                    alpha=0.72,
-                    zorder=4,
-                )
         for _, global_index, x, y in points:
-            nov = float(novelty[global_index])
-            curv = float(curvature[global_index])
-            if nov > 0.05:
-                ax.scatter(
-                    [x], [y], s=35 + 155 * nov, color=red, alpha=0.10 + 0.28 * nov,
-                    linewidths=0, zorder=5,
-                )
-            if curv > 0.05:
-                ax.scatter(
-                    [x], [y], s=28 + 110 * curv, facecolors="none", edgecolors=orange,
-                    linewidths=0.6 + 1.7 * curv, alpha=0.85, zorder=7,
-                )
             if selected_mask[global_index]:
                 ax.scatter(
-                    [x], [y], s=47, marker="*", color=teal, edgecolors="white",
-                    linewidths=0.65, zorder=9,
+                    [x], [y], s=54, marker="s", color=teal, edgecolors="white",
+                    linewidths=0.9, zorder=9,
                 )
             else:
                 ax.scatter(
-                    [x], [y], s=17, facecolors="white", edgecolors=[color],
-                    linewidths=1.0, alpha=0.92, zorder=8,
+                    [x], [y], s=19, facecolors="white", edgecolors=[color],
+                    linewidths=1.15, alpha=0.95, zorder=8,
                 )
-        if points:
-            _, _, label_x, label_y = points[-1]
-            ax.text(
-                label_x + 0.012,
-                label_y + 0.012,
-                f"T{rank + 1:02d}",
-                color=color,
-                fontsize=7,
-                fontweight="bold",
-                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.72, "pad": 0.6},
-                zorder=10,
-            )
 
     legend = [
-        Line2D([0], [0], marker="o", color="none", markerfacecolor=red, alpha=0.45,
-               markersize=8, label="Novelty"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="none",
-               markeredgecolor=orange, markersize=8, label="Curvature"),
-        Line2D([0], [0], marker="*", color="none", markerfacecolor=teal,
-               markeredgecolor="white", markersize=11, label="Selected anchor"),
-        Line2D([0], [0], color=colors[0], linewidth=3, label="Trajectory support"),
+        Line2D([0], [0], color=colors[0], linewidth=3, label="Mutual token match"),
+        Line2D([0], [0], marker="s", color="none", markerfacecolor=teal,
+               markeredgecolor="white", markersize=8, label="Selected anchor"),
+        Line2D([0], [0], color=red, linewidth=2.5, alpha=0.7,
+               label="Frame event strength"),
     ]
     ax.legend(handles=legend, loc="upper center", bbox_to_anchor=(0.5, 1.10),
-              ncol=4, frameon=False, fontsize=9)
+              ncol=3, frameon=False, fontsize=9)
     ax.set_xlim(-0.02, total_width + 0.02)
     ax.set_ylim(-0.16, 1.02)
     ax.axis("off")
@@ -351,33 +359,58 @@ def _plot_trajectory_graph(
     plt.close(fig)
 
 
-def _signal_matrix(
-    components: list[ComponentSummary],
-    values: np.ndarray,
+def _focus_frame(
+    frame_event: np.ndarray,
+    novelty: np.ndarray,
+    curvature: np.ndarray,
+    component_support: np.ndarray,
     frame_count: int,
     tokens_per_frame: int,
+) -> int:
+    def top_mean(values: np.ndarray) -> np.ndarray:
+        matrix = values.reshape(frame_count, tokens_per_frame)
+        count = max(1, int(np.ceil(tokens_per_frame * 0.10)))
+        partitioned = np.partition(matrix, tokens_per_frame - count, axis=1)
+        return partitioned[:, -count:].mean(axis=1)
+
+    score = (
+        0.36 * frame_event
+        + 0.28 * top_mean(novelty)
+        + 0.22 * top_mean(curvature)
+        + 0.14 * top_mean(component_support)
+    )
+    return int(np.argmax(score))
+
+
+def _signal_grid(
+    values: np.ndarray,
+    frame_idx: int,
+    tokens_per_frame: int,
+    grid_height: int,
+    grid_width: int,
 ) -> np.ndarray:
-    matrix = np.full((len(components), frame_count), np.nan, dtype=np.float32)
-    for row, component in enumerate(components):
-        for global_index in component.members:
-            frame_idx = int(global_index) // tokens_per_frame
-            value = float(values[int(global_index)])
-            if np.isnan(matrix[row, frame_idx]) or value > matrix[row, frame_idx]:
-                matrix[row, frame_idx] = value
-    return matrix
+    start = frame_idx * tokens_per_frame
+    return np.clip(
+        values[start : start + tokens_per_frame].reshape(grid_height, grid_width),
+        0.0,
+        1.0,
+    )
 
 
 def _plot_signal_maps(
     output_path: Path,
-    components: list[ComponentSummary],
+    frame: Any,
     novelty: np.ndarray,
     curvature: np.ndarray,
     component_support: np.ndarray,
+    demand_weight: np.ndarray,
     frame_event: np.ndarray,
     selected_mask: np.ndarray,
-    frame_count: int,
+    focus_frame: int,
     tokens_per_frame: int,
-    window: list[int],
+    grid_height: int,
+    grid_width: int,
+    heatmap_alpha: float,
     question: str,
     video_id: str,
 ) -> None:
@@ -386,58 +419,69 @@ def _plot_signal_maps(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    matrices = [
-        ("(a) Novelty", _signal_matrix(components, novelty, frame_count, tokens_per_frame)),
-        ("(b) Curvature", _signal_matrix(components, curvature, frame_count, tokens_per_frame)),
-        (
-            "(c) Component support",
-            _signal_matrix(components, component_support, frame_count, tokens_per_frame),
-        ),
+    novelty_grid = _signal_grid(
+        novelty, focus_frame, tokens_per_frame, grid_height, grid_width
+    )
+    curvature_grid = _signal_grid(
+        curvature, focus_frame, tokens_per_frame, grid_height, grid_width
+    )
+    support_grid = _signal_grid(
+        component_support, focus_frame, tokens_per_frame, grid_height, grid_width
+    )
+    event_value = float(frame_event[focus_frame])
+    demand_grid = _signal_grid(
+        demand_weight, focus_frame, tokens_per_frame, grid_height, grid_width
+    )
+    maps = [
+        ("(a) Novelty", novelty_grid),
+        ("(b) Curvature", curvature_grid),
+        ("(c) Trajectory support", support_grid),
+        ("(d) Final token demand", demand_grid),
     ]
-    selected_points: list[tuple[int, int]] = []
-    for row, component in enumerate(components):
-        for global_index in component.members:
-            if selected_mask[int(global_index)]:
-                selected_points.append((int(global_index) // tokens_per_frame, row))
 
-    cmap = plt.get_cmap("viridis").copy()
-    cmap.set_bad("#ECEFF1")
-    fig, axes = plt.subplots(2, 2, figsize=(14.2, 7.6), constrained_layout=True)
+    fig, axes = plt.subplots(1, 4, figsize=(15.6, 4.1), constrained_layout=True)
     ink = "#17212B"
     teal = "#00AEB3"
-    for ax, (title, matrix) in zip(axes.flat[:3], matrices):
-        image = ax.imshow(matrix, aspect="auto", interpolation="nearest", vmin=0.0, vmax=1.0, cmap=cmap)
-        if selected_points:
-            xs, ys = zip(*selected_points)
-            ax.scatter(xs, ys, s=13, facecolors="none", edgecolors="white", linewidths=0.75)
+    frame_array = np.asarray(frame)
+    extent = (0, frame_array.shape[1], frame_array.shape[0], 0)
+    alpha = min(0.90, max(0.0, float(heatmap_alpha)))
+    for panel, (ax, (title, matrix)) in enumerate(zip(axes, maps)):
+        ax.imshow(frame_array)
+        image = ax.imshow(
+            matrix,
+            extent=extent,
+            interpolation="nearest",
+            vmin=0.0,
+            vmax=1.0,
+            cmap="turbo",
+            alpha=alpha,
+        )
         ax.set_title(title, fontweight="bold", color=ink)
-        ax.set_xlabel("Sampled frame")
-        ax.set_ylabel("Trajectory component")
-        ax.set_yticks(range(len(components)))
-        ax.set_yticklabels([f"T{row + 1:02d}" for row in range(len(components))])
-        fig.colorbar(image, ax=ax, fraction=0.026, pad=0.02)
-
-    ax = axes.flat[3]
-    x = np.arange(frame_count)
-    selected_counts = selected_mask.reshape(frame_count, tokens_per_frame).sum(axis=1)
-    selected_scaled = selected_counts / max(1.0, float(selected_counts.max()))
-    ax.bar(x, selected_scaled, color="#B9C2CA", alpha=0.55, label="Selected-token count (normalized)")
-    ax.plot(x, frame_event, color="#E64B35", marker="o", markersize=3, linewidth=1.7,
-            label="Event strength")
-    ax.axvspan(window[0] - 0.5, window[-1] + 0.5, color=teal, alpha=0.10,
-               label="Displayed trajectory window")
-    ax.set_ylim(0.0, 1.05)
-    ax.set_xlim(-0.5, frame_count - 0.5)
-    ax.set_xlabel("Sampled frame")
-    ax.set_ylabel("Normalized signal")
-    ax.set_title("(d) Frame event strength", fontweight="bold", color=ink)
-    ax.grid(axis="y", alpha=0.18)
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
-    for current in axes.flat:
-        current.spines["top"].set_visible(False)
-        current.spines["right"].set_visible(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        if panel == 3:
+            frame_selected = selected_mask.reshape(-1, tokens_per_frame)[focus_frame]
+            for local in np.flatnonzero(frame_selected):
+                row, col = divmod(int(local), grid_width)
+                width = frame_array.shape[1] / grid_width
+                height = frame_array.shape[0] / grid_height
+                ax.add_patch(
+                    plt.Rectangle(
+                        (col * width, row * height),
+                        width,
+                        height,
+                        fill=False,
+                        edgecolor=teal,
+                        linewidth=1.0,
+                    )
+                )
+    colorbar = fig.colorbar(image, ax=axes, fraction=0.018, pad=0.012)
+    colorbar.set_label("Normalized signal", color=ink)
     fig.suptitle(
-        f"VOLT-Vid dynamic evidence signals | {video_id}\n{_short_text(question, 150)}",
+        f"Spatial trajectory evidence | {video_id} | sampled frame {focus_frame + 1} "
+        f"| event strength {event_value:.2f}\n{_short_text(question, 150)}",
         fontsize=12,
         fontweight="bold",
         color=ink,
@@ -517,9 +561,13 @@ def main() -> None:
 
         component_ids = _tensor_numpy(analysis, "component_ids", np.int64)
         component_support = _tensor_numpy(analysis, "component_support", np.float32)
+        demand_weight = _tensor_numpy(analysis, "demand_weight", np.float32)
         novelty = _tensor_numpy(analysis, "novelty", np.float32)
         curvature = _tensor_numpy(analysis, "curvature", np.float32)
         frame_event = _tensor_numpy(analysis, "frame_event", np.float32)
+        match_previous = _tensor_numpy(analysis, "match_previous", np.int64)
+        match_mutual = _tensor_numpy(analysis, "match_mutual", bool)
+        match_similarity = _tensor_numpy(analysis, "match_similarity", np.float32)
         selected = plan.anchor_indices.detach().long().cpu().numpy()
         selected_mask = np.zeros(frame_count * tokens_per_frame, dtype=bool)
         selected_mask[selected] = True
@@ -547,19 +595,29 @@ def main() -> None:
             args.top_components,
             max(1, args.min_component_frames),
         )
+        focus_frame = _focus_frame(
+            frame_event,
+            novelty,
+            curvature,
+            component_support,
+            frame_count,
+            tokens_per_frame,
+        )
 
         prefix = f"{number:02d}_{video_path.stem}"
-        graph_name = f"trajectory_graph_{prefix}.png"
-        signals_name = f"trajectory_signals_{prefix}.png"
+        graph_name = f"trajectory_tracks_{prefix}.png"
+        signals_name = f"trajectory_heatmaps_{prefix}.png"
         _plot_trajectory_graph(
             output_dir / graph_name,
             display_frames,
             window,
             top_components,
-            novelty,
-            curvature,
             frame_event,
             selected_mask,
+            component_ids,
+            match_previous,
+            match_mutual,
+            match_similarity,
             grid_height,
             grid_width,
             tokens_per_frame,
@@ -568,15 +626,18 @@ def main() -> None:
         )
         _plot_signal_maps(
             output_dir / signals_name,
-            top_components,
+            display_frames[focus_frame],
             novelty,
             curvature,
             component_support,
+            demand_weight,
             frame_event,
             selected_mask,
-            frame_count,
+            focus_frame,
             tokens_per_frame,
-            window,
+            grid_height,
+            grid_width,
+            args.heatmap_alpha,
             question_record.question,
             video_path.stem,
         )
@@ -604,9 +665,12 @@ def main() -> None:
                 "video_fps": fps,
                 "displayed_sampled_frames": [int(value) for value in window],
                 "displayed_source_frames": [int(source_indices[value]) for value in window],
+                "heatmap_sampled_frame": int(focus_frame),
+                "heatmap_source_frame": int(source_indices[focus_frame]),
+                "heatmap_event_strength": float(frame_event[focus_frame]),
                 "figures": {
-                    "trajectory_graph": graph_name,
-                    "trajectory_signals": signals_name,
+                    "trajectory_tracks": graph_name,
+                    "trajectory_heatmaps": signals_name,
                 },
                 "components": [
                     {
