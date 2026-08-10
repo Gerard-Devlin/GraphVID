@@ -411,6 +411,7 @@ def _plot_signal_maps(
     grid_height: int,
     grid_width: int,
     heatmap_alpha: float,
+    demand_label: str,
     question: str,
     video_id: str,
 ) -> None:
@@ -436,7 +437,7 @@ def _plot_signal_maps(
         ("(a) Novelty", novelty_grid),
         ("(b) Curvature", curvature_grid),
         ("(c) Trajectory support", support_grid),
-        ("(d) Final token demand", demand_grid),
+        (f"(d) {demand_label}", demand_grid),
     ]
 
     fig, axes = plt.subplots(1, 4, figsize=(15.6, 4.1), constrained_layout=True)
@@ -561,7 +562,12 @@ def main() -> None:
 
         component_ids = _tensor_numpy(analysis, "component_ids", np.int64)
         component_support = _tensor_numpy(analysis, "component_support", np.float32)
-        demand_weight = _tensor_numpy(analysis, "demand_weight", np.float32)
+        demand_tensor = analysis.get("demand_weight")
+        demand_weight = (
+            demand_tensor.detach().cpu().numpy().astype(np.float32, copy=False)
+            if torch.is_tensor(demand_tensor)
+            else None
+        )
         novelty = _tensor_numpy(analysis, "novelty", np.float32)
         curvature = _tensor_numpy(analysis, "curvature", np.float32)
         frame_event = _tensor_numpy(analysis, "frame_event", np.float32)
@@ -571,6 +577,15 @@ def main() -> None:
         selected = plan.anchor_indices.detach().long().cpu().numpy()
         selected_mask = np.zeros(frame_count * tokens_per_frame, dtype=bool)
         selected_mask[selected] = True
+        if demand_weight is None:
+            # Compatibility with visualization sidecars created before demand
+            # was added to the publication whitelist in flashvid/utils.py.
+            demand_weight = selected_mask.astype(np.float32)
+            demand_label = "Selected anchor mask"
+            demand_source = "anchor_mask_fallback"
+        else:
+            demand_label = "Final token demand"
+            demand_source = "certvid_v3_demand_weight"
         summaries = _component_summaries(
             component_ids,
             component_support,
@@ -638,6 +653,7 @@ def main() -> None:
             grid_height,
             grid_width,
             args.heatmap_alpha,
+            demand_label,
             question_record.question,
             video_path.stem,
         )
@@ -668,6 +684,7 @@ def main() -> None:
                 "heatmap_sampled_frame": int(focus_frame),
                 "heatmap_source_frame": int(source_indices[focus_frame]),
                 "heatmap_event_strength": float(frame_event[focus_frame]),
+                "heatmap_demand_source": demand_source,
                 "figures": {
                     "trajectory_tracks": graph_name,
                     "trajectory_heatmaps": signals_name,
