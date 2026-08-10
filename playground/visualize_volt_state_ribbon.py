@@ -42,7 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-examples", type=int, default=1)
     parser.add_argument("--num-frames", type=int, default=32)
     parser.add_argument("--key-frames", type=int, default=4)
-    parser.add_argument("--seed", type=int, default=20260810)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional deterministic sampling seed; omit it for a fresh random video.",
+    )
     parser.add_argument("--retention-ratio", type=float, default=0.01)
     parser.add_argument("--expansion", type=float, default=1.30)
     parser.add_argument("--pruning-layer", type=int, default=20)
@@ -61,7 +66,7 @@ def _choose_videos(
     questions: dict[str, Any],
     video_id: str,
     count: int,
-    seed: int,
+    seed: int | None,
 ) -> list[Path]:
     videos = discover_videos(root)
     by_id = {path.stem: path for path in videos}
@@ -159,7 +164,7 @@ def _plot_demand_panel(
         interpolation="nearest",
         vmin=0.0,
         vmax=1.0,
-        cmap="viridis",
+        cmap="coolwarm",
         alpha=0.16 + 0.62 * normalized,
     )
     patch_width = image.shape[1] / grid_width
@@ -198,9 +203,6 @@ def _plot_spatial_comparison(
     grid_height: int,
     grid_width: int,
     question: str,
-    target: str,
-    full_prediction: str,
-    no_trajectory_prediction: str,
     video_id: str,
 ) -> None:
     import matplotlib
@@ -275,24 +277,12 @@ def _plot_spatial_comparison(
         colorbar = fig.colorbar(last_heatmap, ax=axes, fraction=0.017, pad=0.012)
         colorbar.set_label("Relative visual-token demand (shared scale)")
 
-    full_ok = full_prediction == target
-    no_ok = no_trajectory_prediction == target
     fig.suptitle(
         f"Where trajectory structure reallocates the token budget | "
         f"K={len(full_selected)}/{frame_count * tokens_per_frame} | {video_id}\n"
         f"{question}",
         fontsize=14,
         fontweight="bold",
-        color="#17212B",
-    )
-    fig.text(
-        0.5,
-        0.005,
-        f"Target: {target}    |    w/o trajectory: {no_trajectory_prediction} "
-        f"({'correct' if no_ok else 'wrong'})    |    Full: {full_prediction} "
-        f"({'correct' if full_ok else 'wrong'})",
-        ha="center",
-        fontsize=11,
         color="#17212B",
     )
     fig.savefig(output_path, dpi=240, bbox_inches="tight", facecolor="white")
@@ -400,9 +390,6 @@ def main() -> None:
             grid_height=grid_height,
             grid_width=grid_width,
             question=record.question,
-            target=record.answer,
-            full_prediction=full_prediction,
-            no_trajectory_prediction=no_prediction,
             video_id=video_path.stem,
         )
         records.append(
