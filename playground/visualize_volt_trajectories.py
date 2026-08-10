@@ -3,8 +3,8 @@
 
 The script runs the ordinary CertVID V3 implementation with hard certificates
 disabled, captures its opt-in analysis sidecar, and renders two paper-ready
-figures: a trajectory overlay across a contiguous sampled-frame window and
-aligned novelty/curvature/support/event diagnostics. No signal is synthesized.
+figures: a smooth temporal demand curve and spatially aligned
+novelty/curvature/support/demand heatmaps. No signal is synthesized.
 """
 
 from __future__ import annotations
@@ -70,6 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-components", type=int, default=5)
     parser.add_argument("--min-component-frames", type=int, default=2)
     parser.add_argument("--heatmap-alpha", type=float, default=0.58)
+    parser.add_argument("--curve-sigma", type=float, default=1.25)
     parser.add_argument("--seed", type=int, default=20260810)
     parser.add_argument("--retention-ratio", type=float, default=0.10)
     parser.add_argument("--expansion", type=float, default=1.30)
@@ -382,6 +383,82 @@ def _focus_frame(
     return int(np.argmax(score))
 
 
+def _smooth_temporal_curve(values: np.ndarray, sigma: float) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float32)
+    if values.size <= 2 or sigma <= 0.0:
+        return values.copy()
+    radius = max(1, int(np.ceil(3.0 * sigma)))
+    offsets = np.arange(-radius, radius + 1, dtype=np.float32)
+    kernel = np.exp(-0.5 * np.square(offsets / max(1e-6, sigma)))
+    kernel /= kernel.sum()
+    padded = np.pad(values, (radius, radius), mode="edge")
+    return np.convolve(padded, kernel, mode="valid").astype(np.float32)
+
+
+def _plot_temporal_curve(
+    output_path: Path,
+    demand_weight: np.ndarray,
+    frame_count: int,
+    tokens_per_frame: int,
+    sigma: float,
+    signal_label: str,
+    question: str,
+    video_id: str,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    frame_signal = demand_weight.reshape(frame_count, tokens_per_frame).sum(axis=1)
+    low = float(frame_signal.min())
+    high = float(frame_signal.max())
+    if high - low > 1e-8:
+        frame_signal = (frame_signal - low) / (high - low)
+    else:
+        frame_signal = np.zeros_like(frame_signal)
+    smooth = _smooth_temporal_curve(frame_signal, max(0.0, float(sigma)))
+
+    x = np.arange(frame_count, dtype=np.float32)
+    dense_x = np.linspace(0.0, float(frame_count - 1), max(256, frame_count * 16))
+    dense_y = np.interp(dense_x, x, smooth)
+    peak = int(np.argmax(smooth))
+
+    red = "#D62728"
+    ink = "#17212B"
+    fig, ax = plt.subplots(figsize=(12.8, 2.8), constrained_layout=True)
+    ax.plot(dense_x, dense_y, color=red, linewidth=3.0, solid_capstyle="round")
+    ax.fill_between(dense_x, 0.0, dense_y, color=red, alpha=0.16)
+    ax.axvline(peak, color=red, linewidth=1.0, alpha=0.28)
+    ax.text(
+        peak,
+        min(1.04, float(smooth[peak]) + 0.08),
+        f"peak {peak + 1}",
+        ha="center",
+        va="bottom",
+        fontsize=9,
+        color=red,
+        fontweight="bold",
+    )
+    ax.set_xlim(0.0, max(1.0, float(frame_count - 1)))
+    ax.set_ylim(0.0, 1.08)
+    ax.set_xlabel("Sampled frame", color=ink)
+    ax.set_ylabel(signal_label, color=ink)
+    ax.set_title(
+        f"Trajectory-aware evidence over time | {video_id}\n{_short_text(question, 150)}",
+        fontsize=12,
+        fontweight="bold",
+        color=ink,
+    )
+    ax.grid(axis="y", color="#AAB2BA", alpha=0.22, linewidth=0.8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#9AA3AB")
+    ax.spines["bottom"].set_color("#9AA3AB")
+    fig.savefig(output_path, dpi=240, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def _signal_grid(
     values: np.ndarray,
     frame_idx: int,
@@ -571,9 +648,6 @@ def main() -> None:
         novelty = _tensor_numpy(analysis, "novelty", np.float32)
         curvature = _tensor_numpy(analysis, "curvature", np.float32)
         frame_event = _tensor_numpy(analysis, "frame_event", np.float32)
-        match_previous = _tensor_numpy(analysis, "match_previous", np.int64)
-        match_mutual = _tensor_numpy(analysis, "match_mutual", bool)
-        match_similarity = _tensor_numpy(analysis, "match_similarity", np.float32)
         selected = plan.anchor_indices.detach().long().cpu().numpy()
         selected_mask = np.zeros(frame_count * tokens_per_frame, dtype=bool)
         selected_mask[selected] = True
@@ -595,47 +669,23 @@ def main() -> None:
             tokens_per_frame,
             frame_count,
         )
-        window = _best_window(
-            frame_event,
-            novelty,
-            curvature,
-            selected_mask,
-            frame_count,
-            tokens_per_frame,
-            args.filmstrip_frames,
-        )
-        top_components = _top_window_components(
-            summaries,
-            window,
-            args.top_components,
-            max(1, args.min_component_frames),
-        )
-        focus_frame = _focus_frame(
-            frame_event,
-            novelty,
-            curvature,
-            component_support,
-            frame_count,
-            tokens_per_frame,
+        top_components = summaries[: max(1, args.top_components)]
+        frame_demand = demand_weight.reshape(frame_count, tokens_per_frame).sum(axis=1)
+        focus_frame = int(
+            np.argmax(_smooth_temporal_curve(frame_demand, args.curve_sigma))
         )
 
         prefix = f"{number:02d}_{video_path.stem}"
-        graph_name = f"trajectory_tracks_{prefix}.png"
+        curve_name = f"trajectory_curve_{prefix}.png"
         signals_name = f"trajectory_heatmaps_{prefix}.png"
-        _plot_trajectory_graph(
-            output_dir / graph_name,
-            display_frames,
-            window,
-            top_components,
-            frame_event,
-            selected_mask,
-            component_ids,
-            match_previous,
-            match_mutual,
-            match_similarity,
-            grid_height,
-            grid_width,
+        _plot_temporal_curve(
+            output_dir / curve_name,
+            demand_weight,
+            frame_count,
             tokens_per_frame,
+            args.curve_sigma,
+            "Normalized token demand" if demand_source == "certvid_v3_demand_weight"
+            else "Normalized anchor density",
             question_record.question,
             video_path.stem,
         )
@@ -679,14 +729,15 @@ def main() -> None:
                 "selected_tokens": int(len(selected)),
                 "sampled_source_frame_indices": [int(value) for value in source_indices],
                 "video_fps": fps,
-                "displayed_sampled_frames": [int(value) for value in window],
-                "displayed_source_frames": [int(source_indices[value]) for value in window],
+                "curve_sampled_frames": list(range(frame_count)),
+                "curve_source_frames": [int(value) for value in source_indices],
+                "curve_smoothing_sigma": float(args.curve_sigma),
                 "heatmap_sampled_frame": int(focus_frame),
                 "heatmap_source_frame": int(source_indices[focus_frame]),
                 "heatmap_event_strength": float(frame_event[focus_frame]),
                 "heatmap_demand_source": demand_source,
                 "figures": {
-                    "trajectory_tracks": graph_name,
+                    "trajectory_curve": curve_name,
                     "trajectory_heatmaps": signals_name,
                 },
                 "components": [
@@ -714,7 +765,7 @@ def main() -> None:
         del pixels, pixels_cpu, input_ids, attention_mask
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        print(f"[done] graph={graph_name} signals={signals_name}", flush=True)
+        print(f"[done] curve={curve_name} heatmaps={signals_name}", flush=True)
 
     print(f"[complete] outputs={output_dir}", flush=True)
 
