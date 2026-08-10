@@ -41,7 +41,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video-id", default="")
     parser.add_argument("--num-examples", type=int, default=1)
     parser.add_argument("--num-frames", type=int, default=32)
-    parser.add_argument("--key-frames", type=int, default=4)
     parser.add_argument(
         "--seed",
         type=int,
@@ -131,29 +130,36 @@ def _tensor(analysis: dict[str, Any], name: str, dtype) -> np.ndarray:
     return value.numpy().astype(dtype, copy=False)
 
 
-def _stratified_key_frames(frame_score: np.ndarray, count: int) -> list[int]:
-    count = min(max(1, count), int(frame_score.size))
-    boundaries = np.linspace(0, frame_score.size, count + 1, dtype=np.int64)
-    selected: list[int] = []
-    for left, right in zip(boundaries[:-1], boundaries[1:]):
-        right = max(int(left) + 1, int(right))
-        local = int(np.argmax(frame_score[int(left) : right]))
-        selected.append(int(left) + local)
-    return selected
+def _focus_frame(
+    full_demand: np.ndarray,
+    no_trajectory_demand: np.ndarray,
+    state_change: np.ndarray,
+    frame_event: np.ndarray,
+) -> int:
+    frame_count = int(full_demand.shape[0])
+    distribution_shift = np.abs(full_demand - no_trajectory_demand).sum(axis=1)
+    state_score = state_change.max(axis=1)
+
+    def normalize(values: np.ndarray) -> np.ndarray:
+        low = float(values.min())
+        high = float(values.max())
+        return (values - low) / max(1e-12, high - low)
+
+    score = (
+        0.60 * normalize(distribution_shift)
+        + 0.25 * normalize(state_score)
+        + 0.15 * normalize(frame_event)
+    )
+    return int(np.argmax(score[:frame_count]))
 
 
 def _plot_demand_panel(
     ax,
     frame: Any,
     demand_grid: np.ndarray,
-    selected_local: np.ndarray,
-    grid_height: int,
-    grid_width: int,
     low: float,
     high: float,
 ):
-    import matplotlib.pyplot as plt
-
     image = np.asarray(frame)
     normalized = np.clip((demand_grid - low) / max(1e-12, high - low), 0.0, 1.0)
     extent = (0, image.shape[1], image.shape[0], 0)
@@ -164,23 +170,9 @@ def _plot_demand_panel(
         interpolation="nearest",
         vmin=0.0,
         vmax=1.0,
-        cmap="coolwarm",
-        alpha=0.16 + 0.62 * normalized,
+        cmap="turbo",
+        alpha=0.54,
     )
-    patch_width = image.shape[1] / grid_width
-    patch_height = image.shape[0] / grid_height
-    for local in selected_local:
-        row, col = divmod(int(local), grid_width)
-        ax.add_patch(
-            plt.Rectangle(
-                (col * patch_width, row * patch_height),
-                patch_width,
-                patch_height,
-                fill=False,
-                edgecolor="#00D2D8",
-                linewidth=1.15,
-            )
-        )
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
@@ -191,15 +183,11 @@ def _plot_demand_panel(
 def _plot_spatial_comparison(
     *,
     output_path: Path,
-    frames: list[Any],
-    key_frames: list[int],
+    frame: Any,
+    frame_index: int,
     full_demand: np.ndarray,
     no_trajectory_demand: np.ndarray,
-    full_selected: np.ndarray,
-    no_trajectory_selected: np.ndarray,
     frame_event: np.ndarray,
-    frame_count: int,
-    tokens_per_frame: int,
     grid_height: int,
     grid_width: int,
     question: str,
@@ -210,80 +198,39 @@ def _plot_spatial_comparison(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    full_matrix = full_demand.reshape(frame_count, tokens_per_frame)
-    no_matrix = no_trajectory_demand.reshape(frame_count, tokens_per_frame)
-    compared = np.concatenate(
-        [full_matrix[key_frames].reshape(-1), no_matrix[key_frames].reshape(-1)]
-    )
+    full_grid = full_demand.reshape(grid_height, grid_width)
+    no_grid = no_trajectory_demand.reshape(grid_height, grid_width)
+    compared = np.concatenate([full_grid.reshape(-1), no_grid.reshape(-1)])
     low = float(np.quantile(compared, 0.02))
     high = float(np.quantile(compared, 0.98))
     if high - low <= 1e-12:
         low = float(compared.min())
         high = float(compared.max()) + 1e-12
 
-    full_mask = np.zeros(frame_count * tokens_per_frame, dtype=bool)
-    no_mask = np.zeros_like(full_mask)
-    full_mask[full_selected] = True
-    no_mask[no_trajectory_selected] = True
-    fig, axes = plt.subplots(
-        2,
-        len(key_frames),
-        figsize=(3.35 * len(key_frames), 6.6),
-        constrained_layout=True,
+    fig, axes = plt.subplots(1, 2, figsize=(10.4, 5.7), constrained_layout=True)
+    panels = (
+        (no_grid, "(a) Without trajectory structure"),
+        (full_grid, "(b) Ours: trajectory-aware"),
     )
-    axes = np.asarray(axes).reshape(2, len(key_frames))
-    last_heatmap = None
-    for row, (demand, selected_mask, row_label) in enumerate(
-        (
-            (no_matrix, no_mask, "Without trajectory structure"),
-            (full_matrix, full_mask, "Full trajectory-aware design"),
-        )
-    ):
-        for column, frame_idx in enumerate(key_frames):
-            start = frame_idx * tokens_per_frame
-            selected_local = np.flatnonzero(
-                selected_mask[start : start + tokens_per_frame]
-            )
-            last_heatmap = _plot_demand_panel(
-                axes[row, column],
-                frames[frame_idx],
-                demand[frame_idx].reshape(grid_height, grid_width),
-                selected_local,
-                grid_height,
-                grid_width,
-                low,
-                high,
-            )
-            if row == 0:
-                axes[row, column].set_title(
-                    f"Frame {frame_idx + 1} | Event {frame_event[frame_idx]:.2f}",
-                    fontsize=10,
-                    color="#17212B",
-                )
-            if column == 0:
-                axes[row, column].text(
-                    -0.06,
-                    0.5,
-                    row_label,
-                    transform=axes[row, column].transAxes,
-                    rotation=90,
-                    ha="right",
-                    va="center",
-                    fontsize=11,
-                    fontweight="bold",
-                    color="#17212B",
-                )
-    if last_heatmap is not None:
-        colorbar = fig.colorbar(last_heatmap, ax=axes, fraction=0.017, pad=0.012)
-        colorbar.set_label("Relative visual-token demand (shared scale)")
+    for ax, (demand, label) in zip(axes, panels):
+        _plot_demand_panel(ax, frame, demand, low, high)
+        ax.set_title(label, fontsize=12, fontweight="bold", color="#17212B", pad=9)
 
     fig.suptitle(
-        f"Where trajectory structure reallocates the token budget | "
-        f"K={len(full_selected)}/{frame_count * tokens_per_frame} | {video_id}\n"
-        f"{question}",
-        fontsize=14,
-        fontweight="bold",
+        f"Blue: low token demand     Red: high token demand\n"
+        f"Frame {frame_index + 1} | Event {frame_event[frame_index]:.2f} | {video_id}",
+        fontsize=11,
         color="#17212B",
+    )
+    fig.text(
+        0.5,
+        0.015,
+        question,
+        ha="center",
+        va="bottom",
+        fontsize=15,
+        fontfamily="serif",
+        color="#111111",
     )
     fig.savefig(output_path, dpi=240, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -364,29 +311,28 @@ def main() -> None:
         expected_tokens = frame_count * tokens_per_frame
         if full_demand.size != expected_tokens or no_demand.size != expected_tokens:
             raise RuntimeError("captured demand weights do not match the visual grid")
+        full_demand_matrix = full_demand.reshape(frame_count, tokens_per_frame)
+        no_demand_matrix = no_demand.reshape(frame_count, tokens_per_frame)
         state_change = np.maximum(novelty, curvature).reshape(
             frame_count, tokens_per_frame
         )
-        state_frame_score = state_change.max(axis=1)
-        key_frames = _stratified_key_frames(
-            0.68 * state_frame_score + 0.32 * frame_event,
-            args.key_frames,
+        focus_frame = _focus_frame(
+            full_demand_matrix,
+            no_demand_matrix,
+            state_change,
+            frame_event,
         )
         labels = [label for label, _ in record.options]
         full_prediction = extract_answer_label(full_prediction_raw, labels)
         no_prediction = extract_answer_label(no_prediction_raw, labels)
-        image_name = f"trajectory_demand_{number:02d}_{video_path.stem}.png"
+        image_name = f"trajectory_relevance_{number:02d}_{video_path.stem}.png"
         _plot_spatial_comparison(
             output_path=output_dir / image_name,
-            frames=display_frames,
-            key_frames=key_frames,
-            full_demand=full_demand,
-            no_trajectory_demand=no_demand,
-            full_selected=full_selected,
-            no_trajectory_selected=no_selected,
+            frame=display_frames[focus_frame],
+            frame_index=focus_frame,
+            full_demand=full_demand_matrix[focus_frame],
+            no_trajectory_demand=no_demand_matrix[focus_frame],
             frame_event=frame_event,
-            frame_count=frame_count,
-            tokens_per_frame=tokens_per_frame,
             grid_height=grid_height,
             grid_width=grid_width,
             question=record.question,
@@ -406,13 +352,13 @@ def main() -> None:
                 "raw_tokens": frame_count * tokens_per_frame,
                 "selected_tokens": int(full_selected.size),
                 "certificate_budget_ratio": 0.0,
-                "key_sampled_frames": key_frames,
-                "key_source_frames": [int(source_indices[index]) for index in key_frames],
+                "focus_sampled_frame": focus_frame,
+                "focus_source_frame": int(source_indices[focus_frame]),
                 "video_fps": fps,
                 "figure": image_name,
             }
         )
-        (output_dir / "trajectory_demand_metadata.json").write_text(
+        (output_dir / "trajectory_relevance_metadata.json").write_text(
             json.dumps({"examples": records}, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
