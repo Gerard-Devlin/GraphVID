@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a paper-ready trajectory-state ribbon for VOLT-Vid.
+"""Create a paper-ready spatial token-demand comparison for VOLT-Vid.
 
 The script compares the complete CertVID V3 selector (hard certificates off)
 against the exact same selector with trajectory signals disabled. Both variants
@@ -33,7 +33,7 @@ from visualize_certvid_two_examples import (
 def parse_args() -> argparse.Namespace:
     hf_home = Path(os.environ.get("HF_HOME", "/home/xuyouwen/hf_home_local"))
     parser = argparse.ArgumentParser(
-        description="Visualize trajectory-state preservation under an equal token budget."
+        description="Compare spatial token demand with and without trajectory structure."
     )
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--dataset-root", default=str(hf_home / "videomme" / "data"))
@@ -42,7 +42,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-examples", type=int, default=1)
     parser.add_argument("--num-frames", type=int, default=32)
     parser.add_argument("--key-frames", type=int, default=4)
-    parser.add_argument("--top-components", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260810)
     parser.add_argument("--retention-ratio", type=float, default=0.01)
     parser.add_argument("--expansion", type=float, default=1.30)
@@ -127,95 +126,53 @@ def _tensor(analysis: dict[str, Any], name: str, dtype) -> np.ndarray:
     return value.numpy().astype(dtype, copy=False)
 
 
-def _state_ribbon(
-    component_ids: np.ndarray,
-    novelty: np.ndarray,
-    curvature: np.ndarray,
-    support: np.ndarray,
-    frame_count: int,
-    tokens_per_frame: int,
-    top_components: int,
-) -> tuple[np.ndarray, list[int], np.ndarray]:
-    state = np.maximum(novelty, curvature)
-    rows: list[tuple[float, int, np.ndarray]] = []
-    for component_id in np.unique(component_ids):
-        members = np.flatnonzero(component_ids == component_id)
-        frames = np.unique(members // tokens_per_frame)
-        if frames.size < 2:
-            continue
-        ribbon = np.full(frame_count, np.nan, dtype=np.float32)
-        for frame in frames:
-            frame_members = members[members // tokens_per_frame == frame]
-            ribbon[int(frame)] = float(state[frame_members].max())
-        span = float(frames[-1] - frames[0] + 1) / max(1, frame_count)
-        persistence = float(support[members].mean())
-        peak = float(np.nanmax(ribbon))
-        score = 0.44 * persistence + 0.34 * span + 0.22 * peak
-        rows.append((score, int(component_id), ribbon))
-    rows.sort(key=lambda item: (-item[0], item[1]))
-    rows = rows[: max(1, top_components)]
-    if not rows:
-        raise RuntimeError("no multi-frame trajectory components were found")
-    matrix = np.stack([item[2] for item in rows], axis=0)
-    component_order = [item[1] for item in rows]
-    frame_energy = np.max(np.where(np.isnan(matrix), 0.0, matrix), axis=0)
-    return matrix, component_order, frame_energy
-
-
-def _selection_counts(
-    selected: np.ndarray,
-    component_ids: np.ndarray,
-    component_order: list[int],
-    frame_count: int,
-    tokens_per_frame: int,
-) -> np.ndarray:
-    counts = np.zeros((len(component_order), frame_count), dtype=np.int32)
-    row_by_component = {component_id: row for row, component_id in enumerate(component_order)}
-    for index in selected:
-        component_id = int(component_ids[int(index)])
-        row = row_by_component.get(component_id)
-        if row is not None:
-            counts[row, int(index) // tokens_per_frame] += 1
-    return counts
-
-
-def _key_frame_ids(frame_score: np.ndarray, count: int) -> list[int]:
+def _stratified_key_frames(frame_score: np.ndarray, count: int) -> list[int]:
     count = min(max(1, count), int(frame_score.size))
-    ranked = np.argsort(-frame_score, kind="stable")
-    chosen: list[int] = []
-    minimum_gap = max(1, int(frame_score.size // max(2, count * 2)))
-    for frame in ranked:
-        value = int(frame)
-        if all(abs(value - previous) >= minimum_gap for previous in chosen):
-            chosen.append(value)
-            if len(chosen) == count:
-                break
-    if len(chosen) < count:
-        for frame in ranked:
-            value = int(frame)
-            if value not in chosen:
-                chosen.append(value)
-                if len(chosen) == count:
-                    break
-    return sorted(chosen)
+    boundaries = np.linspace(0, frame_score.size, count + 1, dtype=np.int64)
+    selected: list[int] = []
+    for left, right in zip(boundaries[:-1], boundaries[1:]):
+        right = max(int(left) + 1, int(right))
+        local = int(np.argmax(frame_score[int(left) : right]))
+        selected.append(int(left) + local)
+    return selected
 
 
-def _draw_anchor_boxes(ax, frame: Any, selected_local: np.ndarray, height: int, width: int) -> None:
+def _plot_demand_panel(
+    ax,
+    frame: Any,
+    demand_grid: np.ndarray,
+    selected_local: np.ndarray,
+    grid_height: int,
+    grid_width: int,
+    low: float,
+    high: float,
+):
     import matplotlib.pyplot as plt
 
     image = np.asarray(frame)
+    normalized = np.clip((demand_grid - low) / max(1e-12, high - low), 0.0, 1.0)
+    extent = (0, image.shape[1], image.shape[0], 0)
     ax.imshow(image)
-    patch_width = image.shape[1] / width
-    patch_height = image.shape[0] / height
+    heatmap = ax.imshow(
+        normalized,
+        extent=extent,
+        interpolation="nearest",
+        vmin=0.0,
+        vmax=1.0,
+        cmap="viridis",
+        alpha=0.16 + 0.62 * normalized,
+    )
+    patch_width = image.shape[1] / grid_width
+    patch_height = image.shape[0] / grid_height
     for local in selected_local:
-        row, col = divmod(int(local), width)
+        row, col = divmod(int(local), grid_width)
         ax.add_patch(
             plt.Rectangle(
                 (col * patch_width, row * patch_height),
                 patch_width,
                 patch_height,
                 fill=False,
-                edgecolor="#00AEB3",
+                edgecolor="#00D2D8",
                 linewidth=1.15,
             )
         )
@@ -223,19 +180,18 @@ def _draw_anchor_boxes(ax, frame: Any, selected_local: np.ndarray, height: int, 
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
+    return heatmap
 
 
-def _plot_case(
+def _plot_spatial_comparison(
     *,
     output_path: Path,
     frames: list[Any],
     key_frames: list[int],
+    full_demand: np.ndarray,
+    no_trajectory_demand: np.ndarray,
     full_selected: np.ndarray,
     no_trajectory_selected: np.ndarray,
-    ribbon: np.ndarray,
-    component_order: list[int],
-    full_counts: np.ndarray,
-    no_trajectory_counts: np.ndarray,
     frame_event: np.ndarray,
     frame_count: int,
     tokens_per_frame: int,
@@ -252,79 +208,88 @@ def _plot_case(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(15.8, 8.2), constrained_layout=True)
-    grid = fig.add_gridspec(3, len(key_frames), height_ratios=(1.25, 1.0, 1.0))
-    full_mask = np.zeros(frame_count * tokens_per_frame, dtype=bool)
-    full_mask[full_selected] = True
-    for column, frame_idx in enumerate(key_frames):
-        ax = fig.add_subplot(grid[0, column])
-        start = frame_idx * tokens_per_frame
-        local = np.flatnonzero(full_mask[start : start + tokens_per_frame])
-        _draw_anchor_boxes(ax, frames[frame_idx], local, grid_height, grid_width)
-        ax.set_title(
-            f"Frame {frame_idx + 1} | Event {frame_event[frame_idx]:.2f}",
-            fontsize=10,
-            color="#17212B",
-        )
+    full_matrix = full_demand.reshape(frame_count, tokens_per_frame)
+    no_matrix = no_trajectory_demand.reshape(frame_count, tokens_per_frame)
+    compared = np.concatenate(
+        [full_matrix[key_frames].reshape(-1), no_matrix[key_frames].reshape(-1)]
+    )
+    low = float(np.quantile(compared, 0.02))
+    high = float(np.quantile(compared, 0.98))
+    if high - low <= 1e-12:
+        low = float(compared.min())
+        high = float(compared.max()) + 1e-12
 
-    cmap = plt.get_cmap("magma").copy()
-    cmap.set_bad("#ECEFF1")
-    axes = [fig.add_subplot(grid[1, :]), fig.add_subplot(grid[2, :])]
-    labels = [
-        "(a) Without trajectory structure",
-        "(b) Full trajectory-aware design",
-    ]
-    count_matrices = [no_trajectory_counts, full_counts]
-    last_image = None
-    for ax, label, counts in zip(axes, labels, count_matrices):
-        last_image = ax.imshow(
-            ribbon,
-            aspect="auto",
-            interpolation="nearest",
-            vmin=0.0,
-            vmax=1.0,
-            cmap=cmap,
+    full_mask = np.zeros(frame_count * tokens_per_frame, dtype=bool)
+    no_mask = np.zeros_like(full_mask)
+    full_mask[full_selected] = True
+    no_mask[no_trajectory_selected] = True
+    fig, axes = plt.subplots(
+        2,
+        len(key_frames),
+        figsize=(3.35 * len(key_frames), 6.6),
+        constrained_layout=True,
+    )
+    axes = np.asarray(axes).reshape(2, len(key_frames))
+    last_heatmap = None
+    for row, (demand, selected_mask, row_label) in enumerate(
+        (
+            (no_matrix, no_mask, "Without trajectory structure"),
+            (full_matrix, full_mask, "Full trajectory-aware design"),
         )
-        ys, xs = np.where(counts > 0)
-        if xs.size:
-            sizes = 34.0 + 18.0 * np.minimum(counts[ys, xs], 4)
-            ax.scatter(
-                xs,
-                ys,
-                s=sizes,
-                facecolors="#00AEB3",
-                edgecolors="white",
-                linewidths=0.85,
-                zorder=3,
+    ):
+        for column, frame_idx in enumerate(key_frames):
+            start = frame_idx * tokens_per_frame
+            selected_local = np.flatnonzero(
+                selected_mask[start : start + tokens_per_frame]
             )
-        ax.set_title(label, loc="left", fontsize=11, fontweight="bold")
-        ax.set_ylabel("Trajectory component")
-        ax.set_yticks(np.arange(len(component_order)))
-        ax.set_yticklabels([f"T{row + 1:02d}" for row in range(len(component_order))])
-        ax.set_xlim(-0.5, frame_count - 0.5)
-        ax.set_xticks(np.arange(0, frame_count, 2))
-        ax.set_xticklabels(np.arange(1, frame_count + 1, 2))
-        ax.set_xlabel("Sampled frame")
-        for frame_idx in key_frames:
-            ax.axvline(frame_idx, color="white", alpha=0.28, linewidth=0.8)
-    if last_image is not None:
-        colorbar = fig.colorbar(last_image, ax=axes, fraction=0.015, pad=0.012)
-        colorbar.set_label("State-change energy  max(novelty, curvature)")
+            last_heatmap = _plot_demand_panel(
+                axes[row, column],
+                frames[frame_idx],
+                demand[frame_idx].reshape(grid_height, grid_width),
+                selected_local,
+                grid_height,
+                grid_width,
+                low,
+                high,
+            )
+            if row == 0:
+                axes[row, column].set_title(
+                    f"Frame {frame_idx + 1} | Event {frame_event[frame_idx]:.2f}",
+                    fontsize=10,
+                    color="#17212B",
+                )
+            if column == 0:
+                axes[row, column].text(
+                    -0.06,
+                    0.5,
+                    row_label,
+                    transform=axes[row, column].transAxes,
+                    rotation=90,
+                    ha="right",
+                    va="center",
+                    fontsize=11,
+                    fontweight="bold",
+                    color="#17212B",
+                )
+    if last_heatmap is not None:
+        colorbar = fig.colorbar(last_heatmap, ax=axes, fraction=0.017, pad=0.012)
+        colorbar.set_label("Relative visual-token demand (shared scale)")
 
     full_ok = full_prediction == target
-    ablated_ok = no_trajectory_prediction == target
+    no_ok = no_trajectory_prediction == target
     fig.suptitle(
-        f"Trajectory-state preservation at {len(full_selected)}/{frame_count * tokens_per_frame} "
-        f"visual tokens | {video_id}\n{question}",
+        f"Where trajectory structure reallocates the token budget | "
+        f"K={len(full_selected)}/{frame_count * tokens_per_frame} | {video_id}\n"
+        f"{question}",
         fontsize=14,
         fontweight="bold",
         color="#17212B",
     )
     fig.text(
         0.5,
-        0.008,
+        0.005,
         f"Target: {target}    |    w/o trajectory: {no_trajectory_prediction} "
-        f"({'correct' if ablated_ok else 'wrong'})    |    Full: {full_prediction} "
+        f"({'correct' if no_ok else 'wrong'})    |    Full: {full_prediction} "
         f"({'correct' if full_ok else 'wrong'})",
         ha="center",
         fontsize=11,
@@ -362,7 +327,7 @@ def main() -> None:
         pixels = pixels_cpu.to(device=device, dtype=torch.float16)
         input_ids, attention_mask = prepare_prompt(tokenizer, record.prompt, device)
 
-        no_prediction_raw, no_selected, _ = _run_variant(
+        no_prediction_raw, no_selected, no_analysis = _run_variant(
             model=model,
             tokenizer=tokenizer,
             pixel_values=pixels,
@@ -397,44 +362,38 @@ def main() -> None:
             raise RuntimeError("patch grid does not match tokens_per_frame")
         if full_selected.size != no_selected.size:
             raise RuntimeError("full and no-trajectory token budgets differ")
-        component_ids = _tensor(analysis, "component_ids", np.int64)
+        no_frame_count = int(no_analysis["frame_count"])
+        no_tokens_per_frame = int(no_analysis["tokens_per_frame"])
+        if (no_frame_count, no_tokens_per_frame) != (frame_count, tokens_per_frame):
+            raise RuntimeError("full and no-trajectory visual geometries differ")
         novelty = _tensor(analysis, "novelty", np.float32)
         curvature = _tensor(analysis, "curvature", np.float32)
-        support = _tensor(analysis, "component_support", np.float32)
         frame_event = _tensor(analysis, "frame_event", np.float32)
-        ribbon, component_order, frame_energy = _state_ribbon(
-            component_ids,
-            novelty,
-            curvature,
-            support,
-            frame_count,
-            tokens_per_frame,
-            args.top_components,
+        full_demand = _tensor(analysis, "demand_weight", np.float32)
+        no_demand = _tensor(no_analysis, "demand_weight", np.float32)
+        expected_tokens = frame_count * tokens_per_frame
+        if full_demand.size != expected_tokens or no_demand.size != expected_tokens:
+            raise RuntimeError("captured demand weights do not match the visual grid")
+        state_change = np.maximum(novelty, curvature).reshape(
+            frame_count, tokens_per_frame
         )
-        full_counts = _selection_counts(
-            full_selected, component_ids, component_order, frame_count, tokens_per_frame
-        )
-        no_counts = _selection_counts(
-            no_selected, component_ids, component_order, frame_count, tokens_per_frame
-        )
-        key_frames = _key_frame_ids(
-            0.68 * frame_energy + 0.32 * frame_event,
+        state_frame_score = state_change.max(axis=1)
+        key_frames = _stratified_key_frames(
+            0.68 * state_frame_score + 0.32 * frame_event,
             args.key_frames,
         )
         labels = [label for label, _ in record.options]
         full_prediction = extract_answer_label(full_prediction_raw, labels)
         no_prediction = extract_answer_label(no_prediction_raw, labels)
-        image_name = f"state_ribbon_{number:02d}_{video_path.stem}.png"
-        _plot_case(
+        image_name = f"trajectory_demand_{number:02d}_{video_path.stem}.png"
+        _plot_spatial_comparison(
             output_path=output_dir / image_name,
             frames=display_frames,
             key_frames=key_frames,
+            full_demand=full_demand,
+            no_trajectory_demand=no_demand,
             full_selected=full_selected,
             no_trajectory_selected=no_selected,
-            ribbon=ribbon,
-            component_order=component_order,
-            full_counts=full_counts,
-            no_trajectory_counts=no_counts,
             frame_event=frame_event,
             frame_count=frame_count,
             tokens_per_frame=tokens_per_frame,
@@ -466,7 +425,7 @@ def main() -> None:
                 "figure": image_name,
             }
         )
-        (output_dir / "state_ribbon_metadata.json").write_text(
+        (output_dir / "trajectory_demand_metadata.json").write_text(
             json.dumps({"examples": records}, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
