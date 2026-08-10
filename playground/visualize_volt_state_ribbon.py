@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import random
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -207,7 +208,8 @@ def _plot_spatial_comparison(
         low = float(compared.min())
         high = float(compared.max()) + 1e-12
 
-    fig, axes = plt.subplots(1, 2, figsize=(10.4, 5.7), constrained_layout=True)
+    fig, axes = plt.subplots(1, 2, figsize=(10.4, 6.1))
+    fig.subplots_adjust(left=0.025, right=0.975, top=0.80, bottom=0.22, wspace=0.045)
     panels = (
         (no_grid, "(a) Without trajectory structure"),
         (full_grid, "(b) Ours: trajectory-aware"),
@@ -221,14 +223,15 @@ def _plot_spatial_comparison(
         f"Frame {frame_index + 1} | Event {frame_event[frame_index]:.2f} | {video_id}",
         fontsize=11,
         color="#17212B",
+        y=0.965,
     )
     fig.text(
         0.5,
-        0.015,
-        question,
+        0.065,
+        textwrap.fill(question, width=88),
         ha="center",
-        va="bottom",
-        fontsize=15,
+        va="center",
+        fontsize=14,
         fontfamily="serif",
         color="#111111",
     )
