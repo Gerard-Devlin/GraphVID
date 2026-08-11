@@ -24,6 +24,7 @@ ABLATIONS = [
 
 EXPANSION_ABLATIONS = [
     ("vanilla", "Vanilla"),
+    ("e135", "Expansion 1.35 (20+8, r=0.0926)"),
     ("e130", "Expansion 1.30 (20+8, r=0.1923)"),
     ("e125", "Expansion 1.25 (20+8, r=0.3000)"),
     ("e120", "Expansion 1.20 (20+8, r=0.4167)"),

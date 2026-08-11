@@ -30,6 +30,7 @@ FAILURES=0
 for slug in $(split_csv "$EXPANSIONS"); do
   # E * (20 + 8r) / 28 = 1 for an equal average-layer token budget.
   case "$slug" in
+    e135) expansion=1.35; inner_retention=0.0925925926 ;;
     e130) expansion=1.30; inner_retention=0.1923076923 ;;
     e125) expansion=1.25; inner_retention=0.3 ;;
     e120) expansion=1.20; inner_retention=0.4166666667 ;;
