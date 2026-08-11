@@ -253,6 +253,7 @@ class Llava_OneVision(lmms):
         certv3_certificate_budget_ratio: float = 1.0,
         certv3_selection_objective: str = "d_optimal",
         certv3_use_spatiotemporal_certificates: bool = True,
+        certv3_use_spatiotemporal_design: bool = True,
         certv3_use_trajectory: bool = True,
         certv3_use_query: bool = True,
         # CertVID V3Plus inner-selector parameters
@@ -661,6 +662,7 @@ class Llava_OneVision(lmms):
                 certv3_certificate_budget_ratio=certv3_certificate_budget_ratio,
                 certv3_selection_objective=certv3_selection_objective,
                 certv3_use_spatiotemporal_certificates=certv3_use_spatiotemporal_certificates,
+                certv3_use_spatiotemporal_design=certv3_use_spatiotemporal_design,
                 certv3_use_trajectory=certv3_use_trajectory,
                 certv3_use_query=certv3_use_query,
                 v3plus_inner_mode=v3plus_inner_mode,

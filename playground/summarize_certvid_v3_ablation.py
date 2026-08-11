@@ -12,19 +12,22 @@ from typing import Any
 
 
 ABLATIONS = [
-    ("full", "Full CertVID"),
-    ("no_doptimal", "w/o D-optimal (Quality Top-K)"),
-    ("no_certificates", "w/o Spatiotemporal Certificates"),
-    ("no_trajectory", "w/o Trajectory Structure"),
+    ("vanilla", "Vanilla"),
+    ("full", "Full"),
+    ("no_doptimal", "w/o D-optimal"),
+    ("no_spatiotemporal", "w/o Spatiotemporal Geometry"),
+    ("no_trajectory", "w/o Trajectory Dynamics"),
     ("no_query", "w/o Query Evidence"),
     ("no_fusion", "w/o Residual Fusion"),
 ]
 
 EXPANSION_ABLATIONS = [
+    ("vanilla", "Vanilla"),
     ("e130", "Expansion 1.30 (20+8, r=0.1923)"),
     ("e125", "Expansion 1.25 (20+8, r=0.3000)"),
     ("e120", "Expansion 1.20 (20+8, r=0.4167)"),
     ("e115", "Expansion 1.15 (20+8, r=0.5435)"),
+    ("e100", "Expansion 1.00 (28+0, outer only)"),
 ]
 
 TASK_METRICS = {
@@ -122,9 +125,33 @@ def _fmt(value: float | None) -> str:
     return "" if value is None else f"{value:.1f}"
 
 
+def _rate_label(rate: str) -> str:
+    value = float(rate) * 100.0
+    return f"{value:g}%"
+
+
 def _average(values: list[float | None]) -> float | None:
-    present = [value for value in values if value is not None]
-    return sum(present) / len(present) if present else None
+    if not values or any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None) / len(values)
+
+
+def _manual_results(root: Path) -> dict[str, dict[str, float]]:
+    path = root / "manual_results.json"
+    if not path.is_file():
+        return {}
+    data = _read_json(path)
+    values: dict[str, dict[str, float]] = {}
+    for slug, payload in data.items():
+        if not isinstance(payload, dict):
+            continue
+        parsed_payload: dict[str, float] = {}
+        for metric, score in payload.items():
+            parsed = _number(score)
+            if parsed is not None:
+                parsed_payload[str(metric)] = parsed
+        values[str(slug)] = parsed_payload
+    return values
 
 
 def build_table(
@@ -133,10 +160,12 @@ def build_table(
     configurations: list[tuple[str, str]] = ABLATIONS,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    manual_results = _manual_results(root)
     for slug, label in configurations:
         duration = _videomme_duration_scores(root / slug / "videomme.log")
         row: dict[str, Any] = {
-            "configuration": label,
+            "method": label,
+            "retention_ratio": "100%" if slug == "vanilla" else _rate_label(rate),
             "videomme_short": duration["short"],
             "videomme_medium": duration["medium"],
             "videomme_long": duration["long"],
@@ -146,22 +175,36 @@ def build_table(
             "longvideobench": _load_metric(root, slug, rate, "longvideobench_val_v"),
             "mvbench": _load_metric(root, slug, rate, "mvbench"),
         }
+        for metric, value in manual_results.get(slug, {}).items():
+            if metric in row and metric not in {"method", "retention_ratio"}:
+                row[metric] = value
         row["average"] = _average(
             [
                 row["videomme_overall"],
-                row["egoschema_subset"],
                 row["egoschema_total"],
                 row["longvideobench"],
                 row["mvbench"],
             ]
         )
         rows.append(row)
+
+    reference = rows[0].get("average") if rows else None
+    for row in rows:
+        average = row.get("average")
+        row["relative_accuracy"] = (
+            100.0 * average / reference
+            if isinstance(average, (int, float))
+            and isinstance(reference, (int, float))
+            and reference != 0.0
+            else None
+        )
     return rows
 
 
 def write_outputs(root: Path, rows: list[dict[str, Any]], stem: str = "certvid_v3_ablation_table") -> None:
     fields = [
-        "configuration",
+        "method",
+        "retention_ratio",
         "videomme_short",
         "videomme_medium",
         "videomme_long",
@@ -171,22 +214,45 @@ def write_outputs(root: Path, rows: list[dict[str, Any]], stem: str = "certvid_v
         "longvideobench",
         "mvbench",
         "average",
+        "relative_accuracy",
     ]
     csv_path = root / f"{stem}.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: _fmt(row[field]) if field != "configuration" else row[field] for field in fields})
+            writer.writerow(
+                {
+                    field: row[field]
+                    if field in {"method", "retention_ratio"}
+                    else _fmt(row[field])
+                    for field in fields
+                }
+            )
+
+    tsv_path = root / f"{stem}.tsv"
+    with tsv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    field: row[field]
+                    if field in {"method", "retention_ratio"}
+                    else _fmt(row[field])
+                    for field in fields
+                }
+            )
 
     lines = [
-        "| Configuration | VideoMME Short | Medium | Long | Overall | EgoSchema Subset | EgoSchema Total | LongVideoBench | MVBench | Avg. |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Method | R | VideoMME Short | Medium | Long | Overall | EgoSchema Subset | Total | LongVideoBench | MVBench | Avg. Score | Rel. Acc. (%) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {configuration} | {short} | {medium} | {long} | {overall} | {ego_subset} | {ego_total} | {lvb} | {mvbench} | {average} |".format(
-                configuration=row["configuration"],
+            "| {method} | {rate} | {short} | {medium} | {long} | {overall} | {ego_subset} | {ego_total} | {lvb} | {mvbench} | {average} | {relative} |".format(
+                method=row["method"],
+                rate=row["retention_ratio"],
                 short=_fmt(row["videomme_short"]),
                 medium=_fmt(row["videomme_medium"]),
                 long=_fmt(row["videomme_long"]),
@@ -196,6 +262,7 @@ def write_outputs(root: Path, rows: list[dict[str, Any]], stem: str = "certvid_v
                 lvb=_fmt(row["longvideobench"]),
                 mvbench=_fmt(row["mvbench"]),
                 average=_fmt(row["average"]),
+                relative=_fmt(row["relative_accuracy"]),
             )
         )
     markdown_path = root / f"{stem}.md"
@@ -206,6 +273,7 @@ def write_outputs(root: Path, rows: list[dict[str, Any]], stem: str = "certvid_v
     )
     print("\n".join(lines))
     print(f"\nCSV: {csv_path}")
+    print(f"TSV: {tsv_path}")
     print(f"Markdown: {markdown_path}")
 
 
@@ -217,10 +285,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.mode == "expansion":
         configurations = EXPANSION_ABLATIONS
-        stem = "certvid_v3_expansion_ablation_table"
+        stem = "table2_expansion_schedule"
     else:
         configurations = ABLATIONS
-        stem = "certvid_v3_ablation_table"
+        stem = "table1_component_ablation"
     write_outputs(
         args.root,
         build_table(args.root, args.rate, configurations),

@@ -123,6 +123,7 @@ def _design_features(
     temporal_count: int,
     spatial_count: int,
     structural_weight: float,
+    use_spatiotemporal_design: bool,
     whitening_strength: float,
     quality_floor: float,
 ) -> torch.Tensor:
@@ -140,12 +141,19 @@ def _design_features(
     query_gate = min(1.0, max(0.0, float(query_confidence)))
     query_share = 0.20 * structural_weight * query_gate if query_relevance.numel() > 0 else 0.0
     structural_remainder = max(0.0, structural_weight - query_share)
-    parts = [
-        visual * math.sqrt(visual_weight),
-        temporal * math.sqrt(0.45 * structural_remainder),
-        spatial * math.sqrt(0.25 * structural_remainder),
-        signals * math.sqrt(0.30 * structural_remainder),
-    ]
+    parts = [visual * math.sqrt(visual_weight)]
+    if use_spatiotemporal_design:
+        parts.extend(
+            [
+                temporal * math.sqrt(0.45 * structural_remainder),
+                spatial * math.sqrt(0.25 * structural_remainder),
+                signals * math.sqrt(0.30 * structural_remainder),
+            ]
+        )
+    else:
+        # Preserve total structural mass so this ablation removes only the
+        # explicit temporal/spatial coordinate axes, not their budget.
+        parts.append(signals * math.sqrt(structural_remainder))
     if query_relevance.numel() > 0 and query_share > 0.0:
         query_axes = query_relevance.transpose(0, 1) * torch.sqrt(
             atom_weights.clamp_min(1e-6)
@@ -530,14 +538,14 @@ def _candidate_pool(
     return torch.tensor(sorted(candidates), dtype=torch.long, device=quality.device)
 
 
-def _quality_topk(
+def _score_only_select(
     *,
     quality: torch.Tensor,
     candidates: torch.Tensor,
     mandatory: list[int],
     budget: int,
 ) -> torch.Tensor:
-    """Select by scalar quality while preserving the same pool and certificates."""
+    """Fill the fixed budget by existing scalar scores without D-optimal design."""
     candidate_set = set(int(token) for token in candidates.detach().cpu().tolist())
     selected = list(dict.fromkeys(int(token) for token in mandatory if int(token) in candidate_set))
     selected_set = set(selected)
@@ -552,7 +560,7 @@ def _quality_topk(
             selected.append(token)
             selected_set.add(token)
     if len(selected) != budget:
-        raise RuntimeError(f"quality Top-K produced {len(selected)} tokens for budget {budget}")
+        raise RuntimeError(f"score-only selection produced {len(selected)} tokens for budget {budget}")
     return torch.tensor(selected, dtype=torch.long, device=candidates.device)
 
 
@@ -782,9 +790,13 @@ def certvid_v3_compression(
     selection_objective = str(
         getattr(flashvid_config, "certv3_selection_objective", "d_optimal")
     ).strip().lower()
-    if selection_objective not in {"d_optimal", "quality_topk"}:
+    # Keep old visualization commands readable while naming the paper
+    # ablation by what it removes rather than by the resulting ranking rule.
+    if selection_objective == "quality_topk":
+        selection_objective = "score_only"
+    if selection_objective not in {"d_optimal", "score_only"}:
         raise ValueError(
-            "certv3_selection_objective must be 'd_optimal' or 'quality_topk', "
+            "certv3_selection_objective must be 'd_optimal' or 'score_only', "
             f"got {selection_objective!r}"
         )
     use_spatiotemporal_certificates = _cfg_bool(
@@ -1015,6 +1027,11 @@ def certvid_v3_compression(
             temporal_count=temporal_count,
             spatial_count=spatial_count,
             structural_weight=_cfg_float(flashvid_config, "certv3_structural_weight", 0.32),
+            use_spatiotemporal_design=_cfg_bool(
+                flashvid_config,
+                "certv3_use_spatiotemporal_design",
+                True,
+            ),
             whitening_strength=_cfg_float(flashvid_config, "certv3_whitening_strength", 0.50),
             quality_floor=_cfg_float(flashvid_config, "certv3_quality_floor", 0.15),
         )
@@ -1039,8 +1056,8 @@ def certvid_v3_compression(
                 raise ValueError("CertVID design mass must be finite and positive")
             design = design * design_mass.sqrt().unsqueeze(1)
         ridge = _cfg_float(flashvid_config, "certv3_ridge", 0.50)
-        if selection_objective == "quality_topk":
-            selected = _quality_topk(
+        if selection_objective == "score_only":
+            selected = _score_only_select(
                 quality=quality,
                 candidates=candidate_indices,
                 mandatory=mandatory,

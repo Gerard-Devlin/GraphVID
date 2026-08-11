@@ -9,6 +9,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_expansion_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+EXPANSIONS="${EXPANSIONS:-e125,e120,e115,e100}"
 
 mkdir -p "$OUTPUT_PATH"
 
@@ -24,18 +25,18 @@ has_result() {
   [[ -d "$directory" ]] && find "$directory" -type f \( -name '*results*.json' -o -name 'results.json' \) -print -quit | grep -q .
 }
 
-# E * (20 + 8r) / 28 = 1, so every row has the same average-layer budget.
-CONFIGS=(
-  "e130:1.30:0.1923076923"
-  "e125:1.25:0.3"
-  "e120:1.20:0.4166666667"
-  "e115:1.15:0.5434782609"
-)
-
 FAILURES=0
 
-for config in "${CONFIGS[@]}"; do
-  IFS=: read -r slug expansion inner_retention <<< "$config"
+for slug in $(split_csv "$EXPANSIONS"); do
+  # E * (20 + 8r) / 28 = 1 for an equal average-layer token budget.
+  case "$slug" in
+    e130) expansion=1.30; inner_retention=0.1923076923 ;;
+    e125) expansion=1.25; inner_retention=0.3 ;;
+    e120) expansion=1.20; inner_retention=0.4166666667 ;;
+    e115) expansion=1.15; inner_retention=0.5434782609 ;;
+    e100) expansion=1.00; inner_retention=1.0 ;;
+    *) echo "Unknown expansion ablation: $slug" >&2; exit 2 ;;
+  esac
   config_dir="$OUTPUT_PATH/$slug"
   mkdir -p "$config_dir"
 
@@ -59,6 +60,13 @@ for config in "${CONFIGS[@]}"; do
       PRUNING_LAYER=20 \
       LLM_RETENTION_RATIO="$inner_retention" \
       CERTV3_BUDGET_USES_EXPANSION=True \
+      CERTV3_TOKEN_SELECTION_METHOD=attn_div_stable \
+      CERTV3_CERTIFICATE_BUDGET_RATIO=0.0 \
+      CERTV3_SELECTION_OBJECTIVE=d_optimal \
+      CERTV3_USE_SPATIOTEMPORAL_DESIGN=True \
+      CERTV3_USE_TRAJECTORY=True \
+      CERTV3_USE_QUERY=True \
+      CERTV3_FUSION_ALPHA=0.12 \
       OUTPUT_PATH="$config_dir" \
       CERTV3_DIAGNOSTICS_JSONL="$run_dir/certvid_v3_diagnostics_rank{rank}.jsonl" \
       bash scripts/llava_ov.sh 2>&1 | tee "$task_log"

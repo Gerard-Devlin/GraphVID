@@ -3,13 +3,16 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-RATE="${RATE:-0.10}"
+RATE="${RATE:-0.01}"
 TASKS="${TASKS:-videomme,egoschema_subset,egoschema,longvideobench_val_v,mvbench}"
+EXPANSION="${EXPANSION:-1.30}"
+PRUNING_LAYER="${PRUNING_LAYER:-20}"
+LLM_RETENTION_RATIO="${LLM_RETENTION_RATIO:-0.1923076923}"
 OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-ABLATIONS="${ABLATIONS:-full,no_doptimal,no_certificates,no_trajectory,no_query,no_fusion}"
+ABLATIONS="${ABLATIONS:-no_doptimal,no_spatiotemporal,no_trajectory,no_query,no_fusion}"
 
 mkdir -p "$OUTPUT_PATH"
 
@@ -29,15 +32,15 @@ FAILURES=0
 
 for ablation in $(split_csv "$ABLATIONS"); do
   selection_objective=d_optimal
-  use_spatiotemporal_certificates=True
+  use_spatiotemporal_design=True
   use_trajectory=True
   use_query=True
   fusion_alpha=0.12
 
   case "$ablation" in
     full) ;;
-    no_doptimal) selection_objective=quality_topk ;;
-    no_certificates) use_spatiotemporal_certificates=False ;;
+    no_doptimal) selection_objective=score_only ;;
+    no_spatiotemporal) use_spatiotemporal_design=False ;;
     no_trajectory) use_trajectory=False ;;
     no_query) use_query=False ;;
     no_fusion) fusion_alpha=0.0 ;;
@@ -57,16 +60,22 @@ for ablation in $(split_csv "$ABLATIONS"); do
 
     echo "================================================================"
     echo "[run] ablation=$ablation rate=$RATE task=$task"
-    echo "[run] objective=$selection_objective spatiotemporal_certificates=$use_spatiotemporal_certificates trajectory=$use_trajectory query=$use_query fusion_alpha=$fusion_alpha"
+    echo "[run] objective=$selection_objective spatiotemporal_design=$use_spatiotemporal_design trajectory=$use_trajectory query=$use_query fusion_alpha=$fusion_alpha certificate_ratio=0"
     echo "================================================================"
 
     if env \
       METHODS=certvid_v3 \
       RATES="$RATE" \
       TASKS="$task" \
+      EXPANSION="$EXPANSION" \
+      PRUNING_LAYER="$PRUNING_LAYER" \
+      LLM_RETENTION_RATIO="$LLM_RETENTION_RATIO" \
       OUTPUT_PATH="$ablation_dir" \
+      CERTV3_BUDGET_USES_EXPANSION=True \
+      CERTV3_TOKEN_SELECTION_METHOD=attn_div_stable \
       CERTV3_SELECTION_OBJECTIVE="$selection_objective" \
-      CERTV3_USE_SPATIOTEMPORAL_CERTIFICATES="$use_spatiotemporal_certificates" \
+      CERTV3_CERTIFICATE_BUDGET_RATIO=0.0 \
+      CERTV3_USE_SPATIOTEMPORAL_DESIGN="$use_spatiotemporal_design" \
       CERTV3_USE_TRAJECTORY="$use_trajectory" \
       CERTV3_USE_QUERY="$use_query" \
       CERTV3_FUSION_ALPHA="$fusion_alpha" \
