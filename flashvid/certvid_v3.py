@@ -830,12 +830,12 @@ def certvid_v3_compression(
             spatial_bins,
             video_features.device,
         )
-        frame_event, _, novelty_2d, curvature_2d, matches = _trajectory_signals(
-            metric_frames,
-            coords,
-            _cfg_float(flashvid_config, "certv3_spatial_penalty", 0.08),
-        )
         if use_trajectory:
+            frame_event, _, novelty_2d, curvature_2d, matches = _trajectory_signals(
+                metric_frames,
+                coords,
+                _cfg_float(flashvid_config, "certv3_spatial_penalty", 0.08),
+            )
             component_ids_cpu, component_sizes_cpu = _build_components(
                 frame_count,
                 tokens_per_frame,
@@ -844,10 +844,21 @@ def certvid_v3_compression(
                 _cfg_float(flashvid_config, "certv3_track_threshold", 0.82),
             )
         else:
+            # The complete trajectory-dynamics ablation removes every signal
+            # derived from cross-frame matching, including frame-level events.
+            frame_event = torch.zeros(
+                frame_count,
+                dtype=torch.float32,
+                device=video_features.device,
+            )
+            novelty_2d = torch.zeros(
+                (frame_count, tokens_per_frame),
+                dtype=torch.float32,
+                device=video_features.device,
+            )
+            curvature_2d = torch.zeros_like(novelty_2d)
             component_ids_cpu = torch.arange(total_tokens, dtype=torch.long)
             component_sizes_cpu = torch.ones(total_tokens, dtype=torch.long)
-            novelty_2d = torch.zeros_like(novelty_2d)
-            curvature_2d = torch.zeros_like(curvature_2d)
         component_ids = component_ids_cpu.to(video_features.device)
         component_sizes = component_sizes_cpu.to(video_features.device)
         frame_ids = torch.arange(frame_count, device=video_features.device).repeat_interleave(tokens_per_frame)

@@ -15,8 +15,9 @@ ABLATIONS = [
     ("vanilla", "Vanilla"),
     ("full", "Full"),
     ("no_doptimal", "w/o D-optimal"),
+    ("no_quality_aware_weighting", "w/o Quality-aware Design Weighting"),
     ("no_spatiotemporal", "w/o Spatiotemporal Geometry"),
-    ("no_trajectory", "w/o Trajectory Dynamics"),
+    ("no_all_trajectory_dynamics", "w/o All Trajectory Dynamics"),
     ("no_query", "w/o Query Evidence"),
     ("no_fusion", "w/o Residual Fusion"),
 ]

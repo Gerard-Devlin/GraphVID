@@ -8,7 +8,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_paper_ablation}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
-ABLATIONS="${ABLATIONS:-no_doptimal,no_spatiotemporal,no_trajectory,no_query,no_fusion}"
+ABLATIONS="${ABLATIONS:-no_doptimal,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_fusion}"
 EXPANSIONS="${EXPANSIONS:-e125,e120,e115,e100}"
 
 TABLE1="$OUTPUT_PATH/table1_components"
