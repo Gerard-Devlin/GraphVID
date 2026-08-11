@@ -63,6 +63,7 @@ for ablation in $(split_csv "$ABLATIONS"); do
     echo "[run] objective=$selection_objective spatiotemporal_design=$use_spatiotemporal_design trajectory=$use_trajectory query=$use_query fusion_alpha=$fusion_alpha certificate_ratio=0"
     echo "================================================================"
 
+    task_status=0
     if env \
       METHODS=certvid_v3 \
       RATES="$RATE" \
@@ -82,9 +83,17 @@ for ablation in $(split_csv "$ABLATIONS"); do
       CERTV3_DIAGNOSTICS_JSONL="$run_dir/certvid_v3_diagnostics_rank{rank}.jsonl" \
       bash scripts/llava_ov.sh 2>&1 | tee "$task_log"
     then
-      echo "[completed] ablation=$ablation task=$task"
+      if has_result "$run_dir"; then
+        echo "[completed] ablation=$ablation task=$task"
+      else
+        echo "[failed] ablation=$ablation task=$task: launcher returned zero but no result JSON was produced" >&2
+        task_status=1
+      fi
     else
       echo "[failed] ablation=$ablation task=$task" >&2
+      task_status=1
+    fi
+    if [[ "$task_status" -ne 0 ]]; then
       FAILURES=$((FAILURES + 1))
       if [[ "$FAIL_FAST" == "1" ]]; then
         exit 1

@@ -52,6 +52,7 @@ for slug in $(split_csv "$EXPANSIONS"); do
     echo "[run] rate=$RATE expansion=$expansion outer_layers=20 inner_layers=8 inner_retention=$inner_retention task=$task"
     echo "================================================================"
 
+    task_status=0
     if env \
       METHODS=certvid_v3 \
       RATES="$RATE" \
@@ -71,9 +72,17 @@ for slug in $(split_csv "$EXPANSIONS"); do
       CERTV3_DIAGNOSTICS_JSONL="$run_dir/certvid_v3_diagnostics_rank{rank}.jsonl" \
       bash scripts/llava_ov.sh 2>&1 | tee "$task_log"
     then
-      echo "[completed] expansion=$expansion task=$task"
+      if has_result "$run_dir"; then
+        echo "[completed] expansion=$expansion task=$task"
+      else
+        echo "[failed] expansion=$expansion task=$task: launcher returned zero but no result JSON was produced" >&2
+        task_status=1
+      fi
     else
       echo "[failed] expansion=$expansion task=$task" >&2
+      task_status=1
+    fi
+    if [[ "$task_status" -ne 0 ]]; then
       FAILURES=$((FAILURES + 1))
       if [[ "$FAIL_FAST" == "1" ]]; then
         exit 1

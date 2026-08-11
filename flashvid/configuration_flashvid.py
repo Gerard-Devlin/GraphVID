@@ -147,6 +147,7 @@ class FlashVidConfig:
     # Paper ablations. Defaults preserve the released CertVID V3 path.
     certv3_selection_objective: str = field(default="d_optimal")
     certv3_use_spatiotemporal_certificates: bool = field(default=True)
+    certv3_use_spatiotemporal_design: bool = field(default=True)
     certv3_use_trajectory: bool = field(default=True)
     certv3_use_query: bool = field(default=True)
 
