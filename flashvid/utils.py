@@ -809,6 +809,17 @@ def flashvid_compression(
     flashvid_config.vision_token_length = int(sorted_tokens.shape[0])
     flashvid_config.llm_token_length = None
     flashvid_config.visual_token_length = sorted_tokens.shape[0]
+    setattr(flashvid_config, "last_adapter_variant", "flashvid")
+    setattr(
+        flashvid_config,
+        "last_adapter_raw_tokens",
+        float(num_frames * num_visual_tokens),
+    )
+    setattr(
+        flashvid_config,
+        "last_adapter_output_tokens",
+        float(sorted_tokens.shape[0]),
+    )
     # print(f"#Visual Tokens After Vision-Side Compression : {flashvid_config.visual_token_length}")
     return sorted_tokens, sorted_global_indices
 
@@ -1360,8 +1371,8 @@ def fastv_prune(
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
 
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
-    strict_flashvid_budget = bool(
-        variant == "flashvid"
+    strict_layer_average_budget = bool(
+        variant in ("flashvid", "certvid_v3")
         and getattr(flashvid_config, "strict_token_budget", False)
     )
     if variant == "prunevid":
@@ -1379,7 +1390,7 @@ def fastv_prune(
         num_retained_tokens = int(
             math.floor(visual_token_length * retention_ratio + 1e-9)
         )
-    elif strict_flashvid_budget:
+    elif strict_layer_average_budget:
         num_retained_tokens = int(
             math.floor(visual_token_length * retention_ratio + 1e-9)
         )
@@ -1390,7 +1401,44 @@ def fastv_prune(
         max(minimum_tokens, num_retained_tokens),
         int(visual_global_indices.numel()),
     )
-    if strict_flashvid_budget:
+    if strict_layer_average_budget and str(
+        getattr(flashvid_config, "_baseline_backbone", "")
+    ).strip().lower() == "llava":
+        raw_patch_tokens = int(
+            getattr(flashvid_config, "last_adapter_raw_tokens", visual_token_length)
+        )
+        outer_patch_tokens = int(
+            getattr(flashvid_config, "last_adapter_output_tokens", visual_token_length)
+        )
+        # LLaVA appends one global newline after outer compression. It lives in
+        # the visual span seen by the LLM, so strict accounting must include it.
+        non_patch_visual_tokens = max(0, visual_token_length - outer_patch_tokens)
+        raw_visual_tokens = raw_patch_tokens + non_patch_visual_tokens
+        layers = int(getattr(flashvid_config, "strict_num_hidden_layers", 0))
+        pruning_layer = int(getattr(flashvid_config, "pruning_layer", 0))
+        remaining_layers = layers - pruning_layer
+        if layers <= 0 or remaining_layers <= 0:
+            raise ValueError(
+                "strict hybrid compression requires 0 <= pruning_layer < layers"
+            )
+        nominal_layer_tokens = int(
+            math.floor(
+                raw_visual_tokens
+                * float(getattr(flashvid_config, "retention_ratio", 0.0))
+                * layers
+                + 1e-9
+            )
+        )
+        remaining_budget = nominal_layer_tokens - pruning_layer * visual_token_length
+        strict_inner_target = remaining_budget // remaining_layers
+        if strict_inner_target < 1:
+            raise ValueError(
+                "strict layer-average budget cannot retain one inner visual token: "
+                f"N={raw_visual_tokens}, outer={visual_token_length}, "
+                f"K={pruning_layer}, L={layers}"
+            )
+        num_retained_tokens = min(num_retained_tokens, strict_inner_target)
+    if strict_layer_average_budget:
         flashvid_config.last_flashvid_strict_inner_target = int(num_retained_tokens)
     if variant == "certvid_v3plusplus":
         from .v3plusplus_inner import (

@@ -209,3 +209,6 @@ __marimo__/
 # logs
 logs/
 analysis_pull
+
+# Private paper draft and submission materials
+/paper/

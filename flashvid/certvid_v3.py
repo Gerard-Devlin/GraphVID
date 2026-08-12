@@ -737,7 +737,17 @@ def certvid_v3_compression(
     frame_count, tokens_per_frame, _ = video_features.shape
     total_tokens = int(frame_count * tokens_per_frame)
     ratio = _effective_ratio(flashvid_config)
-    budget = max(1, min(total_tokens, int(round(total_tokens * ratio))))
+    strict_budget = bool(
+        str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
+        == "certvid_v3"
+        and getattr(flashvid_config, "strict_token_budget", False)
+    )
+    budget_value = (
+        math.floor(total_tokens * ratio + 1e-9)
+        if strict_budget
+        else round(total_tokens * ratio)
+    )
+    budget = max(1, min(total_tokens, int(budget_value)))
     flat_features = video_features.reshape(total_tokens, -1)
     backbone = str(
         getattr(flashvid_config, "_baseline_backbone", "")

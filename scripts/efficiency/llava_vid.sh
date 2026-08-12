@@ -2,7 +2,7 @@
 
 export CUDA_VISIBLE_DEVICES=0
 
-python playground/bench_efficiency.py \
+python playground/bench_efficiency_legacy.py \
     --model_path "lmms-lab/LLaVA-Video-7B-Qwen2" \
     --dataset_jsonl "videomme.jsonl" \
     --limit 100 \

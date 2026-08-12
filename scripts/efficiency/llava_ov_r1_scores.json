@@ -1,0 +1,8 @@
+{
+  "vanilla": {"avg_score": 58.4, "rel_acc": 100.0},
+  "fastv": {"avg_score": 47.0, "rel_acc": 80.5},
+  "visionzip": {"avg_score": 41.6, "rel_acc": 71.2},
+  "fastvid": {"avg_score": 42.4, "rel_acc": 72.6},
+  "flashvid": {"avg_score": 46.6, "rel_acc": 79.8},
+  "ours": {"avg_score": 50.7, "rel_acc": 86.8}
+}

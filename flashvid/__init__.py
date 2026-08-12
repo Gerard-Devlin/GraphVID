@@ -1465,15 +1465,16 @@ def flashvid(
         decode_update_interval=decode_update_interval,
         decode_start_layer=decode_start_layer,
     )
-    # Qwen-family runs default to strict accounting. Other model families can
-    # opt in explicitly without changing their established default behavior.
+    # Qwen-family FlashVID runs default to strict accounting. LLaVA FlashVID
+    # and CertVID V3 can opt in explicitly without changing established runs.
+    strict_capable_variant = variant in ("flashvid", "certvid_v3")
     automatic_strict_budget = bool(
         variant == "flashvid"
         and type(model)
         in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration)
     )
     flashvid_config.strict_token_budget = bool(
-        variant == "flashvid"
+        strict_capable_variant
         and (
             automatic_strict_budget
             if strict_token_budget is None
@@ -1498,7 +1499,7 @@ def flashvid(
         ) / float(num_hidden_layers)
         if average_multiplier > 1.0 + 1e-9:
             raise ValueError(
-                "Qwen-family FlashVID exceeds the nominal layer-average token budget: "
+                "strict hybrid compression exceeds the nominal layer-average token budget: "
                 f"multiplier={average_multiplier:.10f} > 1.0 "
                 f"(E={expansion}, K={pruning_layer}, "
                 f"r={llm_retention_ratio}, L={num_hidden_layers})"
