@@ -52,6 +52,7 @@ METHOD_LABELS = {
 DURATION_ORDER = ("short", "medium", "long")
 DEFAULT_DURATION_COUNTS = {"short": 34, "medium": 33, "long": 33}
 DEFAULT_SCORE_FILE = Path("scripts/efficiency/llava_ov_r1_scores.json")
+SAMPLING_PROTOCOL = "uniform_segment_centers_tail_guard_v1"
 
 
 @dataclass(frozen=True)
@@ -217,12 +218,39 @@ def build_manifest(args: argparse.Namespace) -> None:
 
 
 def load_video(video_path: str, num_frames: int) -> np.ndarray:
-    reader = VideoReader(video_path, ctx=cpu(0))
-    total_frames = len(reader)
-    if total_frames <= 0:
-        raise ValueError(f"video has no decodable frames: {video_path}")
-    indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
-    return reader.get_batch(indices.tolist()).asnumpy()
+    """Decode deterministic segment-center frames while avoiding fragile EOFs."""
+    if num_frames <= 0:
+        raise ValueError("num_frames must be positive")
+
+    errors: list[str] = []
+    # Segment-center sampling avoids forcing Decord to seek to a frequently
+    # damaged or inaccurately indexed final frame. Wider guards are only used
+    # when the first deterministic schedule still encounters a corrupt tail.
+    for tail_guard in (1.0 / 64.0, 1.0 / 32.0, 1.0 / 16.0):
+        reader = VideoReader(video_path, ctx=cpu(0), num_threads=1)
+        total_frames = len(reader)
+        if total_frames <= 0:
+            raise ValueError(f"video has no decodable frames: {video_path}")
+        usable_frames = max(1, int(math.floor(total_frames * (1.0 - tail_guard))))
+        edges = np.linspace(0.0, float(usable_frames), num_frames + 1)
+        indices = np.floor((edges[:-1] + edges[1:]) * 0.5).astype(np.int64)
+        indices = np.clip(indices, 0, total_frames - 1)
+        try:
+            return reader.get_batch(indices.tolist()).asnumpy()
+        except Exception as exc:  # Decord exposes decoder failures per backend.
+            errors.append(f"tail_guard={tail_guard:.5f}: {exc}")
+
+    details = " | ".join(errors)
+    raise RuntimeError(f"failed to decode stable frames from {video_path}: {details}")
+
+
+def frame_content_sha256(frames: np.ndarray) -> str:
+    contiguous = np.ascontiguousarray(frames)
+    digest = hashlib.sha256()
+    digest.update(str(contiguous.shape).encode("ascii"))
+    digest.update(str(contiguous.dtype).encode("ascii"))
+    digest.update(contiguous.tobytes())
+    return digest.hexdigest()
 
 
 def resolve_video_path(video_id: str, video_root: Path) -> Path:
@@ -635,6 +663,7 @@ def run_method(args: argparse.Namespace) -> None:
 
             # Decode and preprocess once per sample, before any CUDA timer.
             frames = load_video(str(video_path), args.num_frames)
+            frame_sha256 = frame_content_sha256(frames)
             prepared = prepare_inputs(
                 tokenizer,
                 image_processor,
@@ -680,6 +709,8 @@ def run_method(args: argparse.Namespace) -> None:
                     "pred_answer": pred_answer,
                     "correct": pred_answer == str(sample.get("answer") or "").strip().upper(),
                     "num_frames": args.num_frames,
+                    "sampling_protocol": SAMPLING_PROTOCOL,
+                    "frame_sha256": frame_sha256,
                     "gpu_name": gpu_name,
                     "gpu_memory_gb": gpu_memory_gb,
                     "error": None,
@@ -734,6 +765,7 @@ def summarize(args: argparse.Namespace) -> None:
     combined: list[dict[str, Any]] = []
     summaries: dict[str, Any] = {}
     observed_gpu_names: set[str] = set()
+    reference_frame_hashes: dict[str, str] | None = None
 
     for method in METHOD_ORDER:
         path = input_dir / f"{method}.jsonl"
@@ -745,11 +777,32 @@ def summarize(args: argparse.Namespace) -> None:
             )
         if any(record.get("error") for record in records):
             raise ValueError(f"{method}: raw records contain errors")
+        if any(
+            record.get("sampling_protocol") != SAMPLING_PROTOCOL
+            for record in records
+        ):
+            raise ValueError(f"{method}: stale or mismatched sampling protocol")
         counts: dict[str, int] = defaultdict(int)
         for record in records:
             counts[str(record["question_id"])] += 1
         if set(counts) != expected_ids or any(value != args.num_repeats for value in counts.values()):
             raise ValueError(f"{method}: question IDs/repeat counts differ from manifest")
+        method_frame_hashes: dict[str, set[str]] = defaultdict(set)
+        for record in records:
+            frame_hash = str(record.get("frame_sha256") or "")
+            if not frame_hash:
+                raise ValueError(f"{method}: missing sampled-frame content hash")
+            method_frame_hashes[str(record["question_id"])].add(frame_hash)
+        if any(len(hashes) != 1 for hashes in method_frame_hashes.values()):
+            raise ValueError(f"{method}: sampled frames changed between repeats")
+        flattened_hashes = {
+            question_id: next(iter(hashes))
+            for question_id, hashes in method_frame_hashes.items()
+        }
+        if reference_frame_hashes is None:
+            reference_frame_hashes = flattened_hashes
+        elif flattened_hashes != reference_frame_hashes:
+            raise ValueError(f"{method}: sampled frames differ from Vanilla")
         if any(not bool(record.get("budget_ok")) for record in records):
             raise ValueError(f"{method}: one or more token audits failed")
         observed_gpu_names.update(str(record.get("gpu_name") or "") for record in records)
