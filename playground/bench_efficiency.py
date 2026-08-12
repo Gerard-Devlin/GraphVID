@@ -185,25 +185,31 @@ def build_manifest(args: argparse.Namespace) -> None:
         selected.extend(chosen)
 
     selected.sort(key=lambda row: _stable_rank(args.seed, row["videoID"]))
+    manifest_records = []
+    for index, sample in enumerate(selected):
+        record = dict(sample)
+        record["efficiency_sample_index"] = index
+        record["efficiency_question_id"] = _question_id(sample)
+        record["efficiency_duration"] = _duration(sample)
+        manifest_records.append(record)
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8", newline="\n") as handle:
-        for index, sample in enumerate(selected):
-            record = dict(sample)
-            record["efficiency_sample_index"] = index
-            record["efficiency_question_id"] = _question_id(sample)
-            record["efficiency_duration"] = _duration(sample)
+        for record in manifest_records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     metadata = {
         "source": str(source.resolve()),
         "manifest": str(output.resolve()),
         "seed": args.seed,
-        "sample_count": len(selected),
-        "unique_video_count": len({row["videoID"] for row in selected}),
+        "sample_count": len(manifest_records),
+        "unique_video_count": len({row["videoID"] for row in manifest_records}),
         "duration_counts": actual_counts,
         "question_ids_sha256": hashlib.sha256(
-            "\n".join(row["efficiency_question_id"] for row in selected).encode()
+            "\n".join(
+                row["efficiency_question_id"] for row in manifest_records
+            ).encode()
         ).hexdigest(),
     }
     _write_json(output.with_suffix(output.suffix + ".meta.json"), metadata)
