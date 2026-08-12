@@ -36,6 +36,7 @@ for slug in $(split_csv "$EXPANSIONS"); do
     e125) expansion=1.25; inner_retention=0.3 ;;
     e120) expansion=1.20; inner_retention=0.4166666667 ;;
     e115) expansion=1.15; inner_retention=0.5434782609 ;;
+    e110) expansion=1.10; inner_retention=0.6818181818 ;;
     e100) expansion=1.00; inner_retention=1.0 ;;
     *) echo "Unknown expansion ablation: $slug" >&2; exit 2 ;;
   esac
