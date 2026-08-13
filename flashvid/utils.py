@@ -427,6 +427,7 @@ def flashvid_compression(
                 in {
                     "design",
                     "ridge",
+                    "quality",
                     "demand_weight",
                     "query_score",
                     "query_relevance",

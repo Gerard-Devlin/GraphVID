@@ -1130,6 +1130,7 @@ def certvid_v3_compression(
                 {
                     "metric_flat": metric_flat,
                     "design": design,
+                    "quality": quality,
                     "demand_weight": demand_weight,
                     "attention": attention,
                     "query_score": query_score,

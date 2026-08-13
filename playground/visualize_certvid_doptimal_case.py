@@ -1,0 +1,547 @@
+#!/usr/bin/env python3
+"""Select and visualize a representative CertVID D-optimal VideoMME case.
+
+The script scans a deterministic random subset of VideoMME, runs the real
+CertVID V3 compression path, and ranks examples without using answer labels.
+The selected example maximizes the measured advantage over equal-budget global
+quality Top-K in the exact design space used by CertVID.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gc
+import json
+import math
+import os
+import random
+import textwrap
+import traceback
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+from PIL import Image, ImageDraw
+
+from visualize_certvid_two_examples import (
+    discover_videos,
+    extract_answer_label,
+    factor_grid,
+    generate_once,
+    load_certvid_model,
+    load_questions,
+    prepare_prompt,
+    sample_video,
+    tensor_frames_to_pil,
+)
+from visualize_certvid_volume import InformationSummary, _information_summary, _pca_coordinates
+
+
+@dataclass
+class Candidate:
+    video_id: str
+    video_path: Path
+    question_id: str | None
+    question: str
+    options: list[dict[str, str]]
+    target: str | None
+    prediction: str | None
+    raw_prediction: str
+    frames: list[Image.Image]
+    design: torch.Tensor
+    quality: torch.Tensor
+    ours_indices: torch.Tensor
+    topk_indices: torch.Tensor
+    ours_summary: InformationSummary
+    topk_summary: InformationSummary
+    ridge: float
+    frame_count: int
+    tokens_per_frame: int
+    grid_height: int
+    grid_width: int
+    overlap_ratio: float
+    temporal_entropy_ours: float
+    temporal_entropy_topk: float
+    d_efficiency: float
+    rank_ratio: float
+    selection_score: float
+
+
+def parse_args() -> argparse.Namespace:
+    hf_home = Path(os.environ.get("HF_HOME", "/home/xuyouwen/hf_home_local"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model-path",
+        default=os.environ.get(
+            "PRETRAINED", "/home/xuyouwen/models/llava-onevision-qwen2-7b-ov"
+        ),
+    )
+    parser.add_argument("--dataset-root", default=str(hf_home / "videomme" / "data"))
+    parser.add_argument("--metadata-jsonl", default="assets/videomme.jsonl")
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--candidate-count", type=int, default=20)
+    parser.add_argument("--num-frames", type=int, default=32)
+    parser.add_argument("--seed", type=int, default=20260814)
+    parser.add_argument("--retention-ratio", type=float, default=0.01)
+    parser.add_argument("--expansion", type=float, default=1.30)
+    parser.add_argument("--pruning-layer", type=int, default=20)
+    parser.add_argument("--llm-retention-ratio", type=float, default=0.1923076923)
+    parser.add_argument(
+        "--pool-mode", choices=("bilinear", "average", "max"), default="bilinear"
+    )
+    parser.add_argument("--max-new-tokens", type=int, default=1)
+    parser.add_argument("--device-map", default="cuda:0")
+    parser.add_argument("--dpi", type=int, default=240)
+    return parser.parse_args()
+
+
+def _normalized_entropy(indices: torch.Tensor, frame_count: int, tokens_per_frame: int) -> float:
+    frame_ids = torch.div(indices.long(), tokens_per_frame, rounding_mode="floor")
+    counts = torch.bincount(frame_ids, minlength=frame_count).double()
+    probabilities = counts / counts.sum().clamp_min(1.0)
+    positive = probabilities > 0
+    entropy = -(probabilities[positive] * probabilities[positive].log()).sum()
+    return float((entropy / math.log(max(2, frame_count))).item())
+
+
+def _selection_score(
+    ours: InformationSummary,
+    topk: InformationSummary,
+    dimension: int,
+    overlap_ratio: float,
+    entropy_ours: float,
+    entropy_topk: float,
+) -> tuple[float, float, float]:
+    normalized_logdet_gain = (ours.logdet_gain - topk.logdet_gain) / max(1, dimension)
+    d_efficiency = math.exp(max(-30.0, min(30.0, normalized_logdet_gain)))
+    rank_ratio = ours.effective_rank / max(1e-8, topk.effective_rank)
+    score = (
+        normalized_logdet_gain
+        + 0.35 * math.log(max(1e-8, rank_ratio))
+        + 0.25 * (entropy_ours - entropy_topk)
+        + 0.15 * (1.0 - overlap_ratio)
+    )
+    return score, d_efficiency, rank_ratio
+
+
+def _per_frame(indices: torch.Tensor, frame_count: int, tokens_per_frame: int) -> list[list[int]]:
+    result: list[list[int]] = [[] for _ in range(frame_count)]
+    for global_index in indices.tolist():
+        frame_index, local_index = divmod(int(global_index), tokens_per_frame)
+        if 0 <= frame_index < frame_count:
+            result[frame_index].append(local_index)
+    return [sorted(values) for values in result]
+
+
+def _representative_frame(candidate: Candidate) -> int:
+    ours = _per_frame(candidate.ours_indices, candidate.frame_count, candidate.tokens_per_frame)
+    topk = _per_frame(candidate.topk_indices, candidate.frame_count, candidate.tokens_per_frame)
+    return max(
+        range(candidate.frame_count),
+        key=lambda frame: (
+            len(set(ours[frame]) - set(topk[frame])),
+            len(set(ours[frame]) ^ set(topk[frame])),
+            len(ours[frame]),
+            -abs(frame - (candidate.frame_count - 1) / 2.0),
+        ),
+    )
+
+
+def _overlay_tokens(
+    frame: Image.Image,
+    selected: list[int],
+    grid_height: int,
+    grid_width: int,
+    color: tuple[int, int, int],
+) -> Image.Image:
+    base = frame.convert("RGBA")
+    width, height = base.size
+    selected_set = set(selected)
+    mask = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(mask)
+    line_width = max(1, round(min(width, height) / 190))
+    for row in range(grid_height):
+        y0 = round(row * height / grid_height)
+        y1 = round((row + 1) * height / grid_height)
+        for col in range(grid_width):
+            token = row * grid_width + col
+            x0 = round(col * width / grid_width)
+            x1 = round((col + 1) * width / grid_width)
+            if token in selected_set:
+                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(*color, 46))
+                draw.rectangle(
+                    (x0, y0, x1 - 1, y1 - 1), outline=(*color, 255), width=line_width
+                )
+            else:
+                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(22, 27, 32, 104))
+    return Image.alpha_composite(base, mask).convert("RGB")
+
+
+def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    teal = "#008C87"
+    orange = "#E58A2B"
+    gray = "#9AA1A8"
+    ink = "#17212B"
+    frame_index = _representative_frame(candidate)
+    ours_per_frame = _per_frame(
+        candidate.ours_indices, candidate.frame_count, candidate.tokens_per_frame
+    )
+    topk_per_frame = _per_frame(
+        candidate.topk_indices, candidate.frame_count, candidate.tokens_per_frame
+    )
+    topk_overlay = _overlay_tokens(
+        candidate.frames[frame_index],
+        topk_per_frame[frame_index],
+        candidate.grid_height,
+        candidate.grid_width,
+        (229, 138, 43),
+    )
+    ours_overlay = _overlay_tokens(
+        candidate.frames[frame_index],
+        ours_per_frame[frame_index],
+        candidate.grid_height,
+        candidate.grid_width,
+        (0, 155, 150),
+    )
+
+    coordinates, explained = _pca_coordinates(candidate.design)
+    ours_np = candidate.ours_indices.numpy()
+    topk_np = candidate.topk_indices.numpy()
+    spectrum_ours = np.sort(candidate.ours_summary.axis_information)[::-1]
+    spectrum_topk = np.sort(candidate.topk_summary.axis_information)[::-1]
+
+    fig = plt.figure(figsize=(14.8, 8.0), facecolor="white")
+    grid = fig.add_gridspec(2, 3, height_ratios=(1.03, 1.0), hspace=0.33, wspace=0.28)
+    ax_topk = fig.add_subplot(grid[0, 0])
+    ax_ours = fig.add_subplot(grid[0, 1])
+    ax_timeline = fig.add_subplot(grid[0, 2])
+    ax_pca = fig.add_subplot(grid[1, 0])
+    ax_metrics = fig.add_subplot(grid[1, 1])
+    ax_spectrum = fig.add_subplot(grid[1, 2])
+
+    ax_topk.imshow(topk_overlay)
+    ax_topk.set_title(
+        f"(a) Quality Top-K | {len(topk_per_frame[frame_index])} tokens in frame",
+        fontweight="bold",
+        color=orange,
+    )
+    ax_ours.imshow(ours_overlay)
+    ax_ours.set_title(
+        f"(b) Ours: D-optimal | {len(ours_per_frame[frame_index])} tokens in frame",
+        fontweight="bold",
+        color=teal,
+    )
+    for axis in (ax_topk, ax_ours):
+        axis.set_axis_off()
+
+    x = np.arange(candidate.frame_count)
+    ax_timeline.plot(
+        x, [len(values) for values in topk_per_frame], color=orange, marker="o", ms=3,
+        linewidth=1.5, label="Quality Top-K"
+    )
+    ax_timeline.plot(
+        x, [len(values) for values in ours_per_frame], color=teal, marker="o", ms=3,
+        linewidth=1.7, label="Ours"
+    )
+    ax_timeline.axvline(frame_index, color="#D05050", linestyle="--", linewidth=1.0)
+    ax_timeline.set_title("(c) Temporal token allocation", fontweight="bold", color=ink)
+    ax_timeline.set_xlabel("Sampled frame")
+    ax_timeline.set_ylabel("Selected tokens")
+    ax_timeline.legend(frameon=False, fontsize=8)
+    ax_timeline.grid(alpha=0.18, linewidth=0.7)
+
+    ax_pca.scatter(
+        coordinates[:, 0], coordinates[:, 1], s=4, color=gray, alpha=0.14,
+        linewidths=0, label="All visual tokens"
+    )
+    ax_pca.scatter(
+        coordinates[topk_np, 0], coordinates[topk_np, 1], s=18, marker="x",
+        color=orange, alpha=0.72, linewidths=0.8, label="Quality Top-K"
+    )
+    ax_pca.scatter(
+        coordinates[ours_np, 0], coordinates[ours_np, 1], s=15, color=teal,
+        alpha=0.75, linewidths=0, label="Ours"
+    )
+    ax_pca.set_title("(d) Coverage in the actual design space", fontweight="bold", color=ink)
+    ax_pca.set_xlabel(f"PC 1 ({100.0 * explained[0]:.1f}% variance)")
+    ax_pca.set_ylabel(f"PC 2 ({100.0 * explained[1]:.1f}% variance)")
+    ax_pca.legend(frameon=False, fontsize=7.5)
+
+    metric_names = ["D-efficiency", "Effective rank", "Temporal entropy"]
+    ours_metrics = [
+        candidate.d_efficiency,
+        candidate.rank_ratio,
+        candidate.temporal_entropy_ours / max(1e-8, candidate.temporal_entropy_topk),
+    ]
+    positions = np.arange(len(metric_names))
+    width = 0.36
+    ax_metrics.bar(positions - width / 2, np.ones(3), width, color=orange, alpha=0.82,
+                   label="Quality Top-K")
+    bars = ax_metrics.bar(positions + width / 2, ours_metrics, width, color=teal, alpha=0.88,
+                          label="Ours")
+    for bar, value in zip(bars, ours_metrics):
+        ax_metrics.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f"{value:.2f}x",
+                        ha="center", va="bottom", fontsize=9, fontweight="bold", color=teal)
+    ax_metrics.set_xticks(positions, metric_names, rotation=12)
+    ax_metrics.set_ylabel("Relative to Quality Top-K")
+    ax_metrics.set_title("(e) Equal-budget structural quality", fontweight="bold", color=ink)
+    ax_metrics.axhline(1.0, color="#7C838A", linewidth=0.8, linestyle="--")
+    ax_metrics.legend(frameon=False, fontsize=8)
+    ax_metrics.grid(axis="y", alpha=0.18, linewidth=0.7)
+
+    axes_index = np.arange(1, len(spectrum_ours) + 1)
+    ax_spectrum.plot(axes_index, spectrum_topk, color=orange, linewidth=1.6,
+                     label="Quality Top-K")
+    ax_spectrum.plot(axes_index, spectrum_ours, color=teal, linewidth=1.9, label="Ours")
+    ax_spectrum.fill_between(axes_index, spectrum_topk, spectrum_ours, color=teal, alpha=0.10)
+    ax_spectrum.set_title("(f) Information spectrum", fontweight="bold", color=ink)
+    ax_spectrum.set_xlabel("Design eigen-directions")
+    ax_spectrum.set_ylabel(r"$\log(1 + \lambda_j / \lambda)$")
+    ax_spectrum.legend(frameon=False, fontsize=8)
+    ax_spectrum.grid(alpha=0.18, linewidth=0.7)
+
+    question = " ".join(candidate.question.split())
+    wrapped = "\n".join(textwrap.wrap(question, width=118)[:2])
+    fig.suptitle(
+        f"D-optimal selection preserves complementary evidence at "
+        f"K={len(candidate.ours_indices)}/{len(candidate.design)} visual tokens\n"
+        f"{wrapped}",
+        fontsize=13,
+        fontweight="bold",
+        color=ink,
+        y=0.985,
+    )
+    fig.text(
+        0.5,
+        0.012,
+        f"VideoMME {candidate.video_id} | representative frame {frame_index + 1}/"
+        f"{candidate.frame_count} | selection overlap {100.0 * candidate.overlap_ratio:.1f}%",
+        ha="center",
+        fontsize=8.5,
+        color="#59616A",
+    )
+    for axis in (ax_timeline, ax_pca, ax_metrics, ax_spectrum):
+        axis.spines["top"].set_visible(False)
+        axis.spines["right"].set_visible(False)
+
+    for extension in ("png", "pdf"):
+        fig.savefig(
+            output_dir / f"doptimal_representative_case.{extension}",
+            dpi=dpi,
+            bbox_inches="tight",
+            pad_inches=0.06,
+            facecolor="white",
+        )
+    plt.close(fig)
+
+
+def _audit_record(candidate: Candidate, selected: bool) -> dict[str, Any]:
+    return {
+        "selected_for_figure": selected,
+        "video_id": candidate.video_id,
+        "question_id": candidate.question_id,
+        "question": candidate.question,
+        "options": candidate.options,
+        "target": candidate.target,
+        "prediction": candidate.prediction,
+        "raw_prediction": candidate.raw_prediction,
+        "raw_tokens": int(len(candidate.design)),
+        "selected_tokens": int(len(candidate.ours_indices)),
+        "design_dimension": int(candidate.design.shape[1]),
+        "ridge": candidate.ridge,
+        "selection_overlap_ratio": candidate.overlap_ratio,
+        "d_efficiency_ours_vs_quality_topk": candidate.d_efficiency,
+        "effective_rank_ratio_ours_vs_quality_topk": candidate.rank_ratio,
+        "temporal_entropy": {
+            "ours": candidate.temporal_entropy_ours,
+            "quality_topk": candidate.temporal_entropy_topk,
+        },
+        "logdet_gain": {
+            "ours": candidate.ours_summary.logdet_gain,
+            "quality_topk": candidate.topk_summary.logdet_gain,
+        },
+        "effective_rank": {
+            "ours": candidate.ours_summary.effective_rank,
+            "quality_topk": candidate.topk_summary.effective_rank,
+        },
+        "selection_score": candidate.selection_score,
+    }
+
+
+def main() -> None:
+    args = parse_args()
+    if args.candidate_count <= 0:
+        raise ValueError("--candidate-count must be positive")
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = Path(args.metadata_jsonl).expanduser().resolve()
+    dataset_root = Path(args.dataset_root).expanduser().resolve()
+    questions = load_questions(metadata_path)
+    videos = [path for path in discover_videos(dataset_root) if path.stem in questions]
+    rng = random.Random(args.seed)
+    rng.shuffle(videos)
+    videos = videos[: args.candidate_count]
+    if not videos:
+        raise RuntimeError("no VideoMME videos matched the metadata")
+
+    print(
+        f"[setup] candidates={len(videos)} seed={args.seed} output={output_dir}",
+        flush=True,
+    )
+    tokenizer, model, image_processor, device = load_certvid_model(args)
+    config = model.flashvid_config
+    setattr(config, "certv3_certificate_budget_ratio", 0.0)
+    setattr(config, "_capture_visualization_design", True)
+
+    audit_records: list[dict[str, Any]] = []
+    best: Candidate | None = None
+    for number, video_path in enumerate(videos, start=1):
+        question_record = questions[video_path.stem][0]
+        print(f"[scan] {number}/{len(videos)} {video_path.name}", flush=True)
+        try:
+            frames_np, _, _ = sample_video(video_path, args.num_frames)
+            pixel_values_cpu = image_processor.preprocess(frames_np, return_tensors="pt")[
+                "pixel_values"
+            ]
+            display_frames = tensor_frames_to_pil(pixel_values_cpu, image_processor)
+            pixel_values = pixel_values_cpu.to(device=device, dtype=torch.float16)
+            input_ids, attention_mask = prepare_prompt(tokenizer, question_record.prompt, device)
+            prediction_raw, _, plan = generate_once(
+                model=model,
+                tokenizer=tokenizer,
+                pixel_values=pixel_values,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                retention_ratio=args.retention_ratio,
+                expansion=args.expansion,
+                llm_retention_ratio=args.llm_retention_ratio,
+                max_new_tokens=args.max_new_tokens,
+            )
+            analysis = getattr(config, "_visualization_certvid_analysis", None)
+            if plan is None or not isinstance(analysis, dict):
+                raise RuntimeError("CertVID did not publish a visualization plan")
+            if "design" not in analysis or "quality" not in analysis:
+                raise RuntimeError("visualization capture is missing design or quality")
+
+            design = analysis["design"].float().cpu()
+            quality = analysis["quality"].float().reshape(-1).cpu()
+            ours_indices = plan.anchor_indices.detach().long().cpu().sort().values
+            budget = int(ours_indices.numel())
+            topk_indices = torch.argsort(quality, descending=True, stable=True)[:budget].sort().values
+            if design.ndim != 2 or len(design) != len(quality):
+                raise RuntimeError("captured design and quality shapes do not match")
+            frame_count = len(display_frames)
+            if len(design) % frame_count:
+                raise RuntimeError("raw visual-token count is not divisible by frame count")
+            tokens_per_frame = len(design) // frame_count
+            grid_height, grid_width = factor_grid(tokens_per_frame)
+            ridge = float(analysis.get("ridge", 0.5))
+            ours_summary = _information_summary(design, ours_indices, ridge)
+            topk_summary = _information_summary(design, topk_indices, ridge)
+            overlap_ratio = float(torch.isin(ours_indices, topk_indices).float().mean().item())
+            entropy_ours = _normalized_entropy(ours_indices, frame_count, tokens_per_frame)
+            entropy_topk = _normalized_entropy(topk_indices, frame_count, tokens_per_frame)
+            score, d_efficiency, rank_ratio = _selection_score(
+                ours_summary,
+                topk_summary,
+                int(design.shape[1]),
+                overlap_ratio,
+                entropy_ours,
+                entropy_topk,
+            )
+            valid_labels = [label for label, _ in question_record.options]
+            candidate = Candidate(
+                video_id=video_path.stem,
+                video_path=video_path,
+                question_id=question_record.question_id,
+                question=question_record.question,
+                options=[
+                    {"label": label, "text": text} for label, text in question_record.options
+                ],
+                target=question_record.answer,
+                prediction=extract_answer_label(prediction_raw, valid_labels),
+                raw_prediction=prediction_raw,
+                frames=display_frames,
+                design=design,
+                quality=quality,
+                ours_indices=ours_indices,
+                topk_indices=topk_indices,
+                ours_summary=ours_summary,
+                topk_summary=topk_summary,
+                ridge=ridge,
+                frame_count=frame_count,
+                tokens_per_frame=tokens_per_frame,
+                grid_height=grid_height,
+                grid_width=grid_width,
+                overlap_ratio=overlap_ratio,
+                temporal_entropy_ours=entropy_ours,
+                temporal_entropy_topk=entropy_topk,
+                d_efficiency=d_efficiency,
+                rank_ratio=rank_ratio,
+                selection_score=score,
+            )
+            audit_records.append(_audit_record(candidate, False))
+            if best is None or candidate.selection_score > best.selection_score:
+                if best is not None:
+                    del best
+                best = candidate
+            print(
+                f"[score] {video_path.stem} score={score:.4f} "
+                f"D-eff={d_efficiency:.3f}x rank={rank_ratio:.3f}x "
+                f"overlap={100.0 * overlap_ratio:.1f}%",
+                flush=True,
+            )
+            del pixel_values, pixel_values_cpu, input_ids, attention_mask
+        except Exception as error:
+            print(f"[skip] {video_path.name}: {error}", flush=True)
+            traceback.print_exc()
+        finally:
+            setattr(config, "_certvid_plan", None)
+            setattr(config, "_visualization_certvid_analysis", None)
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    if best is None:
+        raise RuntimeError("no candidate produced a valid CertVID visualization capture")
+    _plot(best, output_dir, args.dpi)
+    audit_records.sort(key=lambda item: float(item["selection_score"]), reverse=True)
+    for record in audit_records:
+        record["selected_for_figure"] = record["video_id"] == best.video_id
+    audit = {
+        "selection_policy": (
+            "Geometry-only ranking: normalized log-det gain, effective-rank gain, "
+            "temporal-entropy gain, and keep-set disagreement. Answers are not used."
+        ),
+        "seed": args.seed,
+        "candidate_count_requested": args.candidate_count,
+        "candidate_count_valid": len(audit_records),
+        "configuration": {
+            "dataset": "VideoMME",
+            "model": "LLaVA-OneVision-7B",
+            "frames": args.num_frames,
+            "retention_ratio": args.retention_ratio,
+            "expansion": args.expansion,
+            "pruning_layer": args.pruning_layer,
+            "llm_retention_ratio": args.llm_retention_ratio,
+            "certificate_budget_ratio": 0.0,
+        },
+        "ranked_candidates": audit_records,
+    }
+    (output_dir / "doptimal_case_audit.json").write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"[complete] selected={best.video_id}", flush=True)
+    print(f"[complete] figure={output_dir / 'doptimal_representative_case.png'}", flush=True)
+    print(f"[complete] audit={output_dir / 'doptimal_case_audit.json'}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
