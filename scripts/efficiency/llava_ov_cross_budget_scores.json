@@ -1,0 +1,5 @@
+{
+  "vanilla": {"avg_score": 58.4, "rel_acc": 100.0},
+  "flashvid": {"avg_score": 46.6, "rel_acc": 79.8},
+  "ours": {"avg_score": 47.4, "rel_acc": 81.2}
+}

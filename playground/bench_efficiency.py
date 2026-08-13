@@ -322,14 +322,14 @@ def decode_generated_output(tokenizer, output_ids: torch.Tensor, prompt_length: 
     return extract_choice_letter(text)
 
 
-def apply_method(model, method: str):
+def apply_method(model, method: str, retention_ratio: float):
     if method == "vanilla":
         return model
     from flashvid import flashvid
 
     spec = METHOD_SPECS[method]
     kwargs: dict[str, Any] = {
-        "retention_ratio": 0.01,
+        "retention_ratio": retention_ratio,
         "compression_variant": spec.variant,
         "expansion": spec.expansion,
         "pruning_layer": spec.pruning_layer,
@@ -494,6 +494,7 @@ def llm_tflops(sequence_tokens: int, layers: int) -> float:
 
 def token_audit(
     method: str,
+    retention_ratio: float,
     raw_tokens: int,
     outer_tokens: int,
     inner_tokens: int,
@@ -504,7 +505,7 @@ def token_audit(
     layer_average = (
         dense_layers * outer_tokens + (layers - dense_layers) * inner_tokens
     ) / layers
-    target_float = raw_tokens * 0.01
+    target_float = raw_tokens * retention_ratio
     target_floor = int(math.floor(target_float + 1e-9))
 
     if spec.budget_contract == "uncompressed":
@@ -525,7 +526,7 @@ def token_audit(
     )
     return {
         "budget_contract": spec.budget_contract,
-        "nominal_retention_ratio": 1.0 if method == "vanilla" else 0.01,
+        "nominal_retention_ratio": 1.0 if method == "vanilla" else retention_ratio,
         "raw_visual_tokens": raw_tokens,
         "outer_visual_tokens": outer_tokens,
         "inner_visual_tokens": inner_tokens,
@@ -548,6 +549,7 @@ def timed_generate(
     image_tensors: list[torch.Tensor],
     image_sizes: list[tuple[int, int]],
     method: str,
+    retention_ratio: float,
     max_new_tokens: int,
 ) -> tuple[dict[str, Any], torch.Tensor]:
     timer = StageTimer(model, accelerated=method != "vanilla")
@@ -583,9 +585,13 @@ def timed_generate(
             raise RuntimeError(
                 f"invalid token audit raw={raw_tokens} outer={outer_tokens} inner={inner_tokens}"
             )
-        audit = token_audit(method, raw_tokens, outer_tokens, inner_tokens)
+        audit = token_audit(
+            method, retention_ratio, raw_tokens, outer_tokens, inner_tokens
+        )
         if not audit["budget_ok"]:
-            raise RuntimeError(f"strict 1% token budget failed: {audit}")
+            raise RuntimeError(
+                f"strict {retention_ratio:.4%} token budget failed: {audit}"
+            )
         vision = times["vision_encoding"]
         compression = times["compression"]
         llm = times["llm_forward"]
@@ -644,14 +650,19 @@ def run_method(args: argparse.Namespace) -> None:
             f"expected GPU containing {args.require_gpu_name!r}, found {gpu_name!r}"
         )
 
+    retention_ratio = 1.0 if method == "vanilla" else float(args.retention_ratio)
+    if not 0.0 < retention_ratio <= 1.0:
+        raise ValueError(f"invalid retention ratio: {retention_ratio}")
+
     tokenizer, model, image_processor = get_model(args)
-    model = apply_method(model, method)
+    model = apply_method(model, method, retention_ratio)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     video_root = Path(args.video_root)
 
     print(
         f"[setup] method={method} samples={len(manifest)} "
+        f"retention={retention_ratio:.4%} "
         f"warmup={args.num_warmup} repeats={args.num_repeats} "
         f"gpu={gpu_name} memory={gpu_memory_gb:.1f}GiB output={output}"
     )
@@ -691,6 +702,7 @@ def run_method(args: argparse.Namespace) -> None:
                     image_tensors,
                     image_sizes,
                     method,
+                    retention_ratio,
                     args.max_new_tokens,
                 )
                 if repeat_index == 0:
@@ -766,8 +778,11 @@ def summarize(args: argparse.Namespace) -> None:
     summaries: dict[str, Any] = {}
     observed_gpu_names: set[str] = set()
     reference_frame_hashes: dict[str, str] | None = None
+    methods = tuple(args.methods)
+    if not methods or methods[0] != "vanilla" or len(set(methods)) != len(methods):
+        raise ValueError("summary methods must be unique and start with vanilla")
 
-    for method in METHOD_ORDER:
+    for method in methods:
         path = input_dir / f"{method}.jsonl"
         records = _read_jsonl(path)
         if len(records) != len(manifest) * args.num_repeats:
@@ -842,6 +857,7 @@ def summarize(args: argparse.Namespace) -> None:
                 for duration in DURATION_ORDER
             },
             "budget_contract": records[0]["budget_contract"],
+            "retention_ratio": float(records[0]["nominal_retention_ratio"]),
             "metrics": {
                 key: _stats(_sample_means(records, key)) for key in metric_keys
             },
@@ -859,13 +875,17 @@ def summarize(args: argparse.Namespace) -> None:
     vanilla_prefill = summaries["vanilla"]["metrics"]["prefilling_total_ms"]["mean"]
     vanilla_ttft = summaries["vanilla"]["metrics"]["ttft_ms"]["mean"]
     table_rows: list[dict[str, Any]] = []
-    for method in METHOD_ORDER:
+    for method in methods:
         metrics = summaries[method]["metrics"]
         prefill = metrics["prefilling_total_ms"]["mean"]
         ttft = metrics["ttft_ms"]["mean"]
         row = {
             "method": METHOD_LABELS[method],
-            "retention_ratio": "100%" if method == "vanilla" else "1%",
+            "retention_ratio": (
+                "100%"
+                if method == "vanilla"
+                else f"{100.0 * summaries[method]['retention_ratio']:g}%"
+            ),
             "tflops": metrics["tflops"]["mean"],
             "vision_encoding_ms": metrics["vision_encoding_ms"]["mean"],
             "compression_ms": metrics["compression_ms"]["mean"],
@@ -892,7 +912,9 @@ def summarize(args: argparse.Namespace) -> None:
         "protocol": {
             "model": "LLaVA-OneVision-7B",
             "gpu": "NVIDIA GeForce RTX 5090 32GB",
-            "retention_ratio": 0.01,
+            "retention_ratios": {
+                method: summaries[method]["retention_ratio"] for method in methods
+            },
             "num_frames": 32,
             "num_samples": len(manifest),
             "num_warmup": args.num_warmup,
@@ -962,7 +984,7 @@ def summarize(args: argparse.Namespace) -> None:
     tex_lines = [
         r"\begin{table*}[t]",
         r"\centering",
-        rf"\caption{{Efficiency on LLaVA-OneVision at 1\% retention. Times are averaged over {len(manifest)} VideoMME videos on an NVIDIA GeForce RTX 5090 32GB GPU.}}",
+        rf"\caption{{Efficiency on LLaVA-OneVision. Times are averaged over {len(manifest)} VideoMME videos on an NVIDIA GeForce RTX 5090 32GB GPU.}}",
         r"\label{tab:efficiency}",
         r"\resizebox{\textwidth}{!}{%",
         r"\begin{tabular}{lccccccccc}",
@@ -1023,6 +1045,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--manifest", required=True)
     run.add_argument("--video-root", required=True)
     run.add_argument("--output", required=True)
+    run.add_argument("--retention-ratio", type=float, default=0.01)
     run.add_argument("--device", default="cuda:0")
     run.add_argument("--mm-spatial-pool-mode", default="bilinear")
     run.add_argument("--num-frames", type=int, default=32)
@@ -1039,6 +1062,9 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--score-file", default=str(DEFAULT_SCORE_FILE))
     report.add_argument("--num-warmup", type=int, default=1)
     report.add_argument("--num-repeats", type=int, default=3)
+    report.add_argument(
+        "--methods", nargs="+", choices=METHOD_ORDER, default=list(METHOD_ORDER)
+    )
     report.set_defaults(func=summarize)
     return parser
 
