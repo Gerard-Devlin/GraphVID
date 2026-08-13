@@ -15,7 +15,6 @@ import json
 import math
 import os
 import random
-import textwrap
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -170,12 +169,12 @@ def _overlay_tokens(
             x0 = round(col * width / grid_width)
             x1 = round((col + 1) * width / grid_width)
             if token in selected_set:
-                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(*color, 46))
+                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(*color, 40))
                 draw.rectangle(
-                    (x0, y0, x1 - 1, y1 - 1), outline=(*color, 255), width=line_width
+                    (x0, y0, x1 - 1, y1 - 1), outline=(*color, 235), width=line_width
                 )
             else:
-                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(22, 27, 32, 104))
+                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(24, 29, 35, 72))
     return Image.alpha_composite(base, mask).convert("RGB")
 
 
@@ -185,10 +184,13 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    teal = "#008C87"
-    orange = "#E58A2B"
-    gray = "#9AA1A8"
-    ink = "#17212B"
+    # Muted, print-safe colors following the visual hierarchy used in paper figures:
+    # the baseline recedes while our method carries the single strong accent.
+    ours_color = "#0F4D92"
+    baseline_color = "#D88F8A"
+    token_gray = "#AEB7BF"
+    grid_color = "#D8DEE4"
+    ink = "#26323D"
     frame_index = _representative_frame(candidate)
     ours_per_frame = _per_frame(
         candidate.ours_indices, candidate.frame_count, candidate.tokens_per_frame
@@ -201,14 +203,14 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
         topk_per_frame[frame_index],
         candidate.grid_height,
         candidate.grid_width,
-        (229, 138, 43),
+        (216, 143, 138),
     )
     ours_overlay = _overlay_tokens(
         candidate.frames[frame_index],
         ours_per_frame[frame_index],
         candidate.grid_height,
         candidate.grid_width,
-        (0, 155, 150),
+        (15, 77, 146),
     )
 
     coordinates, explained = _pca_coordinates(candidate.design)
@@ -217,8 +219,34 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
     spectrum_ours = np.sort(candidate.ours_summary.axis_information)[::-1]
     spectrum_topk = np.sort(candidate.topk_summary.axis_information)[::-1]
 
-    fig = plt.figure(figsize=(14.8, 8.0), facecolor="white")
-    grid = fig.add_gridspec(2, 3, height_ratios=(1.03, 1.0), hspace=0.33, wspace=0.28)
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
+            "font.size": 9.0,
+            "axes.labelsize": 9.0,
+            "axes.titlesize": 10.2,
+            "axes.titleweight": "semibold",
+            "axes.edgecolor": ink,
+            "axes.linewidth": 0.8,
+            "xtick.labelsize": 8.0,
+            "ytick.labelsize": 8.0,
+            "legend.fontsize": 7.8,
+        }
+    )
+
+    fig = plt.figure(figsize=(13.4, 6.7), facecolor="white")
+    grid = fig.add_gridspec(
+        2,
+        3,
+        height_ratios=(1.0, 0.96),
+        left=0.052,
+        right=0.988,
+        bottom=0.085,
+        top=0.965,
+        hspace=0.34,
+        wspace=0.30,
+    )
     ax_topk = fig.add_subplot(grid[0, 0])
     ax_ours = fig.add_subplot(grid[0, 1])
     ax_timeline = fig.add_subplot(grid[0, 2])
@@ -228,51 +256,63 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
 
     ax_topk.imshow(topk_overlay)
     ax_topk.set_title(
-        f"(a) Quality Top-K | {len(topk_per_frame[frame_index])} tokens in frame",
-        fontweight="bold",
-        color=orange,
+        "(a) Quality Top-K",
+        loc="left",
+        color=baseline_color,
+        pad=7,
     )
     ax_ours.imshow(ours_overlay)
     ax_ours.set_title(
-        f"(b) Ours: D-optimal | {len(ours_per_frame[frame_index])} tokens in frame",
-        fontweight="bold",
-        color=teal,
+        "(b) D-optimal selection",
+        loc="left",
+        color=ours_color,
+        pad=7,
     )
     for axis in (ax_topk, ax_ours):
         axis.set_axis_off()
 
     x = np.arange(candidate.frame_count)
     ax_timeline.plot(
-        x, [len(values) for values in topk_per_frame], color=orange, marker="o", ms=3,
-        linewidth=1.5, label="Quality Top-K"
+        x,
+        [len(values) for values in topk_per_frame],
+        color=baseline_color,
+        marker="o",
+        ms=2.7,
+        linewidth=1.45,
+        label="Quality Top-K",
     )
     ax_timeline.plot(
-        x, [len(values) for values in ours_per_frame], color=teal, marker="o", ms=3,
-        linewidth=1.7, label="Ours"
+        x,
+        [len(values) for values in ours_per_frame],
+        color=ours_color,
+        marker="o",
+        ms=2.7,
+        linewidth=1.65,
+        label="Ours",
     )
-    ax_timeline.axvline(frame_index, color="#D05050", linestyle="--", linewidth=1.0)
-    ax_timeline.set_title("(c) Temporal token allocation", fontweight="bold", color=ink)
+    ax_timeline.axvline(frame_index, color="#7B858E", linestyle="--", linewidth=0.9)
+    ax_timeline.set_title("(c) Temporal allocation", loc="left", color=ink, pad=7)
     ax_timeline.set_xlabel("Sampled frame")
     ax_timeline.set_ylabel("Selected tokens")
-    ax_timeline.legend(frameon=False, fontsize=8)
-    ax_timeline.grid(alpha=0.18, linewidth=0.7)
+    ax_timeline.legend(frameon=False, loc="upper right", handlelength=2.0)
+    ax_timeline.grid(color=grid_color, alpha=0.62, linewidth=0.65)
 
     ax_pca.scatter(
-        coordinates[:, 0], coordinates[:, 1], s=4, color=gray, alpha=0.14,
+        coordinates[:, 0], coordinates[:, 1], s=3.2, color=token_gray, alpha=0.13,
         linewidths=0, label="All visual tokens"
     )
     ax_pca.scatter(
         coordinates[topk_np, 0], coordinates[topk_np, 1], s=18, marker="x",
-        color=orange, alpha=0.72, linewidths=0.8, label="Quality Top-K"
+        color=baseline_color, alpha=0.82, linewidths=0.8, label="Quality Top-K"
     )
     ax_pca.scatter(
-        coordinates[ours_np, 0], coordinates[ours_np, 1], s=15, color=teal,
-        alpha=0.75, linewidths=0, label="Ours"
+        coordinates[ours_np, 0], coordinates[ours_np, 1], s=15, color=ours_color,
+        alpha=0.78, linewidths=0, label="Ours"
     )
-    ax_pca.set_title("(d) Coverage in the actual design space", fontweight="bold", color=ink)
+    ax_pca.set_title("(d) Design-space coverage", loc="left", color=ink, pad=7)
     ax_pca.set_xlabel(f"PC 1 ({100.0 * explained[0]:.1f}% variance)")
     ax_pca.set_ylabel(f"PC 2 ({100.0 * explained[1]:.1f}% variance)")
-    ax_pca.legend(frameon=False, fontsize=7.5)
+    ax_pca.legend(frameon=False, loc="best", handletextpad=0.4)
 
     metric_names = ["D-efficiency", "Effective rank", "Temporal entropy"]
     ours_metrics = [
@@ -282,61 +322,45 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
     ]
     positions = np.arange(len(metric_names))
     width = 0.36
-    ax_metrics.bar(positions - width / 2, np.ones(3), width, color=orange, alpha=0.82,
+    ax_metrics.bar(positions - width / 2, np.ones(3), width, color=baseline_color, alpha=0.72,
                    label="Quality Top-K")
-    bars = ax_metrics.bar(positions + width / 2, ours_metrics, width, color=teal, alpha=0.88,
+    bars = ax_metrics.bar(positions + width / 2, ours_metrics, width, color=ours_color, alpha=0.90,
                           label="Ours")
     for bar, value in zip(bars, ours_metrics):
         ax_metrics.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f"{value:.2f}x",
-                        ha="center", va="bottom", fontsize=9, fontweight="bold", color=teal)
-    ax_metrics.set_xticks(positions, metric_names, rotation=12)
+                        ha="center", va="bottom", fontsize=8.2, fontweight="semibold",
+                        color=ours_color)
+    ax_metrics.set_xticks(positions, metric_names, rotation=10)
     ax_metrics.set_ylabel("Relative to Quality Top-K")
-    ax_metrics.set_title("(e) Equal-budget structural quality", fontweight="bold", color=ink)
-    ax_metrics.axhline(1.0, color="#7C838A", linewidth=0.8, linestyle="--")
-    ax_metrics.legend(frameon=False, fontsize=8)
-    ax_metrics.grid(axis="y", alpha=0.18, linewidth=0.7)
+    ax_metrics.set_title("(e) Structural quality", loc="left", color=ink, pad=7)
+    ax_metrics.axhline(1.0, color="#7B858E", linewidth=0.8, linestyle="--")
+    ax_metrics.legend(frameon=False, loc="upper left")
+    ax_metrics.grid(axis="y", color=grid_color, alpha=0.62, linewidth=0.65)
 
     axes_index = np.arange(1, len(spectrum_ours) + 1)
-    ax_spectrum.plot(axes_index, spectrum_topk, color=orange, linewidth=1.6,
+    ax_spectrum.plot(axes_index, spectrum_topk, color=baseline_color, linewidth=1.45,
                      label="Quality Top-K")
-    ax_spectrum.plot(axes_index, spectrum_ours, color=teal, linewidth=1.9, label="Ours")
-    ax_spectrum.fill_between(axes_index, spectrum_topk, spectrum_ours, color=teal, alpha=0.10)
-    ax_spectrum.set_title("(f) Information spectrum", fontweight="bold", color=ink)
+    ax_spectrum.plot(axes_index, spectrum_ours, color=ours_color, linewidth=1.75, label="Ours")
+    ax_spectrum.fill_between(
+        axes_index, spectrum_topk, spectrum_ours, color=ours_color, alpha=0.075
+    )
+    ax_spectrum.set_title("(f) Information spectrum", loc="left", color=ink, pad=7)
     ax_spectrum.set_xlabel("Design eigen-directions")
     ax_spectrum.set_ylabel(r"$\log(1 + \lambda_j / \lambda)$")
-    ax_spectrum.legend(frameon=False, fontsize=8)
-    ax_spectrum.grid(alpha=0.18, linewidth=0.7)
+    ax_spectrum.legend(frameon=False, loc="upper right")
+    ax_spectrum.grid(color=grid_color, alpha=0.62, linewidth=0.65)
 
-    question = " ".join(candidate.question.split())
-    wrapped = "\n".join(textwrap.wrap(question, width=118)[:2])
-    fig.suptitle(
-        f"D-optimal selection preserves complementary evidence at "
-        f"K={len(candidate.ours_indices)}/{len(candidate.design)} visual tokens\n"
-        f"{wrapped}",
-        fontsize=13,
-        fontweight="bold",
-        color=ink,
-        y=0.985,
-    )
-    fig.text(
-        0.5,
-        0.012,
-        f"VideoMME {candidate.video_id} | representative frame {frame_index + 1}/"
-        f"{candidate.frame_count} | selection overlap {100.0 * candidate.overlap_ratio:.1f}%",
-        ha="center",
-        fontsize=8.5,
-        color="#59616A",
-    )
     for axis in (ax_timeline, ax_pca, ax_metrics, ax_spectrum):
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
+        axis.tick_params(width=0.75, length=3.0, color=ink)
 
     for extension in ("png", "pdf"):
         fig.savefig(
             output_dir / f"doptimal_representative_case.{extension}",
             dpi=dpi,
             bbox_inches="tight",
-            pad_inches=0.06,
+            pad_inches=0.025,
             facecolor="white",
         )
     plt.close(fig)
