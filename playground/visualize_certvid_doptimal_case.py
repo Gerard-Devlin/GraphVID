@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from visualize_certvid_two_examples import (
     discover_videos,
@@ -174,34 +174,36 @@ def _representative_frame(candidate: Candidate) -> int:
     return max(pool, key=lambda index: (float(scores[index]), -abs(index - 15.5)))
 
 
-def _overlay_tokens(
+def _selection_heatmap(
     frame: Image.Image,
     selected: list[int],
+    quality: np.ndarray,
     grid_height: int,
     grid_width: int,
-    color: tuple[int, int, int],
 ) -> Image.Image:
-    base = frame.convert("RGBA")
-    width, height = base.size
-    selected_set = set(selected)
-    mask = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(mask)
-    line_width = max(1, round(min(width, height) / 190))
-    for row in range(grid_height):
-        y0 = round(row * height / grid_height)
-        y1 = round((row + 1) * height / grid_height)
-        for col in range(grid_width):
-            token = row * grid_width + col
-            x0 = round(col * width / grid_width)
-            x1 = round((col + 1) * width / grid_width)
-            if token in selected_set:
-                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(*color, 40))
-                draw.rectangle(
-                    (x0, y0, x1 - 1, y1 - 1), outline=(*color, 235), width=line_width
-                )
-            else:
-                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(24, 29, 35, 18))
-    return Image.alpha_composite(base, mask).convert("RGB")
+    import matplotlib
+
+    token_count = grid_height * grid_width
+    values = np.asarray(quality, dtype=np.float32).reshape(-1)
+    if len(values) != token_count:
+        raise ValueError(
+            f"heatmap quality has {len(values)} values, expected {token_count}"
+        )
+
+    # Selection is the dominant signal. Quality only modulates color within
+    # selected and unselected groups, preserving an honest keep-set comparison.
+    normalized = np.clip(values, 0.0, 1.0)
+    heat = 0.04 + 0.18 * normalized
+    selected_array = np.asarray(selected, dtype=np.int64)
+    if selected_array.size:
+        heat[selected_array] = 0.80 + 0.20 * normalized[selected_array]
+    heat = heat.reshape(grid_height, grid_width)
+
+    rgba = matplotlib.colormaps["turbo"](heat, bytes=True)
+    heatmap = Image.fromarray(rgba[:, :, :3], mode="RGB").resize(
+        frame.size, resample=Image.Resampling.NEAREST
+    )
+    return Image.blend(frame.convert("RGB"), heatmap, alpha=0.52)
 
 
 def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
@@ -224,19 +226,22 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
     topk_per_frame = _per_frame(
         candidate.topk_indices, candidate.frame_count, candidate.tokens_per_frame
     )
-    topk_overlay = _overlay_tokens(
+    frame_quality = candidate.quality.reshape(
+        candidate.frame_count, candidate.tokens_per_frame
+    )[frame_index].numpy()
+    topk_overlay = _selection_heatmap(
         candidate.frames[frame_index],
         topk_per_frame[frame_index],
+        frame_quality,
         candidate.grid_height,
         candidate.grid_width,
-        (216, 143, 138),
     )
-    ours_overlay = _overlay_tokens(
+    ours_overlay = _selection_heatmap(
         candidate.frames[frame_index],
         ours_per_frame[frame_index],
+        frame_quality,
         candidate.grid_height,
         candidate.grid_width,
-        (15, 77, 146),
     )
 
     coordinates, explained = _pca_coordinates(candidate.design)
@@ -412,6 +417,14 @@ def _audit_record(candidate: Candidate, selected: bool) -> dict[str, Any]:
             "selection_symmetric_difference": len(
                 set(topk_per_frame[frame_index]) ^ set(ours_per_frame[frame_index])
             ),
+        },
+        "selection_heatmap": {
+            "semantics": (
+                "Blue denotes unselected patches and red denotes selected patches; "
+                "the shared V3 quality score only modulates intensity within each group."
+            ),
+            "shared_frame_and_scale": True,
+            "attention_map": False,
         },
         "design_dimension": int(candidate.design.shape[1]),
         "ridge": candidate.ridge,
