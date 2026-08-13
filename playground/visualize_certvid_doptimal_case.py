@@ -137,15 +137,41 @@ def _per_frame(indices: torch.Tensor, frame_count: int, tokens_per_frame: int) -
 def _representative_frame(candidate: Candidate) -> int:
     ours = _per_frame(candidate.ours_indices, candidate.frame_count, candidate.tokens_per_frame)
     topk = _per_frame(candidate.topk_indices, candidate.frame_count, candidate.tokens_per_frame)
-    return max(
-        range(candidate.frame_count),
-        key=lambda frame: (
-            len(set(ours[frame]) - set(topk[frame])),
-            len(set(ours[frame]) ^ set(topk[frame])),
-            len(ours[frame]),
-            -abs(frame - (candidate.frame_count - 1) / 2.0),
-        ),
+
+    # A large keep-set disagreement is only useful when the underlying frame is
+    # visually informative. Rank both factors so dark transitions and title
+    # cards cannot win merely because their sparse selections differ.
+    visual_detail: list[float] = []
+    disagreement: list[float] = []
+    support: list[float] = []
+    for frame_index, frame in enumerate(candidate.frames):
+        image = np.asarray(frame.convert("L"), dtype=np.float32) / 255.0
+        contrast = float(image.std())
+        edge_x = float(np.abs(np.diff(image, axis=1)).mean()) if image.shape[1] > 1 else 0.0
+        edge_y = float(np.abs(np.diff(image, axis=0)).mean()) if image.shape[0] > 1 else 0.0
+        visual_detail.append(contrast + 2.5 * (edge_x + edge_y))
+        ours_set = set(ours[frame_index])
+        topk_set = set(topk[frame_index])
+        disagreement.append(float(len(ours_set ^ topk_set)))
+        support.append(float(min(len(ours_set), len(topk_set))))
+
+    def normalize(values: list[float]) -> np.ndarray:
+        array = np.asarray(values, dtype=np.float64)
+        span = float(array.max() - array.min())
+        return (array - array.min()) / span if span > 1e-12 else np.zeros_like(array)
+
+    scores = (
+        0.55 * normalize(visual_detail)
+        + 0.35 * normalize(disagreement)
+        + 0.10 * normalize(support)
     )
+    valid = [
+        index
+        for index in range(candidate.frame_count)
+        if ours[index] and topk[index] and disagreement[index] > 0
+    ]
+    pool = valid or list(range(candidate.frame_count))
+    return max(pool, key=lambda index: (float(scores[index]), -abs(index - 15.5)))
 
 
 def _overlay_tokens(
@@ -174,7 +200,7 @@ def _overlay_tokens(
                     (x0, y0, x1 - 1, y1 - 1), outline=(*color, 235), width=line_width
                 )
             else:
-                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(24, 29, 35, 72))
+                draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=(24, 29, 35, 18))
     return Image.alpha_composite(base, mask).convert("RGB")
 
 
@@ -235,43 +261,32 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
         }
     )
 
-    fig = plt.figure(figsize=(13.4, 6.7), facecolor="white")
-    grid = fig.add_gridspec(
-        2,
-        3,
-        height_ratios=(1.0, 0.96),
-        left=0.052,
-        right=0.988,
-        bottom=0.085,
-        top=0.965,
-        hspace=0.34,
-        wspace=0.30,
-    )
-    ax_topk = fig.add_subplot(grid[0, 0])
-    ax_ours = fig.add_subplot(grid[0, 1])
-    ax_timeline = fig.add_subplot(grid[0, 2])
-    ax_pca = fig.add_subplot(grid[1, 0])
-    ax_metrics = fig.add_subplot(grid[1, 1])
-    ax_spectrum = fig.add_subplot(grid[1, 2])
+    def save_figure(fig, stem: str, *, pad: float = 0.025) -> None:
+        for extension in ("png", "pdf"):
+            fig.savefig(
+                output_dir / f"{stem}.{extension}",
+                dpi=dpi,
+                bbox_inches="tight",
+                pad_inches=pad,
+                facecolor="white",
+            )
+        plt.close(fig)
 
-    ax_topk.imshow(topk_overlay)
-    ax_topk.set_title(
-        "(a) Quality Top-K",
-        loc="left",
-        color=baseline_color,
-        pad=7,
-    )
-    ax_ours.imshow(ours_overlay)
-    ax_ours.set_title(
-        "(b) D-optimal selection",
-        loc="left",
-        color=ours_color,
-        pad=7,
-    )
-    for axis in (ax_topk, ax_ours):
+    def save_token_map(image: Image.Image, stem: str) -> None:
+        width, height = image.size
+        fig, axis = plt.subplots(figsize=(4.2, 4.2 * height / max(1, width)))
+        axis.imshow(image)
         axis.set_axis_off()
+        fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
+        save_figure(fig, stem, pad=0.0)
+
+    # The first two outputs are intentionally image-only. Method names, frame
+    # indices, and token counts are recorded in the JSON audit for the caption.
+    save_token_map(topk_overlay, "01_quality_topk")
+    save_token_map(ours_overlay, "02_doptimal_selection")
 
     x = np.arange(candidate.frame_count)
+    fig, ax_timeline = plt.subplots(figsize=(5.2, 3.35))
     ax_timeline.plot(
         x,
         [len(values) for values in topk_per_frame],
@@ -291,12 +306,17 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
         label="Ours",
     )
     ax_timeline.axvline(frame_index, color="#7B858E", linestyle="--", linewidth=0.9)
-    ax_timeline.set_title("(c) Temporal allocation", loc="left", color=ink, pad=7)
     ax_timeline.set_xlabel("Sampled frame")
     ax_timeline.set_ylabel("Selected tokens")
     ax_timeline.legend(frameon=False, loc="upper right", handlelength=2.0)
     ax_timeline.grid(color=grid_color, alpha=0.62, linewidth=0.65)
+    ax_timeline.spines["top"].set_visible(False)
+    ax_timeline.spines["right"].set_visible(False)
+    ax_timeline.tick_params(width=0.75, length=3.0, color=ink)
+    fig.tight_layout(pad=0.45)
+    save_figure(fig, "03_temporal_allocation")
 
+    fig, ax_pca = plt.subplots(figsize=(4.7, 4.05))
     ax_pca.scatter(
         coordinates[:, 0], coordinates[:, 1], s=3.2, color=token_gray, alpha=0.13,
         linewidths=0, label="All visual tokens"
@@ -309,10 +329,14 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
         coordinates[ours_np, 0], coordinates[ours_np, 1], s=15, color=ours_color,
         alpha=0.78, linewidths=0, label="Ours"
     )
-    ax_pca.set_title("(d) Design-space coverage", loc="left", color=ink, pad=7)
     ax_pca.set_xlabel(f"PC 1 ({100.0 * explained[0]:.1f}% variance)")
     ax_pca.set_ylabel(f"PC 2 ({100.0 * explained[1]:.1f}% variance)")
     ax_pca.legend(frameon=False, loc="best", handletextpad=0.4)
+    ax_pca.spines["top"].set_visible(False)
+    ax_pca.spines["right"].set_visible(False)
+    ax_pca.tick_params(width=0.75, length=3.0, color=ink)
+    fig.tight_layout(pad=0.45)
+    save_figure(fig, "04_design_space_coverage")
 
     metric_names = ["D-efficiency", "Effective rank", "Temporal entropy"]
     ours_metrics = [
@@ -322,6 +346,7 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
     ]
     positions = np.arange(len(metric_names))
     width = 0.36
+    fig, ax_metrics = plt.subplots(figsize=(5.0, 3.55))
     ax_metrics.bar(positions - width / 2, np.ones(3), width, color=baseline_color, alpha=0.72,
                    label="Quality Top-K")
     bars = ax_metrics.bar(positions + width / 2, ours_metrics, width, color=ours_color, alpha=0.90,
@@ -332,41 +357,42 @@ def _plot(candidate: Candidate, output_dir: Path, dpi: int) -> None:
                         color=ours_color)
     ax_metrics.set_xticks(positions, metric_names, rotation=10)
     ax_metrics.set_ylabel("Relative to Quality Top-K")
-    ax_metrics.set_title("(e) Structural quality", loc="left", color=ink, pad=7)
     ax_metrics.axhline(1.0, color="#7B858E", linewidth=0.8, linestyle="--")
     ax_metrics.legend(frameon=False, loc="upper left")
     ax_metrics.grid(axis="y", color=grid_color, alpha=0.62, linewidth=0.65)
+    ax_metrics.spines["top"].set_visible(False)
+    ax_metrics.spines["right"].set_visible(False)
+    ax_metrics.tick_params(width=0.75, length=3.0, color=ink)
+    fig.tight_layout(pad=0.45)
+    save_figure(fig, "05_structural_quality")
 
     axes_index = np.arange(1, len(spectrum_ours) + 1)
+    fig, ax_spectrum = plt.subplots(figsize=(5.0, 3.55))
     ax_spectrum.plot(axes_index, spectrum_topk, color=baseline_color, linewidth=1.45,
                      label="Quality Top-K")
     ax_spectrum.plot(axes_index, spectrum_ours, color=ours_color, linewidth=1.75, label="Ours")
     ax_spectrum.fill_between(
         axes_index, spectrum_topk, spectrum_ours, color=ours_color, alpha=0.075
     )
-    ax_spectrum.set_title("(f) Information spectrum", loc="left", color=ink, pad=7)
     ax_spectrum.set_xlabel("Design eigen-directions")
     ax_spectrum.set_ylabel(r"$\log(1 + \lambda_j / \lambda)$")
     ax_spectrum.legend(frameon=False, loc="upper right")
     ax_spectrum.grid(color=grid_color, alpha=0.62, linewidth=0.65)
-
-    for axis in (ax_timeline, ax_pca, ax_metrics, ax_spectrum):
-        axis.spines["top"].set_visible(False)
-        axis.spines["right"].set_visible(False)
-        axis.tick_params(width=0.75, length=3.0, color=ink)
-
-    for extension in ("png", "pdf"):
-        fig.savefig(
-            output_dir / f"doptimal_representative_case.{extension}",
-            dpi=dpi,
-            bbox_inches="tight",
-            pad_inches=0.025,
-            facecolor="white",
-        )
-    plt.close(fig)
+    ax_spectrum.spines["top"].set_visible(False)
+    ax_spectrum.spines["right"].set_visible(False)
+    ax_spectrum.tick_params(width=0.75, length=3.0, color=ink)
+    fig.tight_layout(pad=0.45)
+    save_figure(fig, "06_information_spectrum")
 
 
 def _audit_record(candidate: Candidate, selected: bool) -> dict[str, Any]:
+    frame_index = _representative_frame(candidate)
+    ours_per_frame = _per_frame(
+        candidate.ours_indices, candidate.frame_count, candidate.tokens_per_frame
+    )
+    topk_per_frame = _per_frame(
+        candidate.topk_indices, candidate.frame_count, candidate.tokens_per_frame
+    )
     return {
         "selected_for_figure": selected,
         "video_id": candidate.video_id,
@@ -378,6 +404,15 @@ def _audit_record(candidate: Candidate, selected: bool) -> dict[str, Any]:
         "raw_prediction": candidate.raw_prediction,
         "raw_tokens": int(len(candidate.design)),
         "selected_tokens": int(len(candidate.ours_indices)),
+        "representative_frame": {
+            "zero_based_index": frame_index,
+            "one_based_index": frame_index + 1,
+            "quality_topk_tokens": len(topk_per_frame[frame_index]),
+            "doptimal_tokens": len(ours_per_frame[frame_index]),
+            "selection_symmetric_difference": len(
+                set(topk_per_frame[frame_index]) ^ set(ours_per_frame[frame_index])
+            ),
+        },
         "design_dimension": int(candidate.design.shape[1]),
         "ridge": candidate.ridge,
         "selection_overlap_ratio": candidate.overlap_ratio,
@@ -563,7 +598,7 @@ def main() -> None:
         json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(f"[complete] selected={best.video_id}", flush=True)
-    print(f"[complete] figure={output_dir / 'doptimal_representative_case.png'}", flush=True)
+    print(f"[complete] figures={output_dir / '01_quality_topk.png'} ... 06", flush=True)
     print(f"[complete] audit={output_dir / 'doptimal_case_audit.json'}", flush=True)
 
 
