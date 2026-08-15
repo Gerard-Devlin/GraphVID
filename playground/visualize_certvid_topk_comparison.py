@@ -39,7 +39,7 @@ from visualize_certvid_volume import _information_summary
 
 
 BASELINE_COLOR = "#D98C84"
-OURS_COLOR = "#BD345D"
+OURS_COLOR = "#2A9D6F"
 UNSELECTED_COLOR = "#16324A"
 GRID_COLOR = "#F4F0EA"
 INK_COLOR = "#20242A"
@@ -451,7 +451,8 @@ def _plot(
         for row, axes in row_axes.items()
     }
     first_panel_left = min(axis.get_position().x0 for axis in row_axes[1])
-    label_x = 0.5 * first_panel_left
+    # Keep row labels close to the first panel without overlapping the image.
+    label_x = 0.72 * first_panel_left
     fig.text(
         label_x,
         row_centers[1],
