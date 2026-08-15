@@ -267,7 +267,9 @@ def _retention_map(
             x1 = int(round((column + 1) * width / grid_width))
             token = row * grid_width + column
             if token in selected_set:
-                alpha = int(round(42 + 36 * quality[token]))
+                # Keep the underlying evidence visible while making the two
+                # method colors legible on saturated sports footage.
+                alpha = int(round(58 + 46 * quality[token]))
                 draw.rectangle((x0, y0, x1, y1), fill=(*accent_rgb, alpha))
                 selected_boxes.append((x0, y0, x1, y1))
             else:
