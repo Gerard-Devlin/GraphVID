@@ -405,7 +405,7 @@ def _plot(
         height_ratios=(0.62, 1.0, 1.0),
         hspace=0.10,
         wspace=0.055,
-        left=0.155,
+        left=0.105,
         right=0.992,
         bottom=0.025,
         top=0.985,
@@ -455,7 +455,7 @@ def _plot(
     fig.text(
         label_x,
         row_centers[1],
-        "Quality Top-K",
+        "Quality\nTop-K",
         ha="center",
         va="center",
         fontsize=12.0,
