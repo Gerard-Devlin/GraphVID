@@ -220,16 +220,36 @@ def _auto_comparison_frames(
             dtype=np.float64,
         )
     )
-    score = 0.42 * detail + 0.43 * disagreement + 0.15 * support
+    luminance = _normalize(
+        np.asarray([_frame_luminance(frame) for frame in frames], dtype=np.float64)
+    )
+    score = 0.58 * disagreement + 0.22 * support + 0.15 * detail + 0.05 * luminance
 
-    # Select one frame from each temporal quartile. This preserves the visual
-    # narrative and prevents all four panels from collapsing onto one event.
-    boundaries = np.linspace(0, frame_count, 5, dtype=int)
+    # Prefer the clearest frames with the largest keep-set disagreement, while
+    # enforcing temporal separation so the comparison spans distinct events.
+    ranked = sorted(
+        range(frame_count),
+        key=lambda index: (
+            _frame_luminance(frames[index]) >= 0.12,
+            float(score[index]),
+            -index,
+        ),
+        reverse=True,
+    )
     selected: list[int] = []
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        candidates = list(range(start, max(start + 1, end)))
-        selected.append(max(candidates, key=lambda index: (float(score[index]), -index)))
-    return selected
+    minimum_separation = max(2, frame_count // 8)
+    for frame_index in ranked:
+        if all(abs(frame_index - other) >= minimum_separation for other in selected):
+            selected.append(frame_index)
+        if len(selected) == 4:
+            break
+    if len(selected) < 4:
+        for frame_index in ranked:
+            if frame_index not in selected:
+                selected.append(frame_index)
+            if len(selected) == 4:
+                break
+    return sorted(selected)
 
 
 def _normalized_entropy(
