@@ -80,6 +80,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset-root", default=str(hf_home / "videomme" / "data"))
     parser.add_argument("--metadata-jsonl", default="assets/videomme.jsonl")
+    parser.add_argument(
+        "--candidate-ids-file",
+        default=None,
+        help=(
+            "Optional ordered video-ID allowlist. Blank lines and text after '#' "
+            "are ignored. When provided, only listed videos are scanned."
+        ),
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--candidate-count", type=int, default=20)
     parser.add_argument("--num-frames", type=int, default=32)
@@ -247,6 +255,8 @@ def _retention_map(
     draw = ImageDraw.Draw(overlay, "RGBA")
     unselected_rgb = tuple(int(UNSELECTED_COLOR[index : index + 2], 16) for index in (1, 3, 5))
     accent_rgb = tuple(int(accent[index : index + 2], 16) for index in (1, 3, 5))
+    border_width = max(1, int(round(min(width, height) / 260)))
+    selected_boxes: list[tuple[int, int, int, int]] = []
 
     for row in range(grid_height):
         y0 = int(round(row * height / grid_height))
@@ -258,12 +268,7 @@ def _retention_map(
             if token in selected_set:
                 alpha = int(round(42 + 36 * quality[token]))
                 draw.rectangle((x0, y0, x1, y1), fill=(*accent_rgb, alpha))
-                border_width = max(1, int(round(min(width, height) / 260)))
-                draw.rectangle(
-                    (x0, y0, max(x0, x1 - 1), max(y0, y1 - 1)),
-                    outline=(*accent_rgb, 245),
-                    width=border_width,
-                )
+                selected_boxes.append((x0, y0, x1, y1))
             else:
                 alpha = int(round(112 + 38 * (1.0 - quality[token])))
                 draw.rectangle((x0, y0, x1, y1), fill=(*unselected_rgb, alpha))
@@ -277,6 +282,20 @@ def _retention_map(
     for column in range(1, grid_width):
         x = int(round(column * width / grid_width))
         draw.line((x, 0, x, height), fill=(*grid_rgb, 42), width=1)
+
+    # Draw selection boundaries last. Insetting them keeps all four edges inside
+    # the image and prevents neighboring fills or grid lines from covering them.
+    inset = max(1, (border_width + 1) // 2)
+    for x0, y0, x1, y1 in selected_boxes:
+        left = min(x1 - 1, x0 + inset)
+        top = min(y1 - 1, y0 + inset)
+        right = max(left, x1 - 1 - inset)
+        bottom = max(top, y1 - 1 - inset)
+        draw.rectangle(
+            (left, top, right, bottom),
+            outline=(*accent_rgb, 255),
+            width=border_width,
+        )
     return Image.alpha_composite(result, overlay).convert("RGB")
 
 
@@ -388,6 +407,7 @@ def _plot(case: ComparisonCase, output_dir: Path, filmstrip_frames: int, dpi: in
     film_axis.imshow(strip)
     film_axis.set_axis_off()
 
+    row_axes: dict[int, list[Any]] = {1: [], 2: []}
     for column, frame_index in enumerate(case.comparison_frames):
         topk_map = _retention_map(
             case.frames[frame_index],
@@ -407,30 +427,43 @@ def _plot(case: ComparisonCase, output_dir: Path, filmstrip_frames: int, dpi: in
         )
         for row, image in ((1, topk_map), (2, ours_map)):
             axis = fig.add_subplot(grid[row, column])
+            row_axes[row].append(axis)
             axis.imshow(image)
             axis.set_axis_off()
             if row == 1:
                 axis.set_title(f"Frame {frame_index + 1}", fontsize=11.2, pad=5.0)
 
+    # Derive label positions from the rendered panels instead of fragile constants.
+    fig.canvas.draw()
+    row_centers = {
+        row: sum(
+            0.5 * (axis.get_position().y0 + axis.get_position().y1)
+            for axis in axes
+        )
+        / len(axes)
+        for row, axes in row_axes.items()
+    }
+    first_panel_left = min(axis.get_position().x0 for axis in row_axes[1])
+    label_x = 0.5 * first_panel_left
     fig.text(
-        0.076,
-        0.455,
+        label_x,
+        row_centers[1],
         "Quality Top-K",
         ha="center",
         va="center",
         fontsize=12.0,
         fontweight="semibold",
-        color=BASELINE_COLOR,
+        color=INK_COLOR,
     )
     fig.text(
-        0.076,
-        0.165,
+        label_x,
+        row_centers[2],
         "CertVID",
         ha="center",
         va="center",
         fontsize=12.5,
         fontweight="bold",
-        color=OURS_COLOR,
+        color=INK_COLOR,
     )
 
     stem = output_dir / "certvid_equal_budget_retention_maps"
@@ -499,8 +532,38 @@ def main() -> None:
     dataset_root = Path(args.dataset_root).expanduser().resolve()
     questions = load_questions(metadata_path)
     videos = [path for path in discover_videos(dataset_root) if path.stem in questions]
-    rng = random.Random(args.seed)
-    rng.shuffle(videos)
+    candidate_ids_path: Path | None = None
+    if args.candidate_ids_file:
+        candidate_ids_path = Path(args.candidate_ids_file).expanduser().resolve()
+        if not candidate_ids_path.is_file():
+            raise FileNotFoundError(
+                f"candidate video-ID file does not exist: {candidate_ids_path}"
+            )
+        candidate_ids = []
+        for line in candidate_ids_path.read_text(encoding="utf-8").splitlines():
+            video_id = line.split("#", 1)[0].strip()
+            if video_id and video_id not in candidate_ids:
+                candidate_ids.append(video_id)
+        if not candidate_ids:
+            raise RuntimeError(f"candidate video-ID file is empty: {candidate_ids_path}")
+        candidate_order = {
+            video_id: position for position, video_id in enumerate(candidate_ids)
+        }
+        videos = [path for path in videos if path.stem in candidate_order]
+        videos.sort(key=lambda path: candidate_order[path.stem])
+        missing_ids = [
+            video_id
+            for video_id in candidate_ids
+            if all(path.stem != video_id for path in videos)
+        ]
+        if missing_ids:
+            print(
+                f"[setup] candidate IDs without local videos: {','.join(missing_ids)}",
+                flush=True,
+            )
+    else:
+        rng = random.Random(args.seed)
+        rng.shuffle(videos)
     videos = videos[: args.candidate_count]
     if not videos:
         raise RuntimeError("no VideoMME videos matched the metadata")
@@ -653,6 +716,9 @@ def main() -> None:
             "keep-set disagreement, temporal entropy, and frame visual detail."
         ),
         "seed": args.seed,
+        "candidate_ids_file": (
+            str(candidate_ids_path) if candidate_ids_path is not None else None
+        ),
         "configuration": {
             "dataset": "VideoMME",
             "model": "LLaVA-OneVision-7B",

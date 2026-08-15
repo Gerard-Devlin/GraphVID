@@ -21,8 +21,9 @@ PYTHON_BIN=${PYTHON_BIN:-/home/xuyouwen/.conda/envs/graphvid311/bin/python}
 MODEL_REPO=${MODEL_REPO:-$HF_HUB_CACHE/models--lmms-lab--llava-onevision-qwen2-7b-ov}
 DATASET_ROOT=${DATASET_ROOT:-$HF_HOME/videomme/data}
 METADATA_JSONL=${METADATA_JSONL:-$ROOT/assets/videomme.jsonl}
+CANDIDATE_IDS_FILE=${CANDIDATE_IDS_FILE:-$ROOT/assets/videomme_sports_visualization.ids}
 GPU=${GPU:-4}
-CANDIDATE_COUNT=${CANDIDATE_COUNT:-20}
+CANDIDATE_COUNT=${CANDIDATE_COUNT:-12}
 SEED=${SEED:-20260815}
 RETENTION_RATIO=${RETENTION_RATIO:-0.01}
 COMPARISON_FRAMES=${COMPARISON_FRAMES:-1,8,17,26}
@@ -47,6 +48,10 @@ test -f "$METADATA_JSONL" || {
     echo "VideoMME metadata not found: $METADATA_JSONL" >&2
     exit 1
 }
+test -f "$CANDIDATE_IDS_FILE" || {
+    echo "Candidate video-ID file not found: $CANDIDATE_IDS_FILE" >&2
+    exit 1
+}
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -54,6 +59,7 @@ echo "============================================================"
 echo "Equal-budget Quality Top-K versus CertVID visualization"
 echo "GPU=$GPU candidates=$CANDIDATE_COUNT R=$RETENTION_RATIO"
 echo "comparison_frames=$COMPARISON_FRAMES"
+echo "candidate_ids=$CANDIDATE_IDS_FILE"
 echo "model=$MODEL"
 echo "output=$OUTPUT_DIR"
 echo "============================================================"
@@ -63,6 +69,7 @@ CUDA_VISIBLE_DEVICES="$GPU" "$PYTHON_BIN" \
     --model-path "$MODEL" \
     --dataset-root "$DATASET_ROOT" \
     --metadata-jsonl "$METADATA_JSONL" \
+    --candidate-ids-file "$CANDIDATE_IDS_FILE" \
     --candidate-count "$CANDIDATE_COUNT" \
     --num-frames 32 \
     --filmstrip-frames 8 \
