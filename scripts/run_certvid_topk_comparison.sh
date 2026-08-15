@@ -24,6 +24,7 @@ METADATA_JSONL=${METADATA_JSONL:-$ROOT/assets/videomme.jsonl}
 CANDIDATE_IDS_FILE=${CANDIDATE_IDS_FILE:-$ROOT/assets/videomme_sports_visualization.ids}
 GPU=${GPU:-4}
 CANDIDATE_COUNT=${CANDIDATE_COUNT:-12}
+NUM_EXAMPLES=${NUM_EXAMPLES:-3}
 SEED=${SEED:-20260815}
 RETENTION_RATIO=${RETENTION_RATIO:-0.01}
 COMPARISON_FRAMES=${COMPARISON_FRAMES:-1,8,17,26}
@@ -57,7 +58,7 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "============================================================"
 echo "Equal-budget Quality Top-K versus CertVID visualization"
-echo "GPU=$GPU candidates=$CANDIDATE_COUNT R=$RETENTION_RATIO"
+echo "GPU=$GPU candidates=$CANDIDATE_COUNT examples=$NUM_EXAMPLES R=$RETENTION_RATIO"
 echo "comparison_frames=$COMPARISON_FRAMES"
 echo "candidate_ids=$CANDIDATE_IDS_FILE"
 echo "model=$MODEL"
@@ -71,6 +72,7 @@ CUDA_VISIBLE_DEVICES="$GPU" "$PYTHON_BIN" \
     --metadata-jsonl "$METADATA_JSONL" \
     --candidate-ids-file "$CANDIDATE_IDS_FILE" \
     --candidate-count "$CANDIDATE_COUNT" \
+    --num-examples "$NUM_EXAMPLES" \
     --num-frames 32 \
     --filmstrip-frames 8 \
     --comparison-frames "$COMPARISON_FRAMES" \

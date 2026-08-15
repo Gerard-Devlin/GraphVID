@@ -90,6 +90,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--candidate-count", type=int, default=20)
+    parser.add_argument("--num-examples", type=int, default=3)
     parser.add_argument("--num-frames", type=int, default=32)
     parser.add_argument("--filmstrip-frames", type=int, default=8)
     parser.add_argument(
@@ -367,7 +368,13 @@ def _filmstrip(
     return canvas
 
 
-def _plot(case: ComparisonCase, output_dir: Path, filmstrip_frames: int, dpi: int) -> None:
+def _plot(
+    case: ComparisonCase,
+    output_dir: Path,
+    filmstrip_frames: int,
+    dpi: int,
+    stem_name: str,
+) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -466,7 +473,7 @@ def _plot(case: ComparisonCase, output_dir: Path, filmstrip_frames: int, dpi: in
         color=INK_COLOR,
     )
 
-    stem = output_dir / "certvid_equal_budget_retention_maps"
+    stem = output_dir / stem_name
     for extension in ("png", "pdf"):
         fig.savefig(
             stem.with_suffix(f".{extension}"),
@@ -523,6 +530,8 @@ def main() -> None:
     args = parse_args()
     if args.candidate_count <= 0:
         raise ValueError("--candidate-count must be positive")
+    if args.num_examples <= 0:
+        raise ValueError("--num-examples must be positive")
     if args.filmstrip_frames < 4:
         raise ValueError("--filmstrip-frames must be at least four")
 
@@ -577,7 +586,7 @@ def main() -> None:
     setattr(config, "certv3_certificate_budget_ratio", 0.0)
     setattr(config, "_capture_visualization_design", True)
 
-    best: ComparisonCase | None = None
+    top_cases: list[ComparisonCase] = []
     audits: list[dict[str, Any]] = []
     for number, video_path in enumerate(videos, start=1):
         question_record = questions[video_path.stem][0]
@@ -684,8 +693,9 @@ def main() -> None:
                 selection_score=score,
             )
             audits.append(_audit_record(case, False))
-            if best is None or case.selection_score > best.selection_score:
-                best = case
+            top_cases.append(case)
+            top_cases.sort(key=lambda item: item.selection_score, reverse=True)
+            del top_cases[args.num_examples :]
             print(
                 f"[score] {video_path.stem} score={score:.4f} "
                 f"D-eff={d_efficiency:.3f}x overlap={100.0 * overlap_ratio:.1f}% "
@@ -703,12 +713,31 @@ def main() -> None:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    if best is None:
+    if not top_cases:
         raise RuntimeError("no candidate produced a valid visualization capture")
-    _plot(best, output_dir, args.filmstrip_frames, args.dpi)
+    selected_ranks = {
+        case.video_id: rank for rank, case in enumerate(top_cases, start=1)
+    }
+    for rank, case in enumerate(top_cases, start=1):
+        stem_name = (
+            f"certvid_equal_budget_retention_maps_{rank:02d}_{case.video_id}"
+        )
+        _plot(
+            case,
+            output_dir,
+            args.filmstrip_frames,
+            args.dpi,
+            stem_name,
+        )
+        print(
+            f"[figure] rank={rank} video={case.video_id} "
+            f"file={output_dir / (stem_name + '.pdf')}",
+            flush=True,
+        )
     audits.sort(key=lambda item: float(item["selection_score"]), reverse=True)
     for record in audits:
-        record["selected_for_figure"] = record["video_id"] == best.video_id
+        record["selected_for_figure"] = record["video_id"] in selected_ranks
+        record["figure_rank"] = selected_ranks.get(record["video_id"])
     audit = {
         "figure": "Equal-budget Quality Top-K versus CertVID retention maps",
         "selection_policy": (
@@ -729,15 +758,16 @@ def main() -> None:
             "llm_retention_ratio": args.llm_retention_ratio,
             "certificate_budget_ratio": 0.0,
             "comparison_frames_argument": args.comparison_frames,
+            "num_examples": args.num_examples,
         },
         "ranked_candidates": audits,
     }
     (output_dir / "certvid_equal_budget_retention_maps.json").write_text(
         json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    print(f"[complete] selected={best.video_id}", flush=True)
     print(
-        f"[complete] figure={output_dir / 'certvid_equal_budget_retention_maps.png'}",
+        "[complete] selected="
+        + ",".join(case.video_id for case in top_cases),
         flush=True,
     )
 
