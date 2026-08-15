@@ -160,6 +160,41 @@ def _frame_detail(frame: Image.Image) -> float:
     return contrast + 2.5 * (edge_x + edge_y)
 
 
+def _frame_luminance(frame: Image.Image) -> float:
+    gray = np.asarray(frame.convert("L"), dtype=np.float32) / 255.0
+    return float(gray.mean())
+
+
+def _avoid_dark_comparison_frames(
+    frames: list[Image.Image],
+    selected: list[int],
+    radius: int = 4,
+    darkness_threshold: float = 0.12,
+) -> list[int]:
+    """Replace only near-black anchors with a nearby informative frame."""
+    result = list(selected)
+    occupied = set(result)
+    for position, frame_index in enumerate(result):
+        if _frame_luminance(frames[frame_index]) >= darkness_threshold:
+            continue
+        start = max(0, frame_index - radius)
+        end = min(len(frames), frame_index + radius + 1)
+        candidates = [index for index in range(start, end) if index not in occupied]
+        if not candidates:
+            continue
+        replacement = max(
+            candidates,
+            key=lambda index: (
+                _frame_luminance(frames[index]) + 0.35 * _frame_detail(frames[index]),
+                -abs(index - frame_index),
+            ),
+        )
+        occupied.remove(frame_index)
+        occupied.add(replacement)
+        result[position] = replacement
+    return result
+
+
 def _auto_comparison_frames(
     frames: list[Image.Image],
     ours_per_frame: list[list[int]],
@@ -473,7 +508,7 @@ def _plot(
     fig.text(
         label_x,
         row_centers[2],
-        "CertVID",
+        "Ours",
         ha="center",
         va="center",
         fontsize=12.5,
@@ -650,6 +685,10 @@ def main() -> None:
             if comparison_frames is None:
                 comparison_frames = _auto_comparison_frames(
                     display_frames, ours_per_frame, topk_per_frame
+                )
+            else:
+                comparison_frames = _avoid_dark_comparison_frames(
+                    display_frames, comparison_frames
                 )
 
             ridge = float(analysis.get("ridge", 0.5))
