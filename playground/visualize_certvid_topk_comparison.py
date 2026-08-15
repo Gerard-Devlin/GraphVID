@@ -39,6 +39,7 @@ from visualize_certvid_volume import _information_summary
 
 
 BASELINE_COLOR = "#D98C84"
+BASELINE_OUTLINE_COLOR = "#9F3232"
 OURS_COLOR = "#2A9D6F"
 UNSELECTED_COLOR = "#16324A"
 GRID_COLOR = "#F4F0EA"
@@ -243,6 +244,7 @@ def _retention_map(
     grid_height: int,
     grid_width: int,
     accent: str,
+    outline: str | None = None,
 ) -> Image.Image:
     base = frame.convert("RGB")
     width, height = base.size
@@ -256,6 +258,8 @@ def _retention_map(
     draw = ImageDraw.Draw(overlay, "RGBA")
     unselected_rgb = tuple(int(UNSELECTED_COLOR[index : index + 2], 16) for index in (1, 3, 5))
     accent_rgb = tuple(int(accent[index : index + 2], 16) for index in (1, 3, 5))
+    outline = outline or accent
+    outline_rgb = tuple(int(outline[index : index + 2], 16) for index in (1, 3, 5))
     border_width = max(1, int(round(min(width, height) / 260)))
     selected_boxes: list[tuple[int, int, int, int]] = []
 
@@ -296,7 +300,7 @@ def _retention_map(
         bottom = max(top, y1 - 1 - inset)
         draw.rectangle(
             (left, top, right, bottom),
-            outline=(*accent_rgb, 255),
+            outline=(*outline_rgb, 255),
             width=border_width,
         )
     return Image.alpha_composite(result, overlay).convert("RGB")
@@ -425,6 +429,7 @@ def _plot(
             case.grid_height,
             case.grid_width,
             BASELINE_COLOR,
+            BASELINE_OUTLINE_COLOR,
         )
         ours_map = _retention_map(
             case.frames[frame_index],
