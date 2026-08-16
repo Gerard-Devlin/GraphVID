@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 import torch
@@ -8,6 +9,29 @@ import torch.nn.functional as F
 from flashvid.configuration_flashvid import FlashVidConfig
 
 from .common import _cfg_float, _effective_ratio, _record_adapter_metrics
+
+
+def _uniform_frame_budgets(
+    *,
+    total_tokens: int,
+    num_frames: int,
+    tokens_per_frame: int,
+) -> list[int]:
+    """Distribute a strict global budget uniformly without exceeding it."""
+
+    total_tokens = max(0, min(int(total_tokens), int(num_frames * tokens_per_frame)))
+    if num_frames <= 0:
+        return []
+
+    # Center the integer remainders over time instead of assigning all extras
+    # to the earliest frames. The telescoping differences sum exactly to B.
+    offset = num_frames // 2
+    budgets = []
+    for frame_idx in range(num_frames):
+        start = (frame_idx * total_tokens + offset) // num_frames
+        end = ((frame_idx + 1) * total_tokens + offset) // num_frames
+        budgets.append(min(tokens_per_frame, end - start))
+    return budgets
 
 
 def _qwen25_global_visionzip(
@@ -25,7 +49,10 @@ def _qwen25_global_visionzip(
     total_tokens = int(flat_features.shape[0])
     target_tokens = max(
         1,
-        min(total_tokens, int(total_tokens * _effective_ratio(flashvid_config))),
+        min(
+            total_tokens,
+            math.floor(total_tokens * _effective_ratio(flashvid_config) + 1e-9),
+        ),
     )
 
     dominant_ratio = max(
@@ -148,7 +175,16 @@ def visionzip_compression(
     device = video_features.device
     dtype = video_features.dtype
     effective_ratio = _effective_ratio(flashvid_config)
-    per_frame_target = max(1, min(num_visual_tokens, int(num_visual_tokens * effective_ratio)))
+    raw_tokens = int(num_frames * num_visual_tokens)
+    target_tokens = max(
+        1,
+        min(raw_tokens, math.floor(raw_tokens * effective_ratio + 1e-9)),
+    )
+    frame_budgets = _uniform_frame_budgets(
+        total_tokens=target_tokens,
+        num_frames=num_frames,
+        tokens_per_frame=num_visual_tokens,
+    )
     # The released Qwen implementation allocates 65 dominant and 5 contextual
     # tokens out of every 70 output tokens.
     dominant_ratio = max(
@@ -158,9 +194,6 @@ def visionzip_compression(
             _cfg_float(flashvid_config, "visionzip_dominant_ratio", 65.0 / 70.0),
         ),
     )
-    dominant_num = min(per_frame_target, max(0, int(round(per_frame_target * dominant_ratio))))
-    contextual_num = max(0, per_frame_target - dominant_num)
-
     metric = getattr(flashvid_config, "_visionzip_metric", None)
     if (
         metric is None
@@ -183,6 +216,14 @@ def visionzip_compression(
     all_indices = []
     token_positions = torch.arange(num_visual_tokens, device=device)
     for frame_idx in range(num_frames):
+        frame_target = frame_budgets[frame_idx]
+        if frame_target <= 0:
+            continue
+        dominant_num = min(
+            frame_target,
+            max(0, int(round(frame_target * dominant_ratio))),
+        )
+        contextual_num = max(0, frame_target - dominant_num)
         hidden_states = video_features[frame_idx]
         attn = cls_attention[frame_idx].float()
         frame_selected_tokens = []
@@ -262,6 +303,11 @@ def visionzip_compression(
     order = torch.argsort(final_indices)
     final_tokens = final_tokens[order]
     final_indices = final_indices[order]
+    if int(final_tokens.shape[0]) != target_tokens:
+        raise RuntimeError(
+            "VisionZip failed to realize its strict global token budget: "
+            f"expected {target_tokens}, got {int(final_tokens.shape[0])}"
+        )
     flashvid_config.vision_token_length = int(final_tokens.shape[0])
     flashvid_config.llm_token_length = None
     flashvid_config.visual_token_length = int(final_tokens.shape[0])
@@ -269,7 +315,7 @@ def visionzip_compression(
         flashvid_config,
         variant="visionzip",
         output_tokens=int(final_tokens.shape[0]),
-        raw_tokens=int(num_frames * num_visual_tokens),
+        raw_tokens=raw_tokens,
     )
     return final_tokens, final_indices
 
