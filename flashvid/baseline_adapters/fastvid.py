@@ -11,6 +11,27 @@ from flashvid.configuration_flashvid import FlashVidConfig
 from .common import _cfg_float, _cfg_int, _effective_ratio, _record_adapter_metrics
 
 
+def _uniform_frame_budgets(
+    *,
+    total_tokens: int,
+    num_frames: int,
+    tokens_per_frame: int,
+) -> list[int]:
+    """Distribute a strict global budget uniformly across video frames."""
+
+    total_tokens = max(0, min(int(total_tokens), int(num_frames * tokens_per_frame)))
+    if num_frames <= 0:
+        return []
+
+    offset = num_frames // 2
+    budgets = []
+    for frame_idx in range(num_frames):
+        start = (frame_idx * total_tokens + offset) // num_frames
+        end = ((frame_idx + 1) * total_tokens + offset) // num_frames
+        budgets.append(min(tokens_per_frame, end - start))
+    return budgets
+
+
 def _fastvid_segment_sizes(frame_global_features: torch.Tensor, config: FlashVidConfig) -> list[int]:
     frame_num = int(frame_global_features.shape[0])
     if frame_num <= 1:
@@ -80,6 +101,67 @@ def fastvid_compression(
         frame_global_features.to(video_features.device),
         flashvid_config,
     )
+
+    raw_tokens = int(frame_num * frame_token_len)
+    target_tokens = max(
+        1,
+        min(
+            raw_tokens,
+            math.floor(raw_tokens * fastvid_retention_ratio + 1e-9),
+        ),
+    )
+
+    # At extreme ratios, per-frame floor plus ``max(1, ...)`` collapses
+    # different nominal budgets to the same one-token-per-frame output. When
+    # the strict global budget averages at most two tokens per frame, DTM has
+    # no contextual quota under FastVID's released STPrune rule. We can thus
+    # preserve its salient-token behavior exactly while distributing the
+    # integer remainder across frames without exceeding the global budget.
+    if target_tokens <= 2 * frame_num:
+        frame_budgets = _uniform_frame_budgets(
+            total_tokens=target_tokens,
+            num_frames=frame_num,
+            tokens_per_frame=frame_token_len,
+        )
+        selected_tokens = []
+        selected_indices = []
+        for frame_idx, frame_budget in enumerate(frame_budgets):
+            if frame_budget <= 0:
+                continue
+            local_indices = torch.topk(
+                frame_attn_weights[frame_idx],
+                k=frame_budget,
+                largest=True,
+                sorted=False,
+            ).indices
+            selected_tokens.append(video_hidden_states[frame_idx, local_indices])
+            selected_indices.append(alltoken_indices[frame_idx, local_indices])
+
+        hidden_states = torch.cat(selected_tokens, dim=0)
+        keep_indices = torch.cat(selected_indices, dim=0)
+        sorted_indices = torch.argsort(keep_indices)
+        hidden_states = hidden_states[sorted_indices]
+        keep_indices = keep_indices[sorted_indices]
+        if int(hidden_states.shape[0]) != target_tokens:
+            raise RuntimeError(
+                "FastVID strict low-budget allocation produced "
+                f"{hidden_states.shape[0]} tokens, expected {target_tokens}"
+            )
+
+        flashvid_config.vision_token_length = target_tokens
+        flashvid_config.llm_token_length = None
+        flashvid_config.visual_token_length = target_tokens
+        setattr(flashvid_config, "last_fastvid_segment_count", float(len(segment_sizes)))
+        setattr(flashvid_config, "last_fastvid_frame_retain_num", target_tokens / frame_num)
+        setattr(flashvid_config, "last_fastvid_target_tokens", float(target_tokens))
+        setattr(flashvid_config, "last_fastvid_strict_low_budget", 1.0)
+        _record_adapter_metrics(
+            flashvid_config,
+            variant="fastvid",
+            output_tokens=target_tokens,
+            raw_tokens=raw_tokens,
+        )
+        return hidden_states, keep_indices
 
     # Avoid dropping an exact integer budget because its floating-point
     # representation lands infinitesimally below the boundary (for example,
@@ -238,6 +320,8 @@ def fastvid_compression(
     flashvid_config.visual_token_length = int(hidden_states.shape[0])
     setattr(flashvid_config, "last_fastvid_segment_count", float(len(segment_sizes)))
     setattr(flashvid_config, "last_fastvid_frame_retain_num", float(frame_retain_num))
+    setattr(flashvid_config, "last_fastvid_target_tokens", float(target_tokens))
+    setattr(flashvid_config, "last_fastvid_strict_low_budget", 0.0)
     _record_adapter_metrics(
         flashvid_config,
         variant="fastvid",
