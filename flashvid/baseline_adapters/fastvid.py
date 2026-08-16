@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 import torch
@@ -80,7 +81,10 @@ def fastvid_compression(
         flashvid_config,
     )
 
-    frame_retain_num = int(frame_token_len * fastvid_retention_ratio)
+    # Avoid dropping an exact integer budget because its floating-point
+    # representation lands infinitesimally below the boundary (for example,
+    # 196 * (2 / 196) == 1.9999999999999998).
+    frame_retain_num = math.floor(frame_token_len * fastvid_retention_ratio + 1e-9)
     frame_retain_num = max(1, min(frame_token_len, frame_retain_num))
     frame_salient_num = frame_retain_num - int(frame_retain_num * fastvid_STPrune_d)
     frame_salient_num = max(0, min(frame_token_len, frame_salient_num))
