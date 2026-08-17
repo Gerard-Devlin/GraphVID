@@ -678,19 +678,40 @@ def _d_optimal_greedy(
         if column is not None and len(selected_columns) < budget:
             add(column)
 
-    while len(selected_columns) < budget:
+    remaining_steps = budget - len(selected_columns)
+    greedy_columns = torch.empty(
+        remaining_steps,
+        dtype=torch.long,
+        device=rows.device,
+    )
+    for step in range(remaining_steps):
         score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(~active, float("-inf"))
-        column = int(torch.argmax(score).item())
-        if not math.isfinite(float(score[column].item())):
-            remaining = torch.where(active)[0]
-            if remaining.numel() == 0:
-                break
-            column = int(remaining[0].item())
-        add(column)
+        column = torch.argmax(score)
+        remaining = torch.where(active)[0]
+        column = torch.where(torch.isfinite(score[column]), column, remaining[0])
 
-    if len(selected_columns) != budget:
+        row = rows[column]
+        direction = inverse @ row
+        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
+        projection = rows @ direction
+        leverage = (leverage - projection.square() / denominator).clamp_min(0.0)
+        inverse = inverse - torch.outer(direction, direction) / denominator
+        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
+        active[column] = False
+        leverage[column] = -1.0
+        greedy_columns[step] = column
+
+    if selected_columns:
+        mandatory_columns = torch.tensor(
+            selected_columns,
+            dtype=torch.long,
+            device=rows.device,
+        )
+        columns = torch.cat((mandatory_columns, greedy_columns))
+    else:
+        columns = greedy_columns
+    if int(columns.numel()) != budget:
         raise RuntimeError(f"D-optimal selector produced {len(selected_columns)} tokens for budget {budget}")
-    columns = torch.tensor(selected_columns, dtype=torch.long, device=candidates.device)
     return candidates[columns]
 
 
@@ -734,7 +755,13 @@ def _swap_refine(
         ]
         if not removable_positions:
             break
-        removable_positions.sort(key=lambda position: (float(removal_loss[position].item()), selected_tokens[position]))
+        removal_loss_cpu = removal_loss.detach().float().cpu().tolist()
+        removable_positions.sort(
+            key=lambda position: (
+                float(removal_loss_cpu[position]),
+                selected_tokens[position],
+            )
+        )
         removable_positions = removable_positions[: max(1, int(pool_size))]
 
         selected_column_set = set(selected_columns)
@@ -752,6 +779,8 @@ def _swap_refine(
         best_delta = float(margin)
         best_remove = -1
         best_add_column = -1
+        local_delta_tensors: list[torch.Tensor] = []
+        local_add_tensors: list[torch.Tensor] = []
         for position in removable_positions:
             removed = selected_rows[position]
             direction = inverse @ removed
@@ -759,12 +788,22 @@ def _swap_refine(
             inverse_without = inverse + torch.outer(direction, direction) / remove_denominator
             add_leverage = torch.sum((outside_rows @ inverse_without) * outside_rows, dim=1).clamp_min(0.0)
             delta = torch.log(remove_denominator) + torch.log1p(add_leverage)
-            local = int(torch.argmax(delta).item())
-            local_delta = float(delta[local].item())
+            local = torch.argmax(delta)
+            local_delta_tensors.append(delta[local])
+            local_add_tensors.append(outside_tensor[local])
+
+        local_deltas = torch.stack(local_delta_tensors).detach().float().cpu().tolist()
+        local_add_columns = torch.stack(local_add_tensors).detach().cpu().tolist()
+        for position, local_delta, local_add_column in zip(
+            removable_positions,
+            local_deltas,
+            local_add_columns,
+        ):
+            local_delta = float(local_delta)
             if local_delta > best_delta:
                 best_delta = local_delta
                 best_remove = position
-                best_add_column = int(outside_tensor[local].item())
+                best_add_column = int(local_add_column)
 
         if best_remove < 0:
             break
