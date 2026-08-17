@@ -44,6 +44,8 @@ NUM_REPEATS="${NUM_REPEATS:-3}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 SEED="${SEED:-20260813}"
 METHODS="${METHODS:-vanilla fastv visionzip fastvid flashvid ours}"
+BASELINE_RETENTION_RATIO="${BASELINE_RETENTION_RATIO:-0.01}"
+OURS_RETENTION_RATIO="${OURS_RETENTION_RATIO:-$BASELINE_RETENTION_RATIO}"
 SUMMARIZE="${SUMMARIZE:-1}"
 PROFILE_CERTVID_PHASES="${PROFILE_CERTVID_PHASES:-0}"
 EXACT_CUDA_GRAPHS="${EXACT_CUDA_GRAPHS:-1}"
@@ -70,8 +72,9 @@ export TMPDIR="${TMPDIR:-/home/xuyouwen/tmp}"
 echo "============================================================"
 echo "LLaVA-OneVision efficiency benchmark"
 echo "GPU=$GPU samples=$SAMPLE_COUNT warmup=$NUM_WARMUP repeats=$NUM_REPEATS"
-echo "frames=32 retention=1%"
+echo "frames=32 mixed-retention benchmark"
 echo "methods=$METHODS"
+echo "baseline_retention=$BASELINE_RETENTION_RATIO ours_retention=$OURS_RETENTION_RATIO"
 echo "profile_certvid_phases=$PROFILE_CERTVID_PHASES"
 echo "exact_cuda_graphs=$EXACT_CUDA_GRAPHS"
 echo "audit_exact_optimizations=$AUDIT_EXACT_OPTIMIZATIONS"
@@ -87,8 +90,14 @@ echo "============================================================"
   --seed "$SEED"
 
 for METHOD in $METHODS; do
+  METHOD_RETENTION_RATIO="$BASELINE_RETENTION_RATIO"
+  if [[ "$METHOD" == "ours" ]]; then
+    METHOD_RETENTION_RATIO="$OURS_RETENTION_RATIO"
+  elif [[ "$METHOD" == "vanilla" ]]; then
+    METHOD_RETENTION_RATIO="1.0"
+  fi
   echo "============================================================"
-  echo "[$(date)] starting method=$METHOD in a fresh process"
+  echo "[$(date)] starting method=$METHOD retention=$METHOD_RETENTION_RATIO in a fresh process"
   echo "============================================================"
   CUDA_VISIBLE_DEVICES="$GPU" \
     CERTV3_PROFILE_PHASES="$PROFILE_CERTVID_PHASES" \
@@ -101,6 +110,7 @@ for METHOD in $METHODS; do
       --manifest "$MANIFEST" \
       --video-root "$VIDEO_ROOT" \
       --output "$RAW_DIR/$METHOD.jsonl" \
+      --retention-ratio "$METHOD_RETENTION_RATIO" \
       --device cuda:0 \
       --num-frames 32 \
       --num-warmup "$NUM_WARMUP" \
