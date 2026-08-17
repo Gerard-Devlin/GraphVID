@@ -47,6 +47,7 @@ METHODS="${METHODS:-vanilla fastv visionzip fastvid flashvid ours}"
 SUMMARIZE="${SUMMARIZE:-1}"
 PROFILE_CERTVID_PHASES="${PROFILE_CERTVID_PHASES:-0}"
 EXACT_CUDA_GRAPHS="${EXACT_CUDA_GRAPHS:-1}"
+AUDIT_EXACT_OPTIMIZATIONS="${AUDIT_EXACT_OPTIMIZATIONS:-0}"
 SCORE_FILE="${SCORE_FILE:-$ROOT/scripts/efficiency/llava_ov_r1_scores.json}"
 OUT="${OUT:-$ROOT/logs/efficiency/llavaov_r1_$(date +%Y%m%d_%H%M%S)}"
 RAW_DIR="$OUT/raw"
@@ -73,6 +74,7 @@ echo "frames=32 retention=1%"
 echo "methods=$METHODS"
 echo "profile_certvid_phases=$PROFILE_CERTVID_PHASES"
 echo "exact_cuda_graphs=$EXACT_CUDA_GRAPHS"
+echo "audit_exact_optimizations=$AUDIT_EXACT_OPTIMIZATIONS"
 echo "model=$MODEL_PATH"
 echo "videos=$VIDEO_ROOT"
 echo "output=$OUT"
@@ -91,6 +93,7 @@ for METHOD in $METHODS; do
   CUDA_VISIBLE_DEVICES="$GPU" \
     CERTV3_PROFILE_PHASES="$PROFILE_CERTVID_PHASES" \
     CERTV3_USE_EXACT_CUDA_GRAPHS="$EXACT_CUDA_GRAPHS" \
+    CERTV3_AUDIT_EXACT_OPTIMIZATIONS="$AUDIT_EXACT_OPTIMIZATIONS" \
     "$PYTHON_BIN" playground/bench_efficiency.py run \
       --method "$METHOD" \
       --model-path "$MODEL_PATH" \

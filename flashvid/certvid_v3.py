@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from .certvid import (
     CertVidPlan,
-    _build_components,
+    _build_components as _build_components_reference,
     _build_plan,
     _cfg_float,
     _cfg_int,
@@ -30,8 +30,7 @@ from .configuration_flashvid import FlashVidConfig
 
 _PROFILE_ENV = "CERTV3_PROFILE_PHASES"
 _CERTIFICATE_STATS_ENV = "CERTV3_COLLECT_CERTIFICATE_STATS"
-_EXACT_CUDA_GRAPH_ENV = "CERTV3_USE_EXACT_CUDA_GRAPHS"
-_DOPT_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
+_EXACT_OPTIMIZATION_AUDIT_ENV = "CERTV3_AUDIT_EXACT_OPTIMIZATIONS"
 
 
 def _profile_enabled(features: torch.Tensor) -> bool:
@@ -46,9 +45,9 @@ def _certificate_stats_enabled(config: FlashVidConfig) -> bool:
     return _cfg_bool(config, "certv3_collect_certificate_stats", False)
 
 
-def _exact_cuda_graph_enabled(tensor: torch.Tensor) -> bool:
-    value = os.environ.get(_EXACT_CUDA_GRAPH_ENV, "").strip().lower()
-    return tensor.is_cuda and value in {"1", "true", "yes", "on"}
+def _exact_optimization_audit_enabled() -> bool:
+    value = os.environ.get(_EXACT_OPTIMIZATION_AUDIT_ENV, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _profile_record(
@@ -576,14 +575,34 @@ def _candidate_pool(
 ) -> torch.Tensor:
     total_tokens = int(quality.numel())
     limit = min(total_tokens, max(budget, int(math.ceil(budget * max(1.0, multiplier)))))
+
+    fast_candidates: Optional[torch.Tensor] = None
+    if not mandatory:
+        fast_candidates = _candidate_pool_without_certificates(
+            quality=quality,
+            component_ids=component_ids,
+            temporal_ids=temporal_ids,
+            spatial_ids=spatial_ids,
+            query_relevance=query_relevance,
+            limit=limit,
+            use_trajectory=use_trajectory,
+        )
+        if not _exact_optimization_audit_enabled():
+            return fast_candidates
+
     candidates: set[int] = set(int(token) for token in mandatory)
 
     def finish() -> torch.Tensor:
-        return torch.tensor(
+        reference = torch.tensor(
             sorted(candidates),
             dtype=torch.long,
             device=quality.device,
         )
+        if fast_candidates is not None:
+            if not torch.equal(fast_candidates, reference):
+                raise RuntimeError("device candidate pool differs from the reference path")
+            return fast_candidates
+        return reference
 
     def offer(tokens: list[int]) -> None:
         for token in tokens:
@@ -649,6 +668,199 @@ def _candidate_pool(
     if len(candidates) < budget:
         offer(list(range(total_tokens)))
     return finish()
+
+
+def _stable_score_token_order(
+    scores: torch.Tensor,
+    tokens: torch.Tensor,
+) -> torch.Tensor:
+    """Match Python's ``(-score, token)`` ordering without a CPU sync."""
+    token_order = torch.argsort(tokens, stable=True)
+    return token_order[
+        torch.argsort(scores[token_order], descending=True, stable=True)
+    ]
+
+
+def _best_token_per_group(
+    scores: torch.Tensor,
+    groups: torch.Tensor,
+    token_ids: torch.Tensor,
+    token_count: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return each group's highest-score, lowest-id token entirely on device."""
+    unique_groups, inverse = torch.unique(groups, sorted=True, return_inverse=True)
+    group_count = int(unique_groups.numel())
+    if group_count == 0:
+        return token_ids[:0], scores[:0]
+
+    maxima = torch.full(
+        (group_count,),
+        float("-inf"),
+        dtype=scores.dtype,
+        device=scores.device,
+    )
+    maxima.scatter_reduce_(0, inverse, scores, reduce="amax", include_self=True)
+    sentinel = int(token_count)
+    eligible = torch.where(
+        scores == maxima[inverse],
+        token_ids,
+        torch.full_like(token_ids, sentinel),
+    )
+    best = torch.full(
+        (group_count,),
+        sentinel,
+        dtype=torch.long,
+        device=scores.device,
+    )
+    best.scatter_reduce_(0, inverse, eligible, reduce="amin", include_self=True)
+    valid = best != sentinel
+    return best[valid], maxima[valid]
+
+
+def _candidate_pool_without_certificates(
+    *,
+    quality: torch.Tensor,
+    component_ids: torch.Tensor,
+    temporal_ids: torch.Tensor,
+    spatial_ids: torch.Tensor,
+    query_relevance: torch.Tensor,
+    limit: int,
+    use_trajectory: bool,
+) -> torch.Tensor:
+    """Exact no-certificate offer stream without host transfers or Python sets."""
+    total_tokens = int(quality.numel())
+    token_ids = torch.arange(total_tokens, dtype=torch.long, device=quality.device)
+    offer_streams: list[torch.Tensor] = []
+
+    if query_relevance.numel() > 0:
+        atom_count = int(query_relevance.shape[0])
+        query_tokens = token_ids.unsqueeze(0).expand(atom_count, -1).reshape(-1)
+        query_groups = (
+            torch.arange(atom_count, device=quality.device).unsqueeze(1)
+            * total_tokens
+            + temporal_ids.unsqueeze(0)
+        ).reshape(-1)
+        best, scores = _best_token_per_group(
+            query_relevance.reshape(-1),
+            query_groups,
+            query_tokens,
+            total_tokens,
+        )
+        offer_streams.append(best[_stable_score_token_order(scores, best)])
+
+    if use_trajectory:
+        best, scores = _best_token_per_group(
+            quality,
+            component_ids,
+            token_ids,
+            total_tokens,
+        )
+        offer_streams.append(best[_stable_score_token_order(scores, best)])
+
+    joint_cells = temporal_ids * total_tokens + spatial_ids
+    best, scores = _best_token_per_group(
+        quality,
+        joint_cells,
+        token_ids,
+        total_tokens,
+    )
+    offer_streams.append(best[_stable_score_token_order(scores, best)])
+    offer_streams.append(torch.argsort(quality, descending=True, stable=True))
+
+    offers = torch.cat(offer_streams)
+    positions = torch.arange(offers.numel(), dtype=torch.long, device=quality.device)
+    first = torch.full(
+        (total_tokens,),
+        offers.numel(),
+        dtype=torch.long,
+        device=quality.device,
+    )
+    first.scatter_reduce_(0, offers, positions, reduce="amin", include_self=True)
+    candidates = torch.argsort(first, stable=True)[:limit]
+    return torch.sort(candidates).values
+
+
+def _build_components_on_device(
+    frame_count: int,
+    tokens_per_frame: int,
+    frame_event: torch.Tensor,
+    matches: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    threshold: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build the same adjacent-frame components without a GPU-to-CPU round trip."""
+    total_tokens = frame_count * tokens_per_frame
+    device = frame_event.device
+    token_ids = torch.arange(total_tokens, dtype=torch.long, device=device)
+    if frame_count <= 1:
+        return token_ids, torch.ones(total_tokens, dtype=torch.long, device=device)
+
+    best_previous = torch.stack([entry[0] for entry in matches])
+    mutual = torch.stack([entry[1] for entry in matches])
+    similarity = torch.stack([entry[2] for entry in matches])
+    cut_threshold = torch.quantile(frame_event.float(), 0.90).clamp_min(0.65)
+    valid = (
+        mutual
+        & (similarity >= float(threshold))
+        & (frame_event[1:] <= cut_threshold).unsqueeze(1)
+    )
+
+    local_ids = torch.arange(tokens_per_frame, device=device).unsqueeze(0)
+    frame_offsets = (
+        torch.arange(1, frame_count, device=device).unsqueeze(1)
+        * tokens_per_frame
+    )
+    current = local_ids + frame_offsets
+    previous = best_previous + frame_offsets - tokens_per_frame
+    parents = token_ids.clone()
+    parents[current.reshape(-1)] = torch.where(
+        valid,
+        previous,
+        current,
+    ).reshape(-1)
+
+    # Every edge points to the immediately preceding frame, so ceil(log2(T))
+    # pointer jumps are sufficient to reach the exact connected-component root.
+    jumps = max(1, int(math.ceil(math.log2(max(2, frame_count)))))
+    for _ in range(jumps):
+        parents = parents[parents]
+
+    sentinel = total_tokens
+    minimum_member = torch.full(
+        (total_tokens,),
+        sentinel,
+        dtype=torch.long,
+        device=device,
+    )
+    minimum_member.scatter_reduce_(
+        0,
+        parents,
+        token_ids,
+        reduce="amin",
+        include_self=True,
+    )
+    component_key = minimum_member[parents]
+    _, component_ids = torch.unique(
+        component_key,
+        sorted=True,
+        return_inverse=True,
+    )
+    component_sizes = torch.bincount(component_ids)
+
+    if _exact_optimization_audit_enabled():
+        reference_ids, reference_sizes = _build_components_reference(
+            frame_count,
+            tokens_per_frame,
+            frame_event,
+            matches,
+            threshold,
+        )
+        if not torch.equal(component_ids.cpu(), reference_ids) or not torch.equal(
+            component_sizes.cpu(),
+            reference_sizes,
+        ):
+            raise RuntimeError("device component construction differs from the reference path")
+
+    return component_ids, component_sizes
 
 
 def _score_only_select(
@@ -733,73 +945,6 @@ def _d_optimal_unconstrained_columns(
     return columns
 
 
-def _d_optimal_unconstrained_columns_graph(
-    rows: torch.Tensor,
-    budget: int,
-    ridge: float,
-) -> torch.Tensor:
-    if not _exact_cuda_graph_enabled(rows):
-        return _d_optimal_unconstrained_columns(rows, budget, ridge)
-
-    key = (
-        rows.device.index,
-        tuple(rows.shape),
-        rows.dtype,
-        int(budget),
-        float(ridge),
-    )
-    cached = _DOPT_GRAPH_CACHE.get(key)
-    if cached is None:
-        static_rows = rows.detach().clone()
-        try:
-            warmup_stream = torch.cuda.Stream(device=rows.device)
-            warmup_stream.wait_stream(torch.cuda.current_stream(rows.device))
-            with torch.cuda.stream(warmup_stream):
-                _d_optimal_unconstrained_columns(
-                    static_rows,
-                    budget,
-                    ridge,
-                )
-            torch.cuda.current_stream(rows.device).wait_stream(warmup_stream)
-
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
-                static_columns = _d_optimal_unconstrained_columns(
-                    static_rows,
-                    budget,
-                    ridge,
-                )
-            cached = {
-                "graph": graph,
-                "rows": static_rows,
-                "columns": static_columns,
-            }
-            print(
-                "[CertVID V3] captured D-optimal CUDA graph "
-                f"for rows={tuple(rows.shape)} budget={budget}"
-            )
-        except RuntimeError as error:
-            cached = {"disabled": True}
-            print(
-                "[CertVID V3] D-optimal CUDA graph unavailable; "
-                f"using eager path: {error}"
-            )
-        _DOPT_GRAPH_CACHE[key] = cached
-
-    if bool(cached.get("disabled", False)):
-        return _d_optimal_unconstrained_columns(rows, budget, ridge)
-
-    static_rows = cached["rows"]
-    assert isinstance(static_rows, torch.Tensor)
-    static_rows.copy_(rows)
-    graph = cached["graph"]
-    assert isinstance(graph, torch.cuda.CUDAGraph)
-    graph.replay()
-    static_columns = cached["columns"]
-    assert isinstance(static_columns, torch.Tensor)
-    return static_columns
-
-
 def _d_optimal_greedy(
     *,
     design: torch.Tensor,
@@ -816,7 +961,7 @@ def _d_optimal_greedy(
 
     ridge = max(1e-4, float(ridge))
     if not mandatory:
-        columns = _d_optimal_unconstrained_columns_graph(
+        columns = _d_optimal_unconstrained_columns(
             rows,
             budget,
             ridge,
@@ -1130,7 +1275,7 @@ def certvid_v3_compression(
                 coords,
                 _cfg_float(flashvid_config, "certv3_spatial_penalty", 0.08),
             )
-            component_ids_cpu, component_sizes_cpu = _build_components(
+            component_ids, component_sizes = _build_components_on_device(
                 frame_count,
                 tokens_per_frame,
                 frame_event,
@@ -1151,10 +1296,16 @@ def certvid_v3_compression(
                 device=video_features.device,
             )
             curvature_2d = torch.zeros_like(novelty_2d)
-            component_ids_cpu = torch.arange(total_tokens, dtype=torch.long)
-            component_sizes_cpu = torch.ones(total_tokens, dtype=torch.long)
-        component_ids = component_ids_cpu.to(video_features.device)
-        component_sizes = component_sizes_cpu.to(video_features.device)
+            component_ids = torch.arange(
+                total_tokens,
+                dtype=torch.long,
+                device=video_features.device,
+            )
+            component_sizes = torch.ones(
+                total_tokens,
+                dtype=torch.long,
+                device=video_features.device,
+            )
         frame_ids = torch.arange(frame_count, device=video_features.device).repeat_interleave(tokens_per_frame)
         component_value = (
             _component_support(
