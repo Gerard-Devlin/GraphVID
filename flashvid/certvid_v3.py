@@ -1265,7 +1265,7 @@ def _swap_refine_no_certificate_capturable(
     steps: int,
     pool_size: int,
     margin: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Fixed-shape form of the original no-certificate Fedorov loop."""
     candidate_count, dimension = rows.shape
     budget = int(selected_columns.numel())
@@ -1282,7 +1282,10 @@ def _swap_refine_no_certificate_capturable(
     for _ in range(steps):
         selected_rows = torch.index_select(rows, 0, selected_columns)
         information = ridge * identity + selected_rows.transpose(0, 1) @ selected_rows
-        inverse = torch.linalg.inv(information)
+        # inv() synchronizes CUDA to check solver status, which is forbidden
+        # during graph capture. inv_ex uses the same solver without that sync;
+        # ridge regularization guarantees this information matrix is invertible.
+        inverse, _ = torch.linalg.inv_ex(information, check_errors=False)
         selected_leverage = torch.sum(
             (selected_rows @ inverse) * selected_rows,
             dim=1,
@@ -1395,10 +1398,7 @@ def _swap_refine_no_certificate_capturable(
         swaps = swaps + improved.to(torch.long)
         running = improved
 
-    final_rows = torch.index_select(rows, 0, selected_columns)
-    final_information = ridge * identity + final_rows.transpose(0, 1) @ final_rows
-    sign, logabsdet = torch.linalg.slogdet(final_information)
-    return selected_columns, swaps, sign, logabsdet
+    return selected_columns, swaps
 
 
 def _swap_refine(
@@ -1509,9 +1509,17 @@ def _swap_refine(
     graph.replay()
     output = cached["output"]
     assert isinstance(output, tuple)
-    graph_columns, graph_swaps_tensor, graph_sign, graph_logdet_tensor = output
+    graph_columns, graph_swaps_tensor = output
     graph_selected = candidates[graph_columns]
     graph_swaps = int(graph_swaps_tensor.item())
+    final_rows = torch.index_select(rows, 0, graph_columns)
+    identity = torch.eye(
+        int(rows.shape[1]),
+        dtype=torch.float32,
+        device=rows.device,
+    )
+    final_information = ridge * identity + final_rows.transpose(0, 1) @ final_rows
+    graph_sign, graph_logdet_tensor = torch.linalg.slogdet(final_information)
     graph_logdet = (
         float(graph_logdet_tensor.item())
         if float(graph_sign.item()) > 0.0
