@@ -28,6 +28,32 @@ from .certvid_v2 import _component_support, _trajectory_signals
 from .configuration_flashvid import FlashVidConfig
 
 
+_PROFILE_ENV = "CERTV3_PROFILE_PHASES"
+
+
+def _profile_enabled(features: torch.Tensor) -> bool:
+    value = os.environ.get(_PROFILE_ENV, "").strip().lower()
+    return features.is_cuda and value in {"1", "true", "yes", "on"}
+
+
+def _profile_record(
+    events: Optional[dict[str, tuple[torch.cuda.Event, torch.cuda.Event]]],
+    name: str,
+    boundary: int,
+) -> None:
+    """Record one phase boundary without synchronizing the CUDA stream."""
+    if events is None:
+        return
+    pair = events.get(name)
+    if pair is None:
+        pair = (
+            torch.cuda.Event(enable_timing=True),
+            torch.cuda.Event(enable_timing=True),
+        )
+        events[name] = pair
+    pair[boundary].record()
+
+
 def _cfg_bool(config: FlashVidConfig, name: str, default: bool) -> bool:
     value = getattr(config, name, default)
     if isinstance(value, str):
@@ -828,6 +854,10 @@ def certvid_v3_compression(
     analysis_sink: Optional[MutableMapping[str, Any]] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Select a certified D-optimal visual evidence coreset under one budget."""
+    phase_events: Optional[
+        dict[str, tuple[torch.cuda.Event, torch.cuda.Event]]
+    ] = {} if _profile_enabled(video_features) else None
+    setattr(flashvid_config, "_certv3_profile_events", phase_events)
     if analysis_sink is not None:
         analysis_sink.clear()
     if video_features.ndim != 3:
@@ -926,6 +956,7 @@ def certvid_v3_compression(
         if analysis_sink is not None:
             analysis_sink["identity"] = True
     else:
+        _profile_record(phase_events, "metric_layout", 0)
         metric_dim = max(32, _cfg_int(flashvid_config, "certv3_metric_dim", 96))
         metric_flat = _metric_features(video_features, metric_dim)
         metric_frames = metric_flat.view(frame_count, tokens_per_frame, -1)
@@ -938,6 +969,9 @@ def certvid_v3_compression(
             spatial_bins,
             video_features.device,
         )
+        _profile_record(phase_events, "metric_layout", 1)
+
+        _profile_record(phase_events, "trajectory_components", 0)
         if use_trajectory:
             frame_event, _, novelty_2d, curvature_2d, matches = _trajectory_signals(
                 metric_frames,
@@ -981,7 +1015,9 @@ def certvid_v3_compression(
             if use_trajectory
             else torch.zeros(total_tokens, dtype=torch.float32, device=video_features.device)
         )
+        _profile_record(phase_events, "trajectory_components", 1)
 
+        _profile_record(phase_events, "quality_signals", 0)
         temporal_count = min(frame_count, max(1, _cfg_int(flashvid_config, "certv3_temporal_bins", 12)))
         temporal_ids = torch.div(
             frame_ids * temporal_count,
@@ -1055,7 +1091,9 @@ def certvid_v3_compression(
         )
         demand_weight = 0.20 + 0.42 * quality + 0.20 * event_score + 0.18 * component_value
         demand_weight = demand_weight / demand_weight.sum().clamp_min(1e-6)
+        _profile_record(phase_events, "quality_signals", 1)
 
+        _profile_record(phase_events, "certificates_candidates", 0)
         certificate_kwargs = {
             "budget": budget,
             "quality": quality,
@@ -1131,6 +1169,9 @@ def certvid_v3_compression(
             multiplier=_cfg_float(flashvid_config, "certv3_candidate_multiplier", 2.5),
             use_trajectory=use_trajectory,
         )
+        _profile_record(phase_events, "certificates_candidates", 1)
+
+        _profile_record(phase_events, "design_whitening", 0)
         design = _design_features(
             metric_features=metric_flat,
             quality=quality,
@@ -1176,8 +1217,11 @@ def certvid_v3_compression(
             ):
                 raise ValueError("CertVID design mass must be finite and positive")
             design = design * design_mass.sqrt().unsqueeze(1)
+        _profile_record(phase_events, "design_whitening", 1)
+
         ridge = _cfg_float(flashvid_config, "certv3_ridge", 0.50)
         if selection_objective == "score_only":
+            _profile_record(phase_events, "d_optimal", 0)
             selected = _score_only_select(
                 quality=quality,
                 candidates=candidate_indices,
@@ -1186,7 +1230,9 @@ def certvid_v3_compression(
             )
             swaps = 0
             logdet = _selection_logdet(design, selected, ridge)
+            _profile_record(phase_events, "d_optimal", 1)
         else:
+            _profile_record(phase_events, "d_optimal", 0)
             selected = _d_optimal_greedy(
                 design=design,
                 candidates=candidate_indices,
@@ -1194,6 +1240,9 @@ def certvid_v3_compression(
                 budget=budget,
                 ridge=ridge,
             )
+            _profile_record(phase_events, "d_optimal", 1)
+
+            _profile_record(phase_events, "fedorov", 0)
             selected, swaps, logdet = _swap_refine(
                 selected=selected,
                 candidates=candidate_indices,
@@ -1204,6 +1253,9 @@ def certvid_v3_compression(
                 pool_size=_cfg_int(flashvid_config, "certv3_swap_pool", 24),
                 margin=_cfg_float(flashvid_config, "certv3_swap_margin", 1e-4),
             )
+            _profile_record(phase_events, "fedorov", 1)
+
+        _profile_record(phase_events, "fusion_plan", 0)
         selected = torch.sort(selected).values
         plan = _build_plan(
             selected=selected,
@@ -1216,10 +1268,14 @@ def certvid_v3_compression(
             fusion_alpha=_cfg_float(flashvid_config, "certv3_fusion_alpha", 0.12),
             temperature=_cfg_float(flashvid_config, "certv3_assignment_temperature", 0.07),
         )
+        _profile_record(phase_events, "fusion_plan", 1)
+
+        _profile_record(phase_events, "fusion_apply", 0)
         if mandatory:
             certificate_indices = torch.tensor(mandatory, dtype=torch.long, device=selected.device)
             plan.fusion_alpha[torch.isin(selected, certificate_indices)] = 0.0
         output = apply_certvid_plan(flat_features, plan)
+        _profile_record(phase_events, "fusion_apply", 1)
         candidates = int(candidate_indices.numel())
         components = int(component_sizes.numel())
         if analysis_sink is not None:

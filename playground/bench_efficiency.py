@@ -53,6 +53,7 @@ DURATION_ORDER = ("short", "medium", "long")
 DEFAULT_DURATION_COUNTS = {"short": 34, "medium": 33, "long": 33}
 DEFAULT_SCORE_FILE = Path("scripts/efficiency/llava_ov_r1_scores.json")
 SAMPLING_PROTOCOL = "uniform_segment_centers_tail_guard_v1"
+CERTVID_PHASE_PREFIX = "certvid_phase_"
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,9 @@ class StageTimer:
         self.raw_visual_tokens: int | None = None
         self.outer_visual_tokens: int | None = None
         self.llm_outer_visual_tokens: int | None = None
+        self.certvid_phase_events: dict[
+            str, tuple[torch.cuda.Event, torch.cuda.Event]
+        ] | None = None
 
     def _events_for(self, name: str) -> tuple[torch.cuda.Event, torch.cuda.Event]:
         pair = (
@@ -450,6 +454,10 @@ class StageTimer:
                 output = result[0] if isinstance(result, tuple) else result
                 if torch.is_tensor(output):
                     self.outer_visual_tokens = int(output.shape[0])
+                config = getattr(self.model, "flashvid_config", None)
+                phase_events = getattr(config, "_certv3_profile_events", None)
+                if phase_events:
+                    self.certvid_phase_events = dict(phase_events)
             return result
 
         flashvid_arch.flashvid_compression = timed_compression
@@ -464,6 +472,11 @@ class StageTimer:
             for name, (start, end) in self.events.items()
         }
         values.setdefault("compression", 0.0)
+        if self.certvid_phase_events:
+            for name, (start, end) in self.certvid_phase_events.items():
+                values[f"{CERTVID_PHASE_PREFIX}{name}"] = float(
+                    start.elapsed_time(end)
+                )
         return values
 
     def close(self) -> None:
@@ -595,6 +608,11 @@ def timed_generate(
         vision = times["vision_encoding"]
         compression = times["compression"]
         llm = times["llm_forward"]
+        phase_metrics = {
+            f"{name}_ms": value
+            for name, value in times.items()
+            if name.startswith(CERTVID_PHASE_PREFIX)
+        }
         return (
             {
                 "vision_encoding_ms": vision,
@@ -602,6 +620,7 @@ def timed_generate(
                 "llm_forward_ms": llm,
                 "prefilling_total_ms": compression + llm,
                 "ttft_ms": vision + compression + llm,
+                **phase_metrics,
                 **audit,
             },
             output_ids,
@@ -659,6 +678,8 @@ def run_method(args: argparse.Namespace) -> None:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     video_root = Path(args.video_root)
+    phase_records: list[dict[str, float]] = []
+    phase_compression_totals: list[float] = []
 
     print(
         f"[setup] method={method} samples={len(manifest)} "
@@ -728,6 +749,14 @@ def run_method(args: argparse.Namespace) -> None:
                     "error": None,
                     **metrics,
                 }
+                phase_record = {
+                    key: float(value)
+                    for key, value in metrics.items()
+                    if key.startswith(CERTVID_PHASE_PREFIX)
+                }
+                if phase_record:
+                    phase_records.append(phase_record)
+                    phase_compression_totals.append(float(metrics["compression_ms"]))
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
                 handle.flush()
                 print(
@@ -740,6 +769,42 @@ def run_method(args: argparse.Namespace) -> None:
 
             del frames, input_ids, attention_mask, image_tensors
             torch.cuda.empty_cache()
+
+    if phase_records:
+        phase_keys = tuple(sorted(phase_records[0]))
+        if any(tuple(sorted(record)) != phase_keys for record in phase_records):
+            raise RuntimeError("CertVID phase profiler returned inconsistent fields")
+        summary = {
+            "method": method,
+            "num_records": len(phase_records),
+            "phases": {
+                key.removeprefix(CERTVID_PHASE_PREFIX).removesuffix("_ms"): _stats(
+                    record[key] for record in phase_records
+                )
+                for key in phase_keys
+            },
+        }
+        phase_sum = statistics.fmean(
+            sum(record[key] for key in phase_keys) for record in phase_records
+        )
+        compression_stats = _stats(phase_compression_totals)
+        summary["mean_profiled_phase_sum_ms"] = phase_sum
+        summary["compression_total_ms"] = compression_stats
+        summary["mean_unprofiled_gap_ms"] = float(compression_stats["mean"]) - phase_sum
+        summary["phase_share_of_compression"] = {
+            name: float(stats["mean"]) / max(1e-9, float(compression_stats["mean"]))
+            for name, stats in summary["phases"].items()
+        }
+        profile_path = output.with_suffix(".profile.json")
+        _write_json(profile_path, summary)
+        print("[profile] CertVID phase means (ms):")
+        for name, stats in summary["phases"].items():
+            share = 100.0 * summary["phase_share_of_compression"][name]
+            print(f"  {name}: {stats['mean']:.3f} ({share:.1f}%)")
+        print(f"  profiled_phase_sum: {phase_sum:.3f}")
+        print(f"  compression_total: {compression_stats['mean']:.3f}")
+        print(f"  unprofiled_gap: {summary['mean_unprofiled_gap_ms']:.3f}")
+        print(f"[profile] wrote {profile_path}")
 
 
 def _stats(values: Iterable[float]) -> dict[str, float | int]:

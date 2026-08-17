@@ -45,6 +45,7 @@ MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 SEED="${SEED:-20260813}"
 METHODS="${METHODS:-vanilla fastv visionzip fastvid flashvid ours}"
 SUMMARIZE="${SUMMARIZE:-1}"
+PROFILE_CERTVID_PHASES="${PROFILE_CERTVID_PHASES:-0}"
 SCORE_FILE="${SCORE_FILE:-$ROOT/scripts/efficiency/llava_ov_r1_scores.json}"
 OUT="${OUT:-$ROOT/logs/efficiency/llavaov_r1_$(date +%Y%m%d_%H%M%S)}"
 RAW_DIR="$OUT/raw"
@@ -69,6 +70,7 @@ echo "LLaVA-OneVision efficiency benchmark"
 echo "GPU=$GPU samples=$SAMPLE_COUNT warmup=$NUM_WARMUP repeats=$NUM_REPEATS"
 echo "frames=32 retention=1%"
 echo "methods=$METHODS"
+echo "profile_certvid_phases=$PROFILE_CERTVID_PHASES"
 echo "model=$MODEL_PATH"
 echo "videos=$VIDEO_ROOT"
 echo "output=$OUT"
@@ -85,6 +87,7 @@ for METHOD in $METHODS; do
   echo "[$(date)] starting method=$METHOD in a fresh process"
   echo "============================================================"
   CUDA_VISIBLE_DEVICES="$GPU" \
+    CERTV3_PROFILE_PHASES="$PROFILE_CERTVID_PHASES" \
     "$PYTHON_BIN" playground/bench_efficiency.py run \
       --method "$METHOD" \
       --model-path "$MODEL_PATH" \
