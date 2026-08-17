@@ -44,6 +44,7 @@ NUM_REPEATS="${NUM_REPEATS:-3}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 SEED="${SEED:-20260813}"
 METHODS="${METHODS:-vanilla fastv visionzip fastvid flashvid ours}"
+SUMMARIZE="${SUMMARIZE:-1}"
 SCORE_FILE="${SCORE_FILE:-$ROOT/scripts/efficiency/llava_ov_r1_scores.json}"
 OUT="${OUT:-$ROOT/logs/efficiency/llavaov_r1_$(date +%Y%m%d_%H%M%S)}"
 RAW_DIR="$OUT/raw"
@@ -98,15 +99,23 @@ for METHOD in $METHODS; do
       --max-new-tokens "$MAX_NEW_TOKENS"
 done
 
-"$PYTHON_BIN" playground/bench_efficiency.py summarize \
-  --input-dir "$RAW_DIR" \
-  --output-dir "$OUT" \
-  --manifest "$MANIFEST" \
-  --score-file "$SCORE_FILE" \
-  --num-warmup "$NUM_WARMUP" \
-  --num-repeats "$NUM_REPEATS"
+if [[ "$SUMMARIZE" == "1" ]]; then
+  "$PYTHON_BIN" playground/bench_efficiency.py summarize \
+    --input-dir "$RAW_DIR" \
+    --output-dir "$OUT" \
+    --manifest "$MANIFEST" \
+    --score-file "$SCORE_FILE" \
+    --num-warmup "$NUM_WARMUP" \
+    --num-repeats "$NUM_REPEATS" \
+    --methods $METHODS
+else
+  echo "Skipping cross-method summary (SUMMARIZE=$SUMMARIZE)."
+  echo "Raw measurements: $RAW_DIR"
+fi
 
 echo "============================================================"
 echo "Efficiency benchmark complete: $OUT"
-echo "Table: $OUT/efficiency_table.md"
+if [[ "$SUMMARIZE" == "1" ]]; then
+  echo "Table: $OUT/efficiency_table.md"
+fi
 echo "============================================================"
