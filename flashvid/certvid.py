@@ -162,13 +162,26 @@ def _build_components(
 
     if frame_count > 1:
         cut_threshold = float(torch.quantile(frame_event.float(), 0.90).item())
+        frame_event_cpu = frame_event.detach().float().cpu().tolist()
+        current_links: list[torch.Tensor] = []
+        previous_links: list[torch.Tensor] = []
         for frame_idx, (best_previous, mutual, similarity) in enumerate(matches, start=1):
-            if float(frame_event[frame_idx].item()) > max(0.65, cut_threshold):
+            if float(frame_event_cpu[frame_idx]) > max(0.65, cut_threshold):
                 continue
             valid = mutual & (similarity >= float(threshold))
-            for current_token in torch.where(valid)[0].detach().cpu().tolist():
-                previous_token = int(best_previous[current_token].item())
-                union(frame_idx * tokens_per_frame + current_token, (frame_idx - 1) * tokens_per_frame + previous_token)
+            current_tokens = torch.where(valid)[0]
+            if current_tokens.numel() == 0:
+                continue
+            current_links.append(current_tokens + frame_idx * tokens_per_frame)
+            previous_links.append(
+                best_previous[current_tokens] + (frame_idx - 1) * tokens_per_frame
+            )
+
+        if current_links:
+            current_cpu = torch.cat(current_links).detach().cpu().tolist()
+            previous_cpu = torch.cat(previous_links).detach().cpu().tolist()
+            for current_token, previous_token in zip(current_cpu, previous_cpu):
+                union(int(current_token), int(previous_token))
 
     roots = [find(node) for node in range(total_tokens)]
     root_to_component: dict[int, int] = {}

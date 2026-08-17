@@ -289,6 +289,19 @@ def _budget_aware_certificates(
         "spatial": [],
     }
 
+    def materialize_pairs(
+        token_tensors: list[torch.Tensor],
+        score_tensors: list[torch.Tensor],
+    ) -> list[tuple[float, int]]:
+        if not token_tensors:
+            return []
+        tokens_cpu = torch.stack(token_tensors).detach().cpu().tolist()
+        scores_cpu = torch.stack(score_tensors).detach().float().cpu().tolist()
+        return [
+            (float(score), int(token))
+            for score, token in zip(scores_cpu, tokens_cpu)
+        ]
+
     if use_spatiotemporal:
         frame_keep = max(
             1,
@@ -299,6 +312,8 @@ def _budget_aware_certificates(
                 )
             ),
         )
+        frame_tokens: list[torch.Tensor] = []
+        frame_scores: list[torch.Tensor] = []
         for frame_id in _evenly_spaced_ids(
             frame_count,
             frame_keep,
@@ -306,18 +321,29 @@ def _budget_aware_certificates(
         ).tolist():
             members = torch.where(frame_ids == int(frame_id))[0]
             if members.numel() > 0:
-                token = int(members[torch.argmax(quality[members])].item())
-                requests["frame"].append(
-                    (5.0, float(quality[token].item()), token, False)
-                )
+                token = members[torch.argmax(quality[members])]
+                frame_tokens.append(token)
+                frame_scores.append(quality[token])
+        requests["frame"].extend(
+            (5.0, score, token, False)
+            for score, token in materialize_pairs(frame_tokens, frame_scores)
+        )
 
+        temporal_tokens: list[torch.Tensor] = []
+        temporal_scores: list[torch.Tensor] = []
         for temporal_id in range(temporal_count):
             members = torch.where(temporal_ids == temporal_id)[0]
             if members.numel() > 0:
-                token = int(members[torch.argmax(event_score[members])].item())
-                requests["temporal"].append(
-                    (4.5, float(event_score[token].item()), token, False)
-                )
+                token = members[torch.argmax(event_score[members])]
+                temporal_tokens.append(token)
+                temporal_scores.append(event_score[token])
+        requests["temporal"].extend(
+            (4.5, score, token, False)
+            for score, token in materialize_pairs(
+                temporal_tokens,
+                temporal_scores,
+            )
+        )
 
         cells_per_interval = max(
             0,
@@ -331,32 +357,55 @@ def _budget_aware_certificates(
                 ),
             ),
         )
+        cell_groups: list[list[int]] = [[] for _ in range(temporal_count)]
+        cell_tokens: list[torch.Tensor] = []
+        cell_scores: list[torch.Tensor] = []
         for temporal_id in range(temporal_count):
-            cell_representatives: list[tuple[float, int]] = []
             for spatial_id in range(spatial_count):
                 members = torch.where(
                     (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
                 )[0]
                 if members.numel() == 0:
                     continue
-                token = int(members[torch.argmax(quality[members])].item())
-                cell_representatives.append((float(quality[token].item()), token))
+                token = members[torch.argmax(quality[members])]
+                cell_groups[temporal_id].append(len(cell_tokens))
+                cell_tokens.append(token)
+                cell_scores.append(quality[token])
+        cell_pairs = materialize_pairs(cell_tokens, cell_scores)
+        for temporal_id in range(temporal_count):
+            cell_representatives = [
+                cell_pairs[position]
+                for position in cell_groups[temporal_id]
+            ]
             cell_representatives.sort(key=lambda item: (-item[0], item[1]))
             for score, token in cell_representatives[:cells_per_interval]:
                 requests["spatial"].append((3.0, score, token, False))
 
     if query_relevance.numel() > 0 and query_confidence >= float(query_threshold):
         per_atom = max(1, int(query_per_atom))
+        query_groups: list[list[int]] = [
+            [] for _ in range(int(query_relevance.shape[0]))
+        ]
+        query_tokens: list[torch.Tensor] = []
+        query_scores: list[torch.Tensor] = []
         for atom_idx, atom_scores in enumerate(query_relevance):
-            per_interval: list[tuple[float, int]] = []
             for temporal_id in range(temporal_count):
                 members = torch.where(temporal_ids == temporal_id)[0]
                 if members.numel() == 0:
                     continue
-                token = int(members[torch.argmax(atom_scores[members])].item())
-                per_interval.append((float(atom_scores[token].item()), token))
+                token = members[torch.argmax(atom_scores[members])]
+                query_groups[atom_idx].append(len(query_tokens))
+                query_tokens.append(token)
+                query_scores.append(atom_scores[token])
+        query_pairs = materialize_pairs(query_tokens, query_scores)
+        atom_weights_cpu = atom_weights.detach().float().cpu().tolist()
+        for atom_idx in range(int(query_relevance.shape[0])):
+            per_interval = [
+                query_pairs[position]
+                for position in query_groups[atom_idx]
+            ]
             per_interval.sort(key=lambda item: (-item[0], item[1]))
-            atom_priority = 6.0 + float(atom_weights[atom_idx].item())
+            atom_priority = 6.0 + float(atom_weights_cpu[atom_idx])
             for score, token in per_interval[:per_atom]:
                 requests["query"].append((atom_priority, score, token, True))
 
@@ -496,14 +545,19 @@ def _candidate_pool(
 
     # Expose query alternatives across time before filling with generic quality peaks.
     if query_relevance.numel() > 0:
-        query_offers: list[tuple[float, int]] = []
+        query_offer_tokens: list[torch.Tensor] = []
+        query_offer_scores: list[torch.Tensor] = []
         for scores in query_relevance:
             for temporal_id in torch.unique(temporal_ids).tolist():
                 members = torch.where(temporal_ids == int(temporal_id))[0]
                 if members.numel() == 0:
                     continue
-                token = int(members[torch.argmax(scores[members])].item())
-                query_offers.append((float(scores[token].item()), token))
+                token = members[torch.argmax(scores[members])]
+                query_offer_tokens.append(token)
+                query_offer_scores.append(scores[token])
+        query_tokens_cpu = torch.stack(query_offer_tokens).detach().cpu().tolist()
+        query_scores_cpu = torch.stack(query_offer_scores).detach().float().cpu().tolist()
+        query_offers = list(zip(query_scores_cpu, query_tokens_cpu))
         query_offers.sort(key=lambda item: (-item[0], item[1]))
         offer([token for _, token in query_offers])
 
@@ -523,12 +577,17 @@ def _candidate_pool(
         offer(component_tokens)
 
     # Add one strong alternative for every temporal-spatial cell.
-    cell_tokens: list[tuple[float, int]] = []
+    cell_token_tensors: list[torch.Tensor] = []
+    cell_score_tensors: list[torch.Tensor] = []
     joint_cells = temporal_ids * (int(spatial_ids.max().item()) + 1) + spatial_ids
     for cell_id in torch.unique(joint_cells).tolist():
         members = torch.where(joint_cells == int(cell_id))[0]
-        token = int(members[torch.argmax(quality[members])].item())
-        cell_tokens.append((float(quality[token].item()), token))
+        token = members[torch.argmax(quality[members])]
+        cell_token_tensors.append(token)
+        cell_score_tensors.append(quality[token])
+    cell_tokens_cpu = torch.stack(cell_token_tensors).detach().cpu().tolist()
+    cell_scores_cpu = torch.stack(cell_score_tensors).detach().float().cpu().tolist()
+    cell_tokens = list(zip(cell_scores_cpu, cell_tokens_cpu))
     cell_tokens.sort(key=lambda item: (-item[0], item[1]))
     offer([token for _, token in cell_tokens])
 
@@ -958,68 +1017,70 @@ def certvid_v3_compression(
         demand_weight = 0.20 + 0.42 * quality + 0.20 * event_score + 0.18 * component_value
         demand_weight = demand_weight / demand_weight.sum().clamp_min(1e-6)
 
-        mandatory, query_seeds = _hard_certificates(
-            budget=budget,
-            quality=quality,
-            event_score=event_score,
-            frame_ids=frame_ids,
-            temporal_ids=temporal_ids,
-            spatial_ids=spatial_ids,
-            query_relevance=query_relevance,
-            atom_weights=atom_weights,
-            query_confidence=query_confidence,
-            frame_count=frame_count,
-            temporal_count=temporal_count,
-            spatial_count=spatial_count,
-            frame_coverage_ratio=_cfg_float(flashvid_config, "certv3_frame_coverage_ratio", 1.0),
-            cell_coverage_ratio=_cfg_float(flashvid_config, "certv3_cell_coverage_ratio", 0.50),
-            query_threshold=_cfg_float(flashvid_config, "certv3_query_threshold", 0.10),
-            query_per_atom=_cfg_int(flashvid_config, "certv3_query_per_atom", 1),
-            use_spatiotemporal=use_spatiotemporal_certificates,
-        )
-        original_certificate_count = len(mandatory)
-        if original_certificate_count > certificate_limit:
+        certificate_kwargs = {
+            "budget": budget,
+            "quality": quality,
+            "event_score": event_score,
+            "frame_ids": frame_ids,
+            "temporal_ids": temporal_ids,
+            "spatial_ids": spatial_ids,
+            "query_relevance": query_relevance,
+            "atom_weights": atom_weights,
+            "query_confidence": query_confidence,
+            "frame_count": frame_count,
+            "temporal_count": temporal_count,
+            "spatial_count": spatial_count,
+            "frame_coverage_ratio": _cfg_float(
+                flashvid_config,
+                "certv3_frame_coverage_ratio",
+                1.0,
+            ),
+            "cell_coverage_ratio": _cfg_float(
+                flashvid_config,
+                "certv3_cell_coverage_ratio",
+                0.50,
+            ),
+            "query_threshold": _cfg_float(
+                flashvid_config,
+                "certv3_query_threshold",
+                0.10,
+            ),
+            "query_per_atom": _cfg_int(
+                flashvid_config,
+                "certv3_query_per_atom",
+                1,
+            ),
+            "use_spatiotemporal": use_spatiotemporal_certificates,
+        }
+        if certificate_limit == 0 and use_spatiotemporal_certificates:
+            # A zero cap always discards every requested certificate. Build the
+            # capped request set once and recover the uncapped count exactly.
             mandatory, query_seeds, certificate_stats = (
                 _budget_aware_certificates(
-                    budget=budget,
                     certificate_ratio=effective_certificate_ratio,
-                    quality=quality,
-                    event_score=event_score,
-                    frame_ids=frame_ids,
-                    temporal_ids=temporal_ids,
-                    spatial_ids=spatial_ids,
-                    query_relevance=query_relevance,
-                    atom_weights=atom_weights,
-                    query_confidence=query_confidence,
-                    frame_count=frame_count,
-                    temporal_count=temporal_count,
-                    spatial_count=spatial_count,
-                    frame_coverage_ratio=_cfg_float(
-                        flashvid_config,
-                        "certv3_frame_coverage_ratio",
-                        1.0,
-                    ),
-                    cell_coverage_ratio=_cfg_float(
-                        flashvid_config,
-                        "certv3_cell_coverage_ratio",
-                        0.50,
-                    ),
-                    query_threshold=_cfg_float(
-                        flashvid_config,
-                        "certv3_query_threshold",
-                        0.10,
-                    ),
-                    query_per_atom=_cfg_int(
-                        flashvid_config,
-                        "certv3_query_per_atom",
-                        1,
-                    ),
-                    use_spatiotemporal=use_spatiotemporal_certificates,
+                    **certificate_kwargs,
                 )
+            )
+            original_certificate_count = min(
+                budget,
+                int(certificate_stats["requested_unique"]),
             )
             certificate_cap_active = True
             if qwen_v3_certificate_policy:
                 qwen_certificate_cap_active = True
+        else:
+            mandatory, query_seeds = _hard_certificates(**certificate_kwargs)
+            original_certificate_count = len(mandatory)
+            if original_certificate_count > certificate_limit:
+                mandatory, query_seeds, certificate_stats = (
+                    _budget_aware_certificates(
+                        certificate_ratio=effective_certificate_ratio,
+                        **certificate_kwargs,
+                    )
+                )
+                certificate_cap_active = True
+                if qwen_v3_certificate_policy:
+                    qwen_certificate_cap_active = True
         candidate_indices = _candidate_pool(
             budget=budget,
             quality=quality,
