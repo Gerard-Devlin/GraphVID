@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Optional
 
 import torch
@@ -26,6 +27,15 @@ from .certvid import (
     apply_certvid_plan,
 )
 from .configuration_flashvid import FlashVidConfig
+
+
+_EXACT_CUDA_GRAPH_ENV = "CERTV3_USE_EXACT_CUDA_GRAPHS"
+_TRAJECTORY_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
+
+
+def _exact_cuda_graph_enabled(tensor: torch.Tensor) -> bool:
+    value = os.environ.get(_EXACT_CUDA_GRAPH_ENV, "").strip().lower()
+    return tensor.is_cuda and value in {"1", "true", "yes", "on"}
 
 
 def _effective_ratio(config: FlashVidConfig) -> float:
@@ -71,7 +81,7 @@ def _density_peaks(metric_frames: torch.Tensor, neighbors: int) -> torch.Tensor:
     return _minmax(output, dim=-1)
 
 
-def _trajectory_signals(
+def _trajectory_signals_eager(
     metric_frames: torch.Tensor,
     coords: torch.Tensor,
     spatial_penalty: float,
@@ -83,17 +93,17 @@ def _trajectory_signals(
     list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
 ]:
     """Measure bidirectional novelty and second-order motion without forcing coverage."""
+    spatial_distance = torch.cdist(coords.float(), coords.float(), p=2)
     frame_event, forward_novelty, matches = _temporal_signals(
         metric_frames,
         coords,
         spatial_penalty,
+        spatial_distance,
     )
     frame_count, tokens_per_frame, _ = metric_frames.shape
     backward_novelty = torch.zeros_like(forward_novelty)
     curvature = torch.zeros_like(forward_novelty)
     next_matches: list[torch.Tensor] = []
-    spatial_distance = torch.cdist(coords.float(), coords.float(), p=2)
-
     for frame_idx in range(frame_count - 1):
         current = metric_frames[frame_idx]
         following = metric_frames[frame_idx + 1]
@@ -122,6 +132,82 @@ def _trajectory_signals(
     return frame_event, forward_novelty, novelty, curvature, matches
 
 
+def _trajectory_signals(
+    metric_frames: torch.Tensor,
+    coords: torch.Tensor,
+    spatial_penalty: float,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+]:
+    """Run the unchanged trajectory program eagerly or from an exact CUDA graph."""
+    if not _exact_cuda_graph_enabled(metric_frames):
+        return _trajectory_signals_eager(metric_frames, coords, spatial_penalty)
+
+    device_index = metric_frames.device.index
+    key = (
+        device_index,
+        tuple(metric_frames.shape),
+        metric_frames.dtype,
+        tuple(coords.shape),
+        coords.dtype,
+        float(spatial_penalty),
+    )
+    cached = _TRAJECTORY_GRAPH_CACHE.get(key)
+    if cached is None:
+        static_metric = metric_frames.detach().clone()
+        static_coords = coords.detach().clone()
+        try:
+            warmup_stream = torch.cuda.Stream(device=metric_frames.device)
+            warmup_stream.wait_stream(torch.cuda.current_stream(metric_frames.device))
+            with torch.cuda.stream(warmup_stream):
+                _trajectory_signals_eager(
+                    static_metric,
+                    static_coords,
+                    spatial_penalty,
+                )
+            torch.cuda.current_stream(metric_frames.device).wait_stream(warmup_stream)
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                static_output = _trajectory_signals_eager(
+                    static_metric,
+                    static_coords,
+                    spatial_penalty,
+                )
+            cached = {
+                "graph": graph,
+                "metric": static_metric,
+                "output": static_output,
+            }
+            print(
+                "[CertVID V3] captured trajectory CUDA graph "
+                f"for shape={tuple(metric_frames.shape)}"
+            )
+        except RuntimeError as error:
+            # Unsupported CUDA/runtime combinations retain the original path.
+            cached = {"disabled": True}
+            print(
+                "[CertVID V3] trajectory CUDA graph unavailable; "
+                f"using eager path: {error}"
+            )
+        _TRAJECTORY_GRAPH_CACHE[key] = cached
+
+    if bool(cached.get("disabled", False)):
+        return _trajectory_signals_eager(metric_frames, coords, spatial_penalty)
+
+    static_metric = cached["metric"]
+    assert isinstance(static_metric, torch.Tensor)
+    static_metric.copy_(metric_frames)
+    graph = cached["graph"]
+    assert isinstance(graph, torch.cuda.CUDAGraph)
+    graph.replay()
+    return cached["output"]  # type: ignore[return-value]
+
+
 def _component_support(
     metric_flat: torch.Tensor,
     component_ids: torch.Tensor,
@@ -147,10 +233,20 @@ def _component_support(
 
     first = torch.full((component_count,), frame_count, dtype=torch.long, device=metric_flat.device)
     last = torch.full((component_count,), -1, dtype=torch.long, device=metric_flat.device)
-    for frame_idx in range(frame_count):
-        present = torch.unique(component_ids[frame_ids == frame_idx])
-        first[present] = torch.minimum(first[present], torch.full_like(present, frame_idx))
-        last[present] = torch.maximum(last[present], torch.full_like(present, frame_idx))
+    first.scatter_reduce_(
+        0,
+        component_ids,
+        frame_ids,
+        reduce="amin",
+        include_self=True,
+    )
+    last.scatter_reduce_(
+        0,
+        component_ids,
+        frame_ids,
+        reduce="amax",
+        include_self=True,
+    )
     span = (last - first + 1).clamp_min(1).float() / max(1, frame_count)
     mass = torch.log1p(component_sizes.float())
     mass = mass / mass.max().clamp_min(1e-6)

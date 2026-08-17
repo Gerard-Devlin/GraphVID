@@ -29,11 +29,26 @@ from .configuration_flashvid import FlashVidConfig
 
 
 _PROFILE_ENV = "CERTV3_PROFILE_PHASES"
+_CERTIFICATE_STATS_ENV = "CERTV3_COLLECT_CERTIFICATE_STATS"
+_EXACT_CUDA_GRAPH_ENV = "CERTV3_USE_EXACT_CUDA_GRAPHS"
+_DOPT_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
 
 
 def _profile_enabled(features: torch.Tensor) -> bool:
     value = os.environ.get(_PROFILE_ENV, "").strip().lower()
     return features.is_cuda and value in {"1", "true", "yes", "on"}
+
+
+def _certificate_stats_enabled(config: FlashVidConfig) -> bool:
+    value = os.environ.get(_CERTIFICATE_STATS_ENV, "").strip().lower()
+    if value:
+        return value in {"1", "true", "yes", "on"}
+    return _cfg_bool(config, "certv3_collect_certificate_stats", False)
+
+
+def _exact_cuda_graph_enabled(tensor: torch.Tensor) -> bool:
+    value = os.environ.get(_EXACT_CUDA_GRAPH_ENV, "").strip().lower()
+    return tensor.is_cuda and value in {"1", "true", "yes", "on"}
 
 
 def _profile_record(
@@ -563,6 +578,13 @@ def _candidate_pool(
     limit = min(total_tokens, max(budget, int(math.ceil(budget * max(1.0, multiplier)))))
     candidates: set[int] = set(int(token) for token in mandatory)
 
+    def finish() -> torch.Tensor:
+        return torch.tensor(
+            sorted(candidates),
+            dtype=torch.long,
+            device=quality.device,
+        )
+
     def offer(tokens: list[int]) -> None:
         for token in tokens:
             if len(candidates) >= limit:
@@ -586,10 +608,12 @@ def _candidate_pool(
         query_offers = list(zip(query_scores_cpu, query_tokens_cpu))
         query_offers.sort(key=lambda item: (-item[0], item[1]))
         offer([token for _, token in query_offers])
+        if len(candidates) >= limit:
+            return finish()
 
     # Semantic trajectory representatives make rare persistent objects eligible.
-    quality_cpu = quality.detach().float().cpu().tolist()
     if use_trajectory:
+        quality_cpu = quality.detach().float().cpu().tolist()
         component_cpu = component_ids.detach().cpu().tolist()
         representatives: dict[int, int] = {}
         for token, component in enumerate(component_cpu):
@@ -601,6 +625,8 @@ def _candidate_pool(
             key=lambda token: (-quality_cpu[token], token),
         )
         offer(component_tokens)
+        if len(candidates) >= limit:
+            return finish()
 
     # Add one strong alternative for every temporal-spatial cell.
     cell_token_tensors: list[torch.Tensor] = []
@@ -616,11 +642,13 @@ def _candidate_pool(
     cell_tokens = list(zip(cell_scores_cpu, cell_tokens_cpu))
     cell_tokens.sort(key=lambda item: (-item[0], item[1]))
     offer([token for _, token in cell_tokens])
+    if len(candidates) >= limit:
+        return finish()
 
     offer(torch.argsort(quality, descending=True, stable=True).detach().cpu().tolist())
     if len(candidates) < budget:
         offer(list(range(total_tokens)))
-    return torch.tensor(sorted(candidates), dtype=torch.long, device=quality.device)
+    return finish()
 
 
 def _score_only_select(
@@ -661,6 +689,117 @@ def _selection_logdet(
     return float(logabsdet.item()) if float(sign.item()) > 0.0 else float("-inf")
 
 
+def _d_optimal_unconstrained_columns(
+    rows: torch.Tensor,
+    budget: int,
+    ridge: float,
+) -> torch.Tensor:
+    """Original greedy updates for the no-certificate path."""
+    candidate_count, design_dim = rows.shape
+    inverse = torch.eye(
+        design_dim,
+        dtype=torch.float32,
+        device=rows.device,
+    ) / ridge
+    leverage = rows.square().sum(dim=1) / ridge
+    active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
+    columns = torch.empty(budget, dtype=torch.long, device=rows.device)
+
+    for step in range(budget):
+        score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(
+            ~active,
+            float("-inf"),
+        )
+        column = torch.argmax(score)
+        remaining = torch.where(active)[0]
+        column = torch.where(
+            torch.isfinite(score[column]),
+            column,
+            remaining[0],
+        )
+
+        row = rows[column]
+        direction = inverse @ row
+        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
+        projection = rows @ direction
+        leverage = (
+            leverage - projection.square() / denominator
+        ).clamp_min(0.0)
+        inverse = inverse - torch.outer(direction, direction) / denominator
+        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
+        active[column] = False
+        leverage[column] = -1.0
+        columns[step] = column
+    return columns
+
+
+def _d_optimal_unconstrained_columns_graph(
+    rows: torch.Tensor,
+    budget: int,
+    ridge: float,
+) -> torch.Tensor:
+    if not _exact_cuda_graph_enabled(rows):
+        return _d_optimal_unconstrained_columns(rows, budget, ridge)
+
+    key = (
+        rows.device.index,
+        tuple(rows.shape),
+        rows.dtype,
+        int(budget),
+        float(ridge),
+    )
+    cached = _DOPT_GRAPH_CACHE.get(key)
+    if cached is None:
+        static_rows = rows.detach().clone()
+        try:
+            warmup_stream = torch.cuda.Stream(device=rows.device)
+            warmup_stream.wait_stream(torch.cuda.current_stream(rows.device))
+            with torch.cuda.stream(warmup_stream):
+                _d_optimal_unconstrained_columns(
+                    static_rows,
+                    budget,
+                    ridge,
+                )
+            torch.cuda.current_stream(rows.device).wait_stream(warmup_stream)
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                static_columns = _d_optimal_unconstrained_columns(
+                    static_rows,
+                    budget,
+                    ridge,
+                )
+            cached = {
+                "graph": graph,
+                "rows": static_rows,
+                "columns": static_columns,
+            }
+            print(
+                "[CertVID V3] captured D-optimal CUDA graph "
+                f"for rows={tuple(rows.shape)} budget={budget}"
+            )
+        except RuntimeError as error:
+            cached = {"disabled": True}
+            print(
+                "[CertVID V3] D-optimal CUDA graph unavailable; "
+                f"using eager path: {error}"
+            )
+        _DOPT_GRAPH_CACHE[key] = cached
+
+    if bool(cached.get("disabled", False)):
+        return _d_optimal_unconstrained_columns(rows, budget, ridge)
+
+    static_rows = cached["rows"]
+    assert isinstance(static_rows, torch.Tensor)
+    static_rows.copy_(rows)
+    graph = cached["graph"]
+    assert isinstance(graph, torch.cuda.CUDAGraph)
+    graph.replay()
+    static_columns = cached["columns"]
+    assert isinstance(static_columns, torch.Tensor)
+    return static_columns
+
+
 def _d_optimal_greedy(
     *,
     design: torch.Tensor,
@@ -676,12 +815,17 @@ def _d_optimal_greedy(
         raise RuntimeError(f"D-optimal pool has {candidate_count} candidates for budget {budget}")
 
     ridge = max(1e-4, float(ridge))
+    if not mandatory:
+        columns = _d_optimal_unconstrained_columns_graph(
+            rows,
+            budget,
+            ridge,
+        )
+        return candidates[columns]
+
     inverse = torch.eye(design_dim, dtype=torch.float32, device=rows.device) / ridge
     leverage = rows.square().sum(dim=1) / ridge
     active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
-    token_to_column = {
-        int(token): column for column, token in enumerate(candidates.detach().cpu().tolist())
-    }
     selected_columns: list[int] = []
 
     def add(column: int) -> None:
@@ -699,10 +843,15 @@ def _d_optimal_greedy(
         leverage[column] = -1.0
         selected_columns.append(column)
 
-    for token in mandatory:
-        column = token_to_column.get(int(token))
-        if column is not None and len(selected_columns) < budget:
-            add(column)
+    if mandatory:
+        token_to_column = {
+            int(token): column
+            for column, token in enumerate(candidates.detach().cpu().tolist())
+        }
+        for token in mandatory:
+            column = token_to_column.get(int(token))
+            if column is not None and len(selected_columns) < budget:
+                add(column)
 
     remaining_steps = budget - len(selected_columns)
     greedy_columns = torch.empty(
@@ -757,44 +906,61 @@ def _swap_refine(
     if steps == 0 or selected.numel() == 0:
         return selected, 0, 0.0
 
-    mandatory_set = set(int(token) for token in mandatory)
-    candidate_tokens = candidates.detach().cpu().tolist()
-    token_to_column = {int(token): column for column, token in enumerate(candidate_tokens)}
-    selected_tokens = selected.detach().cpu().tolist()
-    selected_columns = [token_to_column[int(token)] for token in selected_tokens]
     rows = design[candidates].float()
     ridge = max(1e-4, float(ridge))
     dimension = int(rows.shape[1])
     identity = torch.eye(dimension, dtype=torch.float32, device=rows.device)
+    selected_columns = torch.searchsorted(candidates, selected).to(
+        device=rows.device,
+        dtype=torch.long,
+    )
+    mandatory_columns = torch.zeros(
+        int(candidates.numel()),
+        dtype=torch.bool,
+        device=rows.device,
+    )
+    if mandatory:
+        mandatory_tokens = torch.tensor(
+            mandatory,
+            dtype=torch.long,
+            device=rows.device,
+        )
+        mandatory_columns[torch.searchsorted(candidates, mandatory_tokens)] = True
     swaps = 0
 
     for _ in range(steps):
-        selected_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
-        selected_rows = rows[selected_tensor]
+        selected_rows = rows[selected_columns]
         information = ridge * identity + selected_rows.transpose(0, 1) @ selected_rows
         inverse = torch.linalg.inv(information)
         selected_leverage = torch.sum((selected_rows @ inverse) * selected_rows, dim=1).clamp(0.0, 1.0 - 1e-5)
         removal_loss = -torch.log1p(-selected_leverage)
 
-        removable_positions = [
-            position for position, token in enumerate(selected_tokens) if int(token) not in mandatory_set
-        ]
-        if not removable_positions:
+        removable_positions = torch.where(~mandatory_columns[selected_columns])[0]
+        if int(removable_positions.numel()) == 0:
             break
-        removal_loss_cpu = removal_loss.detach().float().cpu().tolist()
-        removable_positions.sort(
-            key=lambda position: (
-                float(removal_loss_cpu[position]),
-                selected_tokens[position],
-            )
+        # Match Python's (removal_loss, token_id) ordering with two stable
+        # sorts, while keeping the values resident on the GPU.
+        token_order = torch.argsort(
+            candidates[selected_columns[removable_positions]],
+            stable=True,
         )
+        removable_positions = removable_positions[token_order]
+        loss_order = torch.argsort(
+            removal_loss[removable_positions],
+            stable=True,
+        )
+        removable_positions = removable_positions[loss_order]
         removable_positions = removable_positions[: max(1, int(pool_size))]
 
-        selected_column_set = set(selected_columns)
-        outside_columns = [column for column in range(len(candidate_tokens)) if column not in selected_column_set]
-        if not outside_columns:
+        outside_mask = torch.ones(
+            int(candidates.numel()),
+            dtype=torch.bool,
+            device=rows.device,
+        )
+        outside_mask[selected_columns] = False
+        outside_tensor = torch.where(outside_mask)[0]
+        if int(outside_tensor.numel()) == 0:
             break
-        outside_tensor = torch.tensor(outside_columns, dtype=torch.long, device=rows.device)
         outside_rows = rows[outside_tensor]
         outside_leverage = torch.sum((outside_rows @ inverse) * outside_rows, dim=1)
         outside_order = torch.argsort(outside_leverage, descending=True, stable=True)
@@ -802,12 +968,9 @@ def _swap_refine(
         outside_tensor = outside_tensor[outside_order]
         outside_rows = rows[outside_tensor]
 
-        best_delta = float(margin)
-        best_remove = -1
-        best_add_column = -1
         local_delta_tensors: list[torch.Tensor] = []
         local_add_tensors: list[torch.Tensor] = []
-        for position in removable_positions:
+        for position in removable_positions.unbind():
             removed = selected_rows[position]
             direction = inverse @ removed
             remove_denominator = (1.0 - torch.dot(removed, direction)).clamp_min(1e-5)
@@ -818,31 +981,20 @@ def _swap_refine(
             local_delta_tensors.append(delta[local])
             local_add_tensors.append(outside_tensor[local])
 
-        local_deltas = torch.stack(local_delta_tensors).detach().float().cpu().tolist()
-        local_add_columns = torch.stack(local_add_tensors).detach().cpu().tolist()
-        for position, local_delta, local_add_column in zip(
-            removable_positions,
-            local_deltas,
-            local_add_columns,
-        ):
-            local_delta = float(local_delta)
-            if local_delta > best_delta:
-                best_delta = local_delta
-                best_remove = position
-                best_add_column = int(local_add_column)
-
-        if best_remove < 0:
+        local_deltas = torch.stack(local_delta_tensors)
+        local_add_columns = torch.stack(local_add_tensors)
+        best_local = torch.argmax(local_deltas)
+        if float(local_deltas[best_local].item()) <= float(margin):
             break
-        selected_columns[best_remove] = best_add_column
-        selected_tokens[best_remove] = int(candidate_tokens[best_add_column])
+        best_remove = removable_positions[best_local]
+        selected_columns[best_remove] = local_add_columns[best_local]
         swaps += 1
 
-    selected_tensor = torch.tensor(selected_columns, dtype=torch.long, device=rows.device)
-    final_rows = rows[selected_tensor]
+    final_rows = rows[selected_columns]
     final_information = ridge * identity + final_rows.transpose(0, 1) @ final_rows
     sign, logabsdet = torch.linalg.slogdet(final_information)
     final_logdet = float(logabsdet.item()) if float(sign.item()) > 0.0 else float("-inf")
-    return candidates[selected_tensor], swaps, final_logdet
+    return candidates[selected_columns], swaps, final_logdet
 
 
 def certvid_v3_compression(
@@ -1129,19 +1281,22 @@ def certvid_v3_compression(
             ),
             "use_spatiotemporal": use_spatiotemporal_certificates,
         }
-        if certificate_limit == 0 and use_spatiotemporal_certificates:
-            # A zero cap always discards every requested certificate. Build the
-            # capped request set once and recover the uncapped count exactly.
-            mandatory, query_seeds, certificate_stats = (
-                _budget_aware_certificates(
+        if certificate_limit == 0:
+            # A zero cap cannot affect selection. Request accounting remains
+            # available explicitly, but is not paid for during normal runs.
+            mandatory = []
+            query_seeds = []
+            if _certificate_stats_enabled(flashvid_config):
+                _, _, certificate_stats = _budget_aware_certificates(
                     certificate_ratio=effective_certificate_ratio,
                     **certificate_kwargs,
                 )
-            )
-            original_certificate_count = min(
-                budget,
-                int(certificate_stats["requested_unique"]),
-            )
+                original_certificate_count = min(
+                    budget,
+                    int(certificate_stats["requested_unique"]),
+                )
+            else:
+                original_certificate_count = 0
             certificate_cap_active = True
             if qwen_v3_certificate_policy:
                 qwen_certificate_cap_active = True

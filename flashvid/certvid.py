@@ -101,6 +101,7 @@ def _temporal_signals(
     metric_frames: torch.Tensor,
     coords: torch.Tensor,
     spatial_penalty: float,
+    spatial_distance: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
     frame_count, tokens_per_frame, _ = metric_frames.shape
     device = metric_frames.device
@@ -109,7 +110,8 @@ def _temporal_signals(
     token_novelty = torch.ones((frame_count, tokens_per_frame), dtype=torch.float32, device=device)
     matches: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
 
-    spatial_distance = torch.cdist(coords.float(), coords.float(), p=2)
+    if spatial_distance is None:
+        spatial_distance = torch.cdist(coords.float(), coords.float(), p=2)
     for frame_idx in range(1, frame_count):
         current = metric_frames[frame_idx]
         previous = metric_frames[frame_idx - 1]
