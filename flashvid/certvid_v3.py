@@ -967,7 +967,8 @@ def _d_optimal_unconstrained_columns_capturable(
     ) / ridge
     leverage = rows.square().sum(dim=1) / ridge
     active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
-    columns = torch.empty(budget, dtype=torch.long, device=rows.device)
+    all_columns = torch.arange(candidate_count, dtype=torch.long, device=rows.device)
+    selected_columns: list[torch.Tensor] = []
 
     for step in range(budget):
         score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(
@@ -977,9 +978,10 @@ def _d_optimal_unconstrained_columns_capturable(
         column = torch.argmax(score)
         # This is the fixed-shape equivalent of torch.where(active)[0][0].
         fallback = torch.argmax(active.to(torch.int8))
-        column = torch.where(torch.isfinite(score[column]), column, fallback)
+        selected_score = torch.gather(score, 0, column.reshape(1)).squeeze(0)
+        column = torch.where(torch.isfinite(selected_score), column, fallback)
 
-        row = rows[column]
+        row = torch.index_select(rows, 0, column.reshape(1)).squeeze(0)
         direction = inverse @ row
         denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
         projection = rows @ direction
@@ -988,10 +990,11 @@ def _d_optimal_unconstrained_columns_capturable(
         ).clamp_min(0.0)
         inverse = inverse - torch.outer(direction, direction) / denominator
         inverse = 0.5 * (inverse + inverse.transpose(0, 1))
-        active[column] = False
-        leverage[column] = -1.0
-        columns[step] = column
-    return columns
+        chosen = all_columns == column
+        active = active & ~chosen
+        leverage = torch.where(chosen, -torch.ones_like(leverage), leverage)
+        selected_columns.append(column)
+    return torch.stack(selected_columns)
 
 
 def _d_optimal_unconstrained_columns_graph(
@@ -1269,6 +1272,7 @@ def _swap_refine_no_certificate_capturable(
     identity = torch.eye(dimension, dtype=torch.float32, device=rows.device)
     all_columns = torch.arange(candidate_count, dtype=torch.long, device=rows.device)
     selected_columns = selected_columns.clone()
+    selected_positions = torch.arange(budget, dtype=torch.long, device=rows.device)
     running = torch.ones((), dtype=torch.bool, device=rows.device)
     swaps = torch.zeros((), dtype=torch.long, device=rows.device)
     remove_limit = min(budget, max(1, int(pool_size)))
@@ -1276,7 +1280,7 @@ def _swap_refine_no_certificate_capturable(
     add_limit = min(outside_count, max(1, int(pool_size)))
 
     for _ in range(steps):
-        selected_rows = rows[selected_columns]
+        selected_rows = torch.index_select(rows, 0, selected_columns)
         information = ridge * identity + selected_rows.transpose(0, 1) @ selected_rows
         inverse = torch.linalg.inv(information)
         selected_leverage = torch.sum(
@@ -1288,22 +1292,31 @@ def _swap_refine_no_certificate_capturable(
         # candidates is sorted, so sorting selected column ids is exactly the
         # original token-id tie break used by the eager implementation.
         token_order = torch.argsort(selected_columns, stable=True)
-        removable_positions = token_order[
-            torch.argsort(removal_loss[token_order], stable=True)
-        ][:remove_limit]
+        ordered_loss = torch.index_select(removal_loss, 0, token_order)
+        removable_positions = torch.index_select(
+            token_order,
+            0,
+            torch.argsort(ordered_loss, stable=True),
+        )[:remove_limit]
 
         outside_mask = torch.ones(
             candidate_count,
             dtype=torch.bool,
             device=rows.device,
         )
-        outside_mask[selected_columns] = False
+        outside_mask = outside_mask.scatter(
+            0,
+            selected_columns,
+            torch.zeros_like(selected_columns, dtype=torch.bool),
+        )
         # Stable mask sorting yields the same ascending list as where(mask),
         # but its output shape is fixed and therefore CUDA-graph capturable.
-        outside_tensor = all_columns[
-            torch.argsort(outside_mask.to(torch.int8), descending=True, stable=True)
-        ][:outside_count]
-        outside_rows = rows[outside_tensor]
+        outside_tensor = torch.index_select(
+            all_columns,
+            0,
+            torch.argsort(outside_mask.to(torch.int8), descending=True, stable=True),
+        )[:outside_count]
+        outside_rows = torch.index_select(rows, 0, outside_tensor)
         outside_leverage = torch.sum(
             (outside_rows @ inverse) * outside_rows,
             dim=1,
@@ -1313,13 +1326,17 @@ def _swap_refine_no_certificate_capturable(
             descending=True,
             stable=True,
         )[:add_limit]
-        outside_tensor = outside_tensor[outside_order]
-        outside_rows = rows[outside_tensor]
+        outside_tensor = torch.index_select(outside_tensor, 0, outside_order)
+        outside_rows = torch.index_select(rows, 0, outside_tensor)
 
         local_delta_tensors: list[torch.Tensor] = []
         local_add_tensors: list[torch.Tensor] = []
         for position in removable_positions.unbind():
-            removed = selected_rows[position]
+            removed = torch.index_select(
+                selected_rows,
+                0,
+                position.reshape(1),
+            ).squeeze(0)
             direction = inverse @ removed
             remove_denominator = (
                 1.0 - torch.dot(removed, direction)
@@ -1334,24 +1351,51 @@ def _swap_refine_no_certificate_capturable(
             ).clamp_min(0.0)
             delta = torch.log(remove_denominator) + torch.log1p(add_leverage)
             local = torch.argmax(delta)
-            local_delta_tensors.append(delta[local])
-            local_add_tensors.append(outside_tensor[local])
+            local_delta_tensors.append(
+                torch.gather(delta, 0, local.reshape(1)).squeeze(0)
+            )
+            local_add_tensors.append(
+                torch.gather(outside_tensor, 0, local.reshape(1)).squeeze(0)
+            )
 
         local_deltas = torch.stack(local_delta_tensors)
         local_add_columns = torch.stack(local_add_tensors)
         best_local = torch.argmax(local_deltas)
-        improved = running & (local_deltas[best_local] > float(margin))
-        best_remove = removable_positions[best_local]
+        best_delta = torch.gather(
+            local_deltas,
+            0,
+            best_local.reshape(1),
+        ).squeeze(0)
+        improved = running & (best_delta > float(margin))
+        best_remove = torch.gather(
+            removable_positions,
+            0,
+            best_local.reshape(1),
+        ).squeeze(0)
+        best_add = torch.gather(
+            local_add_columns,
+            0,
+            best_local.reshape(1),
+        ).squeeze(0)
+        old_column = torch.gather(
+            selected_columns,
+            0,
+            best_remove.reshape(1),
+        ).squeeze(0)
         replacement = torch.where(
             improved,
-            local_add_columns[best_local],
-            selected_columns[best_remove],
+            best_add,
+            old_column,
         )
-        selected_columns[best_remove] = replacement
+        selected_columns = torch.where(
+            selected_positions == best_remove,
+            replacement,
+            selected_columns,
+        )
         swaps = swaps + improved.to(torch.long)
         running = improved
 
-    final_rows = rows[selected_columns]
+    final_rows = torch.index_select(rows, 0, selected_columns)
     final_information = ridge * identity + final_rows.transpose(0, 1) @ final_rows
     sign, logabsdet = torch.linalg.slogdet(final_information)
     return selected_columns, swaps, sign, logabsdet
