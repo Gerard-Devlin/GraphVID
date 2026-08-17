@@ -31,6 +31,9 @@ from .configuration_flashvid import FlashVidConfig
 _PROFILE_ENV = "CERTV3_PROFILE_PHASES"
 _CERTIFICATE_STATS_ENV = "CERTV3_COLLECT_CERTIFICATE_STATS"
 _EXACT_OPTIMIZATION_AUDIT_ENV = "CERTV3_AUDIT_EXACT_OPTIMIZATIONS"
+_EXACT_CUDA_GRAPH_ENV = "CERTV3_USE_EXACT_CUDA_GRAPHS"
+_DOPT_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
+_FEDOROV_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
 
 
 def _profile_enabled(features: torch.Tensor) -> bool:
@@ -48,6 +51,11 @@ def _certificate_stats_enabled(config: FlashVidConfig) -> bool:
 def _exact_optimization_audit_enabled() -> bool:
     value = os.environ.get(_EXACT_OPTIMIZATION_AUDIT_ENV, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _exact_cuda_graph_enabled(tensor: torch.Tensor) -> bool:
+    value = os.environ.get(_EXACT_CUDA_GRAPH_ENV, "").strip().lower()
+    return tensor.is_cuda and value in {"1", "true", "yes", "on"}
 
 
 def _profile_record(
@@ -945,6 +953,111 @@ def _d_optimal_unconstrained_columns(
     return columns
 
 
+def _d_optimal_unconstrained_columns_capturable(
+    rows: torch.Tensor,
+    budget: int,
+    ridge: float,
+) -> torch.Tensor:
+    """The eager D-optimal program with a fixed-shape finite fallback."""
+    candidate_count, design_dim = rows.shape
+    inverse = torch.eye(
+        design_dim,
+        dtype=torch.float32,
+        device=rows.device,
+    ) / ridge
+    leverage = rows.square().sum(dim=1) / ridge
+    active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
+    columns = torch.empty(budget, dtype=torch.long, device=rows.device)
+
+    for step in range(budget):
+        score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(
+            ~active,
+            float("-inf"),
+        )
+        column = torch.argmax(score)
+        # This is the fixed-shape equivalent of torch.where(active)[0][0].
+        fallback = torch.argmax(active.to(torch.int8))
+        column = torch.where(torch.isfinite(score[column]), column, fallback)
+
+        row = rows[column]
+        direction = inverse @ row
+        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
+        projection = rows @ direction
+        leverage = (
+            leverage - projection.square() / denominator
+        ).clamp_min(0.0)
+        inverse = inverse - torch.outer(direction, direction) / denominator
+        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
+        active[column] = False
+        leverage[column] = -1.0
+        columns[step] = column
+    return columns
+
+
+def _d_optimal_unconstrained_columns_graph(
+    rows: torch.Tensor,
+    budget: int,
+    ridge: float,
+) -> torch.Tensor:
+    """Replay the numerically unchanged greedy loop as one CUDA launch."""
+    if not _exact_cuda_graph_enabled(rows):
+        return _d_optimal_unconstrained_columns(rows, budget, ridge)
+
+    key = (
+        rows.device.index,
+        tuple(rows.shape),
+        rows.dtype,
+        int(budget),
+        float(ridge),
+    )
+    cached = _DOPT_GRAPH_CACHE.get(key)
+    if cached is None:
+        static_rows = rows.detach().clone()
+        warmup_stream = torch.cuda.Stream(device=rows.device)
+        warmup_stream.wait_stream(torch.cuda.current_stream(rows.device))
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(2):
+                _d_optimal_unconstrained_columns_capturable(
+                    static_rows,
+                    budget,
+                    ridge,
+                )
+        torch.cuda.current_stream(rows.device).wait_stream(warmup_stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            static_columns = _d_optimal_unconstrained_columns_capturable(
+                static_rows,
+                budget,
+                ridge,
+            )
+        cached = {
+            "graph": graph,
+            "rows": static_rows,
+            "columns": static_columns,
+        }
+        _DOPT_GRAPH_CACHE[key] = cached
+        print(
+            "[CertVID V3] captured exact D-optimal CUDA graph "
+            f"for rows={tuple(rows.shape)} budget={budget}"
+        )
+
+    static_rows = cached["rows"]
+    assert isinstance(static_rows, torch.Tensor)
+    static_rows.copy_(rows)
+    graph = cached["graph"]
+    assert isinstance(graph, torch.cuda.CUDAGraph)
+    graph.replay()
+    static_columns = cached["columns"]
+    assert isinstance(static_columns, torch.Tensor)
+
+    if _exact_optimization_audit_enabled():
+        reference = _d_optimal_unconstrained_columns(rows, budget, ridge)
+        if not torch.equal(static_columns, reference):
+            raise RuntimeError("CUDA-graph D-optimal selection differs from eager reference")
+    return static_columns
+
+
 def _d_optimal_greedy(
     *,
     design: torch.Tensor,
@@ -961,7 +1074,7 @@ def _d_optimal_greedy(
 
     ridge = max(1e-4, float(ridge))
     if not mandatory:
-        columns = _d_optimal_unconstrained_columns(
+        columns = _d_optimal_unconstrained_columns_graph(
             rows,
             budget,
             ridge,
@@ -1035,7 +1148,7 @@ def _d_optimal_greedy(
     return candidates[columns]
 
 
-def _swap_refine(
+def _swap_refine_eager(
     *,
     selected: torch.Tensor,
     candidates: torch.Tensor,
@@ -1140,6 +1253,245 @@ def _swap_refine(
     sign, logabsdet = torch.linalg.slogdet(final_information)
     final_logdet = float(logabsdet.item()) if float(sign.item()) > 0.0 else float("-inf")
     return candidates[selected_columns], swaps, final_logdet
+
+
+def _swap_refine_no_certificate_capturable(
+    rows: torch.Tensor,
+    selected_columns: torch.Tensor,
+    ridge: float,
+    steps: int,
+    pool_size: int,
+    margin: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Fixed-shape form of the original no-certificate Fedorov loop."""
+    candidate_count, dimension = rows.shape
+    budget = int(selected_columns.numel())
+    identity = torch.eye(dimension, dtype=torch.float32, device=rows.device)
+    all_columns = torch.arange(candidate_count, dtype=torch.long, device=rows.device)
+    selected_columns = selected_columns.clone()
+    running = torch.ones((), dtype=torch.bool, device=rows.device)
+    swaps = torch.zeros((), dtype=torch.long, device=rows.device)
+    remove_limit = min(budget, max(1, int(pool_size)))
+    outside_count = candidate_count - budget
+    add_limit = min(outside_count, max(1, int(pool_size)))
+
+    for _ in range(steps):
+        selected_rows = rows[selected_columns]
+        information = ridge * identity + selected_rows.transpose(0, 1) @ selected_rows
+        inverse = torch.linalg.inv(information)
+        selected_leverage = torch.sum(
+            (selected_rows @ inverse) * selected_rows,
+            dim=1,
+        ).clamp(0.0, 1.0 - 1e-5)
+        removal_loss = -torch.log1p(-selected_leverage)
+
+        # candidates is sorted, so sorting selected column ids is exactly the
+        # original token-id tie break used by the eager implementation.
+        token_order = torch.argsort(selected_columns, stable=True)
+        removable_positions = token_order[
+            torch.argsort(removal_loss[token_order], stable=True)
+        ][:remove_limit]
+
+        outside_mask = torch.ones(
+            candidate_count,
+            dtype=torch.bool,
+            device=rows.device,
+        )
+        outside_mask[selected_columns] = False
+        # Stable mask sorting yields the same ascending list as where(mask),
+        # but its output shape is fixed and therefore CUDA-graph capturable.
+        outside_tensor = all_columns[
+            torch.argsort(outside_mask.to(torch.int8), descending=True, stable=True)
+        ][:outside_count]
+        outside_rows = rows[outside_tensor]
+        outside_leverage = torch.sum(
+            (outside_rows @ inverse) * outside_rows,
+            dim=1,
+        )
+        outside_order = torch.argsort(
+            outside_leverage,
+            descending=True,
+            stable=True,
+        )[:add_limit]
+        outside_tensor = outside_tensor[outside_order]
+        outside_rows = rows[outside_tensor]
+
+        local_delta_tensors: list[torch.Tensor] = []
+        local_add_tensors: list[torch.Tensor] = []
+        for position in removable_positions.unbind():
+            removed = selected_rows[position]
+            direction = inverse @ removed
+            remove_denominator = (
+                1.0 - torch.dot(removed, direction)
+            ).clamp_min(1e-5)
+            inverse_without = (
+                inverse
+                + torch.outer(direction, direction) / remove_denominator
+            )
+            add_leverage = torch.sum(
+                (outside_rows @ inverse_without) * outside_rows,
+                dim=1,
+            ).clamp_min(0.0)
+            delta = torch.log(remove_denominator) + torch.log1p(add_leverage)
+            local = torch.argmax(delta)
+            local_delta_tensors.append(delta[local])
+            local_add_tensors.append(outside_tensor[local])
+
+        local_deltas = torch.stack(local_delta_tensors)
+        local_add_columns = torch.stack(local_add_tensors)
+        best_local = torch.argmax(local_deltas)
+        improved = running & (local_deltas[best_local] > float(margin))
+        best_remove = removable_positions[best_local]
+        replacement = torch.where(
+            improved,
+            local_add_columns[best_local],
+            selected_columns[best_remove],
+        )
+        selected_columns[best_remove] = replacement
+        swaps = swaps + improved.to(torch.long)
+        running = improved
+
+    final_rows = rows[selected_columns]
+    final_information = ridge * identity + final_rows.transpose(0, 1) @ final_rows
+    sign, logabsdet = torch.linalg.slogdet(final_information)
+    return selected_columns, swaps, sign, logabsdet
+
+
+def _swap_refine(
+    *,
+    selected: torch.Tensor,
+    candidates: torch.Tensor,
+    design: torch.Tensor,
+    mandatory: list[int],
+    ridge: float,
+    steps: int,
+    pool_size: int,
+    margin: float,
+) -> tuple[torch.Tensor, int, float]:
+    """Run the exact Fedorov program eagerly or as one static CUDA graph."""
+    steps = max(0, int(steps))
+    if (
+        mandatory
+        or steps == 0
+        or selected.numel() == 0
+        or not _exact_cuda_graph_enabled(design)
+    ):
+        return _swap_refine_eager(
+            selected=selected,
+            candidates=candidates,
+            design=design,
+            mandatory=mandatory,
+            ridge=ridge,
+            steps=steps,
+            pool_size=pool_size,
+            margin=margin,
+        )
+
+    rows = design[candidates].float()
+    if int(rows.shape[0]) <= int(selected.numel()):
+        return _swap_refine_eager(
+            selected=selected,
+            candidates=candidates,
+            design=design,
+            mandatory=mandatory,
+            ridge=ridge,
+            steps=steps,
+            pool_size=pool_size,
+            margin=margin,
+        )
+    ridge = max(1e-4, float(ridge))
+    selected_columns = torch.searchsorted(candidates, selected).to(
+        device=rows.device,
+        dtype=torch.long,
+    )
+    key = (
+        rows.device.index,
+        tuple(rows.shape),
+        rows.dtype,
+        int(selected_columns.numel()),
+        float(ridge),
+        int(steps),
+        int(pool_size),
+        float(margin),
+    )
+    cached = _FEDOROV_GRAPH_CACHE.get(key)
+    if cached is None:
+        static_rows = rows.detach().clone()
+        static_selected = selected_columns.detach().clone()
+        warmup_stream = torch.cuda.Stream(device=rows.device)
+        warmup_stream.wait_stream(torch.cuda.current_stream(rows.device))
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(2):
+                _swap_refine_no_certificate_capturable(
+                    static_rows,
+                    static_selected,
+                    ridge,
+                    steps,
+                    pool_size,
+                    margin,
+                )
+        torch.cuda.current_stream(rows.device).wait_stream(warmup_stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            static_output = _swap_refine_no_certificate_capturable(
+                static_rows,
+                static_selected,
+                ridge,
+                steps,
+                pool_size,
+                margin,
+            )
+        cached = {
+            "graph": graph,
+            "rows": static_rows,
+            "selected": static_selected,
+            "output": static_output,
+        }
+        _FEDOROV_GRAPH_CACHE[key] = cached
+        print(
+            "[CertVID V3] captured exact Fedorov CUDA graph "
+            f"for rows={tuple(rows.shape)} budget={selected_columns.numel()}"
+        )
+
+    static_rows = cached["rows"]
+    static_selected = cached["selected"]
+    assert isinstance(static_rows, torch.Tensor)
+    assert isinstance(static_selected, torch.Tensor)
+    static_rows.copy_(rows)
+    static_selected.copy_(selected_columns)
+    graph = cached["graph"]
+    assert isinstance(graph, torch.cuda.CUDAGraph)
+    graph.replay()
+    output = cached["output"]
+    assert isinstance(output, tuple)
+    graph_columns, graph_swaps_tensor, graph_sign, graph_logdet_tensor = output
+    graph_selected = candidates[graph_columns]
+    graph_swaps = int(graph_swaps_tensor.item())
+    graph_logdet = (
+        float(graph_logdet_tensor.item())
+        if float(graph_sign.item()) > 0.0
+        else float("-inf")
+    )
+
+    if _exact_optimization_audit_enabled():
+        reference_selected, reference_swaps, reference_logdet = _swap_refine_eager(
+            selected=selected,
+            candidates=candidates,
+            design=design,
+            mandatory=mandatory,
+            ridge=ridge,
+            steps=steps,
+            pool_size=pool_size,
+            margin=margin,
+        )
+        if (
+            not torch.equal(graph_selected, reference_selected)
+            or graph_swaps != reference_swaps
+            or graph_logdet != reference_logdet
+        ):
+            raise RuntimeError("CUDA-graph Fedorov refinement differs from eager reference")
+    return graph_selected, graph_swaps, graph_logdet
 
 
 def certvid_v3_compression(
