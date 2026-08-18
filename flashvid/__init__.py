@@ -711,6 +711,7 @@ def flashvid(
             "certvid" enables constrained evidence coreset compression with shared Qwen3 DeepStack fusion;
             "certvid_v2" keeps a CertVID evidence backbone and applies gated trajectory repair;
             "certvid_v3" selects a certified regularized D-optimal evidence design;
+            "certvidfinal" is the self-contained, numerically equivalent V3 implementation;
             "certvid_v3plus" keeps the V3 outer design and replaces only the
             LLaVA inner selector with structure-aware pruning;
             "certvid_v3plusplus" keeps the V3 outer design and uses
@@ -861,10 +862,10 @@ def flashvid(
     else:
         raise NotImplementedError(f"FlashVID is not supported for {type(model)} yet.")
 
-    if variant not in ("flashvid", "fastv", "fastvid", "visionzip", "prunevid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
+    if variant not in ("flashvid", "fastv", "fastvid", "visionzip", "prunevid", "talon", "graphvid", "fastgraphvid", "apexvid", "certvid", "certvid_v2", "certvid_v3", "certvidfinal", "certvid_v3plus", "certvid_v3plusplus", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid", "prismvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|fastv|fastvid|visionzip|prunevid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|fastv|fastvid|visionzip|prunevid|talon|graphvid|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvidfinal|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
     if variant == "certvid_v3plus":
         v3plus_inner_mode = str(v3plus_inner_mode).strip().lower()
@@ -1467,7 +1468,7 @@ def flashvid(
     )
     # Qwen-family FlashVID runs default to strict accounting. LLaVA FlashVID
     # and CertVID V3 can opt in explicitly without changing established runs.
-    strict_capable_variant = variant in ("flashvid", "certvid_v3")
+    strict_capable_variant = variant in ("flashvid", "certvid_v3", "certvidfinal")
     automatic_strict_budget = bool(
         variant == "flashvid"
         and type(model)

@@ -651,7 +651,7 @@ def Qwen3VLModel_forward(
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
         flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
-        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid"}:
+        if compression_variant in {"certvid", "certvid_v2", "certvid_v3", "certvidfinal", "certvid_v6", "certvid_v7", "certvid_v8", "certvid_v9", "certvid_v10", "certvid_v11", "certvid_v4", "certvid_v5", "certvid_e", "faithvid"}:
             from .certvid_qwen3 import compress_certvid_deepstack, merge_certvid_visual_deepstack
 
             certvid_plan = getattr(flashvid_config, "_certvid_plan", None)

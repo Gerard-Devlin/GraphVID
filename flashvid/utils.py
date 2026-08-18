@@ -385,11 +385,14 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant == "certvid_v3":
-        from .certvid_v3 import certvid_v3_compression
+    if compression_variant in {"certvid_v3", "certvidfinal"}:
+        if compression_variant == "certvidfinal":
+            from .certvidfinal import certvidfinal_compression as certvid_compression
+        else:
+            from .certvid_v3 import certvid_v3_compression as certvid_compression
 
         analysis_sink = {} if capture_design else None
-        result = certvid_v3_compression(
+        result = certvid_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
@@ -586,7 +589,7 @@ def flashvid_compression(
     if compression_variant not in ("flashvid", "graphvid"):
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvidfinal|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -1373,7 +1376,7 @@ def fastv_prune(
 
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
     strict_layer_average_budget = bool(
-        variant in ("flashvid", "certvid_v3")
+        variant in ("flashvid", "certvid_v3", "certvidfinal")
         and getattr(flashvid_config, "strict_token_budget", False)
     )
     if variant == "prunevid":

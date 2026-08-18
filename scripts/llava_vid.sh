@@ -198,8 +198,8 @@ method_args() {
       printf 'compression_variant=flashvid,token_selection_method=%s,strict_token_budget=%s' \
         "$FLASHVID_TOKEN_SELECTION_METHOD" "$STRICT_TOKEN_BUDGET"
       ;;
-    certvid_v3)
-      printf 'compression_variant=certvid_v3,token_selection_method=%s,' "$CERTV3_TOKEN_SELECTION_METHOD"
+    certvid_v3|certvidfinal)
+      printf 'compression_variant=%s,token_selection_method=%s,' "$method" "$CERTV3_TOKEN_SELECTION_METHOD"
       certv3_args
       ;;
     faithvid)
