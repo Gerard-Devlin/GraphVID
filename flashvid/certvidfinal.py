@@ -354,11 +354,6 @@ _build_components_reference = _build_components
 # Exact trajectory helpers formerly imported from certvid_v2.py.
 _TRAJECTORY_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
 
-def _exact_cuda_graph_enabled(tensor: torch.Tensor) -> bool:
-    value = os.environ.get(_EXACT_CUDA_GRAPH_ENV, "").strip().lower()
-    return tensor.is_cuda and value in {"1", "true", "yes", "on"}
-
-
 def _trajectory_signals_eager(
     metric_frames: torch.Tensor,
     coords: torch.Tensor,
@@ -547,13 +542,6 @@ def _profile_enabled(features: torch.Tensor) -> bool:
     return features.is_cuda and value in {"1", "true", "yes", "on"}
 
 
-def _certificate_stats_enabled(config: FlashVidConfig) -> bool:
-    value = os.environ.get(_CERTIFICATE_STATS_ENV, "").strip().lower()
-    if value:
-        return value in {"1", "true", "yes", "on"}
-    return _cfg_bool(config, "certv3_collect_certificate_stats", False)
-
-
 def _exact_optimization_audit_enabled() -> bool:
     value = os.environ.get(_EXACT_OPTIMIZATION_AUDIT_ENV, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
@@ -718,470 +706,6 @@ def _design_features(
     quality_floor = min(1.0, max(1e-4, float(quality_floor)))
     row_mass = quality_floor + (1.0 - quality_floor) * quality.clamp(0.0, 1.0)
     return design * torch.sqrt(row_mass).unsqueeze(1)
-
-
-def _evenly_spaced_ids(count: int, keep: int, device: torch.device) -> torch.Tensor:
-    if keep >= count:
-        return torch.arange(count, dtype=torch.long, device=device)
-    if keep <= 1:
-        return torch.tensor([count // 2], dtype=torch.long, device=device)
-    return torch.round(torch.linspace(0, count - 1, steps=keep, device=device)).long().unique()
-
-
-def _hard_certificates(
-    *,
-    budget: int,
-    quality: torch.Tensor,
-    event_score: torch.Tensor,
-    frame_ids: torch.Tensor,
-    temporal_ids: torch.Tensor,
-    spatial_ids: torch.Tensor,
-    query_relevance: torch.Tensor,
-    atom_weights: torch.Tensor,
-    query_confidence: float,
-    frame_count: int,
-    temporal_count: int,
-    spatial_count: int,
-    frame_coverage_ratio: float,
-    cell_coverage_ratio: float,
-    query_threshold: float,
-    query_per_atom: int,
-    use_spatiotemporal: bool = True,
-) -> tuple[list[int], list[int]]:
-    """Build immutable temporal, spatial, event, and query evidence constraints."""
-    entries: list[tuple[float, float, int, bool]] = []
-
-    if use_spatiotemporal:
-        frame_keep = max(1, int(math.ceil(frame_count * min(1.0, max(0.0, frame_coverage_ratio)))))
-        for frame_id in _evenly_spaced_ids(frame_count, frame_keep, quality.device).tolist():
-            members = torch.where(frame_ids == int(frame_id))[0]
-            if members.numel() > 0:
-                token = int(members[torch.argmax(quality[members])].item())
-                entries.append((5.0, float(quality[token].item()), token, False))
-
-        # Every temporal interval keeps its strongest transition or curved trajectory.
-        for temporal_id in range(temporal_count):
-            members = torch.where(temporal_ids == temporal_id)[0]
-            if members.numel() > 0:
-                token = int(members[torch.argmax(event_score[members])].item())
-                entries.append((4.5, float(event_score[token].item()), token, False))
-
-        cells_per_interval = max(
-            0,
-            min(spatial_count, int(math.ceil(spatial_count * min(1.0, max(0.0, cell_coverage_ratio))))),
-        )
-        for temporal_id in range(temporal_count):
-            cell_representatives: list[tuple[float, int]] = []
-            for spatial_id in range(spatial_count):
-                members = torch.where(
-                    (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
-                )[0]
-                if members.numel() == 0:
-                    continue
-                token = int(members[torch.argmax(quality[members])].item())
-                cell_representatives.append((float(quality[token].item()), token))
-            cell_representatives.sort(key=lambda item: (-item[0], item[1]))
-            for score, token in cell_representatives[:cells_per_interval]:
-                entries.append((3.0, score, token, False))
-
-    query_seeds: list[int] = []
-    if query_relevance.numel() > 0 and query_confidence >= float(query_threshold):
-        per_atom = max(1, int(query_per_atom))
-        for atom_idx, atom_scores in enumerate(query_relevance):
-            per_interval: list[tuple[float, int]] = []
-            for temporal_id in range(temporal_count):
-                members = torch.where(temporal_ids == temporal_id)[0]
-                if members.numel() == 0:
-                    continue
-                token = int(members[torch.argmax(atom_scores[members])].item())
-                per_interval.append((float(atom_scores[token].item()), token))
-            per_interval.sort(key=lambda item: (-item[0], item[1]))
-            atom_priority = 6.0 + float(atom_weights[atom_idx].item())
-            for score, token in per_interval[:per_atom]:
-                entries.append((atom_priority, score, token, True))
-                query_seeds.append(token)
-
-    best_by_token: dict[int, tuple[float, float, int, bool]] = {}
-    for entry in entries:
-        previous = best_by_token.get(entry[2])
-        if previous is None or (entry[0], entry[1]) > (previous[0], previous[1]):
-            best_by_token[entry[2]] = entry
-    ordered = sorted(best_by_token.values(), key=lambda item: (-item[0], -item[1], item[2]))
-    mandatory = [entry[2] for entry in ordered[:budget]]
-    mandatory_set = set(mandatory)
-    query_seeds = list(dict.fromkeys(token for token in query_seeds if token in mandatory_set))
-    return mandatory, query_seeds
-
-
-def _budget_aware_certificates(
-    *,
-    budget: int,
-    certificate_ratio: float,
-    quality: torch.Tensor,
-    event_score: torch.Tensor,
-    frame_ids: torch.Tensor,
-    temporal_ids: torch.Tensor,
-    spatial_ids: torch.Tensor,
-    query_relevance: torch.Tensor,
-    atom_weights: torch.Tensor,
-    query_confidence: float,
-    frame_count: int,
-    temporal_count: int,
-    spatial_count: int,
-    frame_coverage_ratio: float,
-    cell_coverage_ratio: float,
-    query_threshold: float,
-    query_per_atom: int,
-    use_spatiotemporal: bool = True,
-) -> tuple[list[int], list[int], dict[str, int]]:
-    """Build a category-balanced certificate subset under a hard budget cap."""
-    Request = tuple[float, float, int, bool]
-    requests: dict[str, list[Request]] = {
-        "query": [],
-        "frame": [],
-        "temporal": [],
-        "spatial": [],
-    }
-
-    def materialize_pairs(
-        token_tensors: list[torch.Tensor],
-        score_tensors: list[torch.Tensor],
-    ) -> list[tuple[float, int]]:
-        if not token_tensors:
-            return []
-        tokens_cpu = torch.stack(token_tensors).detach().cpu().tolist()
-        scores_cpu = torch.stack(score_tensors).detach().float().cpu().tolist()
-        return [
-            (float(score), int(token))
-            for score, token in zip(scores_cpu, tokens_cpu)
-        ]
-
-    if use_spatiotemporal:
-        frame_keep = max(
-            1,
-            int(
-                math.ceil(
-                    frame_count
-                    * min(1.0, max(0.0, frame_coverage_ratio))
-                )
-            ),
-        )
-        frame_tokens: list[torch.Tensor] = []
-        frame_scores: list[torch.Tensor] = []
-        for frame_id in _evenly_spaced_ids(
-            frame_count,
-            frame_keep,
-            quality.device,
-        ).tolist():
-            members = torch.where(frame_ids == int(frame_id))[0]
-            if members.numel() > 0:
-                token = members[torch.argmax(quality[members])]
-                frame_tokens.append(token)
-                frame_scores.append(quality[token])
-        requests["frame"].extend(
-            (5.0, score, token, False)
-            for score, token in materialize_pairs(frame_tokens, frame_scores)
-        )
-
-        temporal_tokens: list[torch.Tensor] = []
-        temporal_scores: list[torch.Tensor] = []
-        for temporal_id in range(temporal_count):
-            members = torch.where(temporal_ids == temporal_id)[0]
-            if members.numel() > 0:
-                token = members[torch.argmax(event_score[members])]
-                temporal_tokens.append(token)
-                temporal_scores.append(event_score[token])
-        requests["temporal"].extend(
-            (4.5, score, token, False)
-            for score, token in materialize_pairs(
-                temporal_tokens,
-                temporal_scores,
-            )
-        )
-
-        cells_per_interval = max(
-            0,
-            min(
-                spatial_count,
-                int(
-                    math.ceil(
-                        spatial_count
-                        * min(1.0, max(0.0, cell_coverage_ratio))
-                    )
-                ),
-            ),
-        )
-        cell_groups: list[list[int]] = [[] for _ in range(temporal_count)]
-        cell_tokens: list[torch.Tensor] = []
-        cell_scores: list[torch.Tensor] = []
-        for temporal_id in range(temporal_count):
-            for spatial_id in range(spatial_count):
-                members = torch.where(
-                    (temporal_ids == temporal_id) & (spatial_ids == spatial_id)
-                )[0]
-                if members.numel() == 0:
-                    continue
-                token = members[torch.argmax(quality[members])]
-                cell_groups[temporal_id].append(len(cell_tokens))
-                cell_tokens.append(token)
-                cell_scores.append(quality[token])
-        cell_pairs = materialize_pairs(cell_tokens, cell_scores)
-        for temporal_id in range(temporal_count):
-            cell_representatives = [
-                cell_pairs[position]
-                for position in cell_groups[temporal_id]
-            ]
-            cell_representatives.sort(key=lambda item: (-item[0], item[1]))
-            for score, token in cell_representatives[:cells_per_interval]:
-                requests["spatial"].append((3.0, score, token, False))
-
-    if query_relevance.numel() > 0 and query_confidence >= float(query_threshold):
-        per_atom = max(1, int(query_per_atom))
-        query_groups: list[list[int]] = [
-            [] for _ in range(int(query_relevance.shape[0]))
-        ]
-        query_tokens: list[torch.Tensor] = []
-        query_scores: list[torch.Tensor] = []
-        for atom_idx, atom_scores in enumerate(query_relevance):
-            for temporal_id in range(temporal_count):
-                members = torch.where(temporal_ids == temporal_id)[0]
-                if members.numel() == 0:
-                    continue
-                token = members[torch.argmax(atom_scores[members])]
-                query_groups[atom_idx].append(len(query_tokens))
-                query_tokens.append(token)
-                query_scores.append(atom_scores[token])
-        query_pairs = materialize_pairs(query_tokens, query_scores)
-        atom_weights_cpu = atom_weights.detach().float().cpu().tolist()
-        for atom_idx in range(int(query_relevance.shape[0])):
-            per_interval = [
-                query_pairs[position]
-                for position in query_groups[atom_idx]
-            ]
-            per_interval.sort(key=lambda item: (-item[0], item[1]))
-            atom_priority = 6.0 + float(atom_weights_cpu[atom_idx])
-            for score, token in per_interval[:per_atom]:
-                requests["query"].append((atom_priority, score, token, True))
-
-    # Keep frame requests temporally spread; rank all other categories by evidence.
-    category_order = ("query", "frame", "temporal", "spatial")
-    for category in category_order:
-        if category != "frame":
-            requests[category].sort(
-                key=lambda item: (-item[0], -item[1], item[2])
-            )
-
-    ratio = min(1.0, max(0.0, float(certificate_ratio)))
-    certificate_limit = min(budget, int(math.floor(budget * ratio)))
-    category_weights = {"query": 2, "frame": 2, "temporal": 2, "spatial": 1}
-    active = [category for category in category_order if requests[category]]
-    total_weight = sum(category_weights[category] for category in active)
-    quotas = {category: 0 for category in category_order}
-    if total_weight > 0:
-        exact = {
-            category: certificate_limit
-            * category_weights[category]
-            / float(total_weight)
-            for category in active
-        }
-        for category in active:
-            quotas[category] = int(math.floor(exact[category]))
-        remainder = certificate_limit - sum(quotas.values())
-        remainder_order = sorted(
-            active,
-            key=lambda category: (
-                -(exact[category] - quotas[category]),
-                category_order.index(category),
-            ),
-        )
-        for category in remainder_order[:remainder]:
-            quotas[category] += 1
-
-    selected: list[int] = []
-    selected_set: set[int] = set()
-    covered_by_category = {category: 0 for category in category_order}
-
-    def admit(entry: Request) -> None:
-        token = int(entry[2])
-        if token not in selected_set and len(selected) < certificate_limit:
-            selected.append(token)
-            selected_set.add(token)
-
-    for category in category_order:
-        category_requests = requests[category]
-        quota = quotas[category]
-        if quota <= 0:
-            continue
-        if category == "frame" and len(category_requests) > quota:
-            positions = _evenly_spaced_ids(
-                len(category_requests),
-                quota,
-                quality.device,
-            ).tolist()
-            position_set = set(positions)
-            ordered_requests = [category_requests[position] for position in positions]
-            ordered_requests.extend(
-                entry
-                for position, entry in enumerate(category_requests)
-                if position not in position_set
-            )
-        else:
-            ordered_requests = category_requests
-
-        covered_tokens: set[int] = set()
-        for entry in ordered_requests:
-            token = int(entry[2])
-            if token in covered_tokens:
-                continue
-            covered_tokens.add(token)
-            covered_by_category[category] += 1
-            admit(entry)
-            if covered_by_category[category] >= quota:
-                break
-
-    # Duplicate requests and empty categories return their unused quota to the
-    # strongest remaining requests while preserving the global certificate cap.
-    all_requests = sorted(
-        (entry for category in category_order for entry in requests[category]),
-        key=lambda item: (-item[0], -item[1], item[2]),
-    )
-    for entry in all_requests:
-        if len(selected) >= certificate_limit:
-            break
-        admit(entry)
-
-    query_tokens = {int(entry[2]) for entry in requests["query"]}
-    query_seeds = [token for token in selected if token in query_tokens]
-    stats = {
-        "limit": int(certificate_limit),
-        "requested_unique": int(
-            len({int(entry[2]) for entry in all_requests})
-        ),
-        **{
-            f"{category}_requested": int(
-                len({int(entry[2]) for entry in requests[category]})
-            )
-            for category in category_order
-        },
-        **{
-            f"{category}_quota": int(quotas[category])
-            for category in category_order
-        },
-        **{
-            f"{category}_covered": int(covered_by_category[category])
-            for category in category_order
-        },
-    }
-    return selected, query_seeds, stats
-
-
-def _candidate_pool(
-    *,
-    budget: int,
-    quality: torch.Tensor,
-    component_ids: torch.Tensor,
-    temporal_ids: torch.Tensor,
-    spatial_ids: torch.Tensor,
-    query_relevance: torch.Tensor,
-    mandatory: list[int],
-    multiplier: float,
-    use_trajectory: bool = True,
-) -> torch.Tensor:
-    total_tokens = int(quality.numel())
-    limit = min(total_tokens, max(budget, int(math.ceil(budget * max(1.0, multiplier)))))
-
-    fast_candidates: Optional[torch.Tensor] = None
-    if not mandatory:
-        fast_candidates = _candidate_pool_without_certificates(
-            quality=quality,
-            component_ids=component_ids,
-            temporal_ids=temporal_ids,
-            spatial_ids=spatial_ids,
-            query_relevance=query_relevance,
-            limit=limit,
-            use_trajectory=use_trajectory,
-        )
-        if not _exact_optimization_audit_enabled():
-            return fast_candidates
-
-    candidates: set[int] = set(int(token) for token in mandatory)
-
-    def finish() -> torch.Tensor:
-        reference = torch.tensor(
-            sorted(candidates),
-            dtype=torch.long,
-            device=quality.device,
-        )
-        if fast_candidates is not None:
-            if not torch.equal(fast_candidates, reference):
-                raise RuntimeError("device candidate pool differs from the reference path")
-            return fast_candidates
-        return reference
-
-    def offer(tokens: list[int]) -> None:
-        for token in tokens:
-            if len(candidates) >= limit:
-                return
-            candidates.add(int(token))
-
-    # Expose query alternatives across time before filling with generic quality peaks.
-    if query_relevance.numel() > 0:
-        query_offer_tokens: list[torch.Tensor] = []
-        query_offer_scores: list[torch.Tensor] = []
-        for scores in query_relevance:
-            for temporal_id in torch.unique(temporal_ids).tolist():
-                members = torch.where(temporal_ids == int(temporal_id))[0]
-                if members.numel() == 0:
-                    continue
-                token = members[torch.argmax(scores[members])]
-                query_offer_tokens.append(token)
-                query_offer_scores.append(scores[token])
-        query_tokens_cpu = torch.stack(query_offer_tokens).detach().cpu().tolist()
-        query_scores_cpu = torch.stack(query_offer_scores).detach().float().cpu().tolist()
-        query_offers = list(zip(query_scores_cpu, query_tokens_cpu))
-        query_offers.sort(key=lambda item: (-item[0], item[1]))
-        offer([token for _, token in query_offers])
-        if len(candidates) >= limit:
-            return finish()
-
-    # Semantic trajectory representatives make rare persistent objects eligible.
-    if use_trajectory:
-        quality_cpu = quality.detach().float().cpu().tolist()
-        component_cpu = component_ids.detach().cpu().tolist()
-        representatives: dict[int, int] = {}
-        for token, component in enumerate(component_cpu):
-            previous = representatives.get(component)
-            if previous is None or quality_cpu[token] > quality_cpu[previous]:
-                representatives[component] = token
-        component_tokens = sorted(
-            representatives.values(),
-            key=lambda token: (-quality_cpu[token], token),
-        )
-        offer(component_tokens)
-        if len(candidates) >= limit:
-            return finish()
-
-    # Add one strong alternative for every temporal-spatial cell.
-    cell_token_tensors: list[torch.Tensor] = []
-    cell_score_tensors: list[torch.Tensor] = []
-    joint_cells = temporal_ids * (int(spatial_ids.max().item()) + 1) + spatial_ids
-    for cell_id in torch.unique(joint_cells).tolist():
-        members = torch.where(joint_cells == int(cell_id))[0]
-        token = members[torch.argmax(quality[members])]
-        cell_token_tensors.append(token)
-        cell_score_tensors.append(quality[token])
-    cell_tokens_cpu = torch.stack(cell_token_tensors).detach().cpu().tolist()
-    cell_scores_cpu = torch.stack(cell_score_tensors).detach().float().cpu().tolist()
-    cell_tokens = list(zip(cell_scores_cpu, cell_tokens_cpu))
-    cell_tokens.sort(key=lambda item: (-item[0], item[1]))
-    offer([token for _, token in cell_tokens])
-    if len(candidates) >= limit:
-        return finish()
-
-    offer(torch.argsort(quality, descending=True, stable=True).detach().cpu().tolist())
-    if len(candidates) < budget:
-        offer(list(range(total_tokens)))
-    return finish()
 
 
 def _stable_score_token_order(
@@ -1381,12 +905,11 @@ def _score_only_select(
     *,
     quality: torch.Tensor,
     candidates: torch.Tensor,
-    mandatory: list[int],
     budget: int,
 ) -> torch.Tensor:
     """Fill the fixed budget by existing scalar scores without D-optimal design."""
     candidate_set = set(int(token) for token in candidates.detach().cpu().tolist())
-    selected = list(dict.fromkeys(int(token) for token in mandatory if int(token) in candidate_set))
+    selected: list[int] = []
     selected_set = set(selected)
     ranked = sorted(
         candidate_set,
@@ -1567,108 +1090,17 @@ def _d_optimal_unconstrained_columns_graph(
     return static_columns
 
 
-def _d_optimal_greedy(
-    *,
-    design: torch.Tensor,
-    candidates: torch.Tensor,
-    mandatory: list[int],
-    budget: int,
-    ridge: float,
-) -> torch.Tensor:
-    """Greedy regularized D-optimal design with exact rank-one leverage updates."""
-    rows = design[candidates].float()
-    candidate_count, design_dim = rows.shape
-    if candidate_count < budget:
-        raise RuntimeError(f"D-optimal pool has {candidate_count} candidates for budget {budget}")
-
-    ridge = max(1e-4, float(ridge))
-    if not mandatory:
-        columns = _d_optimal_unconstrained_columns_graph(
-            rows,
-            budget,
-            ridge,
-        )
-        return candidates[columns]
-
-    inverse = torch.eye(design_dim, dtype=torch.float32, device=rows.device) / ridge
-    leverage = rows.square().sum(dim=1) / ridge
-    active = torch.ones(candidate_count, dtype=torch.bool, device=rows.device)
-    selected_columns: list[int] = []
-
-    def add(column: int) -> None:
-        nonlocal inverse, leverage
-        if not bool(active[column]):
-            return
-        row = rows[column]
-        direction = inverse @ row
-        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
-        projection = rows @ direction
-        leverage = (leverage - projection.square() / denominator).clamp_min(0.0)
-        inverse = inverse - torch.outer(direction, direction) / denominator
-        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
-        active[column] = False
-        leverage[column] = -1.0
-        selected_columns.append(column)
-
-    if mandatory:
-        token_to_column = {
-            int(token): column
-            for column, token in enumerate(candidates.detach().cpu().tolist())
-        }
-        for token in mandatory:
-            column = token_to_column.get(int(token))
-            if column is not None and len(selected_columns) < budget:
-                add(column)
-
-    remaining_steps = budget - len(selected_columns)
-    greedy_columns = torch.empty(
-        remaining_steps,
-        dtype=torch.long,
-        device=rows.device,
-    )
-    for step in range(remaining_steps):
-        score = torch.log1p(leverage.clamp_min(0.0)).masked_fill(~active, float("-inf"))
-        column = torch.argmax(score)
-        remaining = torch.where(active)[0]
-        column = torch.where(torch.isfinite(score[column]), column, remaining[0])
-
-        row = rows[column]
-        direction = inverse @ row
-        denominator = (1.0 + torch.dot(row, direction)).clamp_min(1e-6)
-        projection = rows @ direction
-        leverage = (leverage - projection.square() / denominator).clamp_min(0.0)
-        inverse = inverse - torch.outer(direction, direction) / denominator
-        inverse = 0.5 * (inverse + inverse.transpose(0, 1))
-        active[column] = False
-        leverage[column] = -1.0
-        greedy_columns[step] = column
-
-    if selected_columns:
-        mandatory_columns = torch.tensor(
-            selected_columns,
-            dtype=torch.long,
-            device=rows.device,
-        )
-        columns = torch.cat((mandatory_columns, greedy_columns))
-    else:
-        columns = greedy_columns
-    if int(columns.numel()) != budget:
-        raise RuntimeError(f"D-optimal selector produced {len(selected_columns)} tokens for budget {budget}")
-    return candidates[columns]
-
-
 def _swap_refine_eager(
     *,
     selected: torch.Tensor,
     candidates: torch.Tensor,
     design: torch.Tensor,
-    mandatory: list[int],
     ridge: float,
     steps: int,
     pool_size: int,
     margin: float,
 ) -> tuple[torch.Tensor, int, float]:
-    """Fedorov-style exchanges improve log-det while preserving hard certificates."""
+    """Fedorov-style exchanges improve the selected design's log determinant."""
     steps = max(0, int(steps))
     if steps == 0 or selected.numel() == 0:
         return selected, 0, 0.0
@@ -1681,18 +1113,6 @@ def _swap_refine_eager(
         device=rows.device,
         dtype=torch.long,
     )
-    mandatory_columns = torch.zeros(
-        int(candidates.numel()),
-        dtype=torch.bool,
-        device=rows.device,
-    )
-    if mandatory:
-        mandatory_tokens = torch.tensor(
-            mandatory,
-            dtype=torch.long,
-            device=rows.device,
-        )
-        mandatory_columns[torch.searchsorted(candidates, mandatory_tokens)] = True
     swaps = 0
 
     for _ in range(steps):
@@ -1702,9 +1122,11 @@ def _swap_refine_eager(
         selected_leverage = torch.sum((selected_rows @ inverse) * selected_rows, dim=1).clamp(0.0, 1.0 - 1e-5)
         removal_loss = -torch.log1p(-selected_leverage)
 
-        removable_positions = torch.where(~mandatory_columns[selected_columns])[0]
-        if int(removable_positions.numel()) == 0:
-            break
+        removable_positions = torch.arange(
+            selected_columns.numel(),
+            dtype=torch.long,
+            device=rows.device,
+        )
         # Match Python's (removal_loss, token_id) ordering with two stable
         # sorts, while keeping the values resident on the GPU.
         token_order = torch.argsort(
@@ -1912,7 +1334,6 @@ def _swap_refine(
     selected: torch.Tensor,
     candidates: torch.Tensor,
     design: torch.Tensor,
-    mandatory: list[int],
     ridge: float,
     steps: int,
     pool_size: int,
@@ -1921,8 +1342,7 @@ def _swap_refine(
     """Run the exact Fedorov program eagerly or as one static CUDA graph."""
     steps = max(0, int(steps))
     if (
-        mandatory
-        or steps == 0
+        steps == 0
         or selected.numel() == 0
         or not _exact_cuda_graph_enabled(design)
     ):
@@ -1930,7 +1350,6 @@ def _swap_refine(
             selected=selected,
             candidates=candidates,
             design=design,
-            mandatory=mandatory,
             ridge=ridge,
             steps=steps,
             pool_size=pool_size,
@@ -1943,7 +1362,6 @@ def _swap_refine(
             selected=selected,
             candidates=candidates,
             design=design,
-            mandatory=mandatory,
             ridge=ridge,
             steps=steps,
             pool_size=pool_size,
@@ -2037,7 +1455,6 @@ def _swap_refine(
             selected=selected,
             candidates=candidates,
             design=design,
-            mandatory=mandatory,
             ridge=ridge,
             steps=steps,
             pool_size=pool_size,
@@ -2090,48 +1507,8 @@ def certvidfinal_compression(
     compression_variant = str(
         getattr(flashvid_config, "compression_variant", "")
     ).strip().lower()
-    qwen_v3_certificate_policy = (
-        backbone in {"qwen2_5_vl", "qwen3_vl"}
-        and compression_variant in {"certvid_v3", "certvidfinal"}
-    )
-    qwen_certificate_ratio = min(
-        1.0,
-        max(
-            0.0,
-            _cfg_float(
-                flashvid_config,
-                "certv3_qwen_certificate_budget_ratio",
-                0.35,
-            ),
-        ),
-    )
-    certificate_ratio = min(
-        1.0,
-        max(
-            0.0,
-            _cfg_float(
-                flashvid_config,
-                "certv3_certificate_budget_ratio",
-                1.0,
-            ),
-        ),
-    )
-    effective_certificate_ratio = (
-        min(certificate_ratio, qwen_certificate_ratio)
-        if qwen_v3_certificate_policy
-        else certificate_ratio
-    )
-    certificate_limit = min(
-        budget,
-        int(math.floor(budget * effective_certificate_ratio)),
-    )
-    certificate_cap_active = False
-    certificate_stats: dict[str, int] = {}
-    qwen_certificate_limit = (
-        certificate_limit if qwen_v3_certificate_policy else budget
-    )
-    qwen_certificate_cap_active = False
-    original_certificate_count = budget
+    # CertVID-Final is the no-certificate method validated in the paper.
+    # Legacy certificate experiments remain available through certvid_v3.
     selection_objective = str(
         getattr(flashvid_config, "certv3_selection_objective", "d_optimal")
     ).strip().lower()
@@ -2144,9 +1521,6 @@ def certvidfinal_compression(
             "certv3_selection_objective must be 'd_optimal' or 'score_only', "
             f"got {selection_objective!r}"
         )
-    use_spatiotemporal_certificates = _cfg_bool(
-        flashvid_config, "certv3_use_spatiotemporal_certificates", True
-    )
     use_trajectory = _cfg_bool(flashvid_config, "certv3_use_trajectory", True)
     use_query = _cfg_bool(flashvid_config, "certv3_use_query", True)
 
@@ -2155,8 +1529,6 @@ def certvidfinal_compression(
         output = flat_features
         candidates = total_tokens
         components = total_tokens
-        mandatory: list[int] = list(range(total_tokens))
-        query_seeds: list[int] = []
         query_confidence = 0.0
         swaps = 0
         logdet = 0.0
@@ -2307,82 +1679,32 @@ def certvidfinal_compression(
         _profile_record(phase_events, "quality_signals", 1)
 
         _profile_record(phase_events, "certificates_candidates", 0)
-        certificate_kwargs = {
-            "budget": budget,
-            "quality": quality,
-            "event_score": event_score,
-            "frame_ids": frame_ids,
-            "temporal_ids": temporal_ids,
-            "spatial_ids": spatial_ids,
-            "query_relevance": query_relevance,
-            "atom_weights": atom_weights,
-            "query_confidence": query_confidence,
-            "frame_count": frame_count,
-            "temporal_count": temporal_count,
-            "spatial_count": spatial_count,
-            "frame_coverage_ratio": _cfg_float(
-                flashvid_config,
-                "certv3_frame_coverage_ratio",
-                1.0,
-            ),
-            "cell_coverage_ratio": _cfg_float(
-                flashvid_config,
-                "certv3_cell_coverage_ratio",
-                0.50,
-            ),
-            "query_threshold": _cfg_float(
-                flashvid_config,
-                "certv3_query_threshold",
-                0.10,
-            ),
-            "query_per_atom": _cfg_int(
-                flashvid_config,
-                "certv3_query_per_atom",
-                1,
-            ),
-            "use_spatiotemporal": use_spatiotemporal_certificates,
-        }
-        if certificate_limit == 0:
-            # A zero cap cannot affect selection. Request accounting remains
-            # available explicitly, but is not paid for during normal runs.
-            mandatory = []
-            query_seeds = []
-            if _certificate_stats_enabled(flashvid_config):
-                _, _, certificate_stats = _budget_aware_certificates(
-                    certificate_ratio=effective_certificate_ratio,
-                    **certificate_kwargs,
-                )
-                original_certificate_count = min(
-                    budget,
-                    int(certificate_stats["requested_unique"]),
-                )
-            else:
-                original_certificate_count = 0
-            certificate_cap_active = True
-            if qwen_v3_certificate_policy:
-                qwen_certificate_cap_active = True
-        else:
-            mandatory, query_seeds = _hard_certificates(**certificate_kwargs)
-            original_certificate_count = len(mandatory)
-            if original_certificate_count > certificate_limit:
-                mandatory, query_seeds, certificate_stats = (
-                    _budget_aware_certificates(
-                        certificate_ratio=effective_certificate_ratio,
-                        **certificate_kwargs,
+        candidate_limit = min(
+            total_tokens,
+            max(
+                budget,
+                int(
+                    math.ceil(
+                        budget
+                        * max(
+                            1.0,
+                            _cfg_float(
+                                flashvid_config,
+                                "certv3_candidate_multiplier",
+                                2.5,
+                            ),
+                        )
                     )
-                )
-                certificate_cap_active = True
-                if qwen_v3_certificate_policy:
-                    qwen_certificate_cap_active = True
-        candidate_indices = _candidate_pool(
-            budget=budget,
+                ),
+            ),
+        )
+        candidate_indices = _candidate_pool_without_certificates(
             quality=quality,
             component_ids=component_ids,
             temporal_ids=temporal_ids,
             spatial_ids=spatial_ids,
             query_relevance=query_relevance,
-            mandatory=mandatory,
-            multiplier=_cfg_float(flashvid_config, "certv3_candidate_multiplier", 2.5),
+            limit=candidate_limit,
             use_trajectory=use_trajectory,
         )
         _profile_record(phase_events, "certificates_candidates", 1)
@@ -2441,7 +1763,6 @@ def certvidfinal_compression(
             selected = _score_only_select(
                 quality=quality,
                 candidates=candidate_indices,
-                mandatory=mandatory,
                 budget=budget,
             )
             swaps = 0
@@ -2449,13 +1770,14 @@ def certvidfinal_compression(
             _profile_record(phase_events, "d_optimal", 1)
         else:
             _profile_record(phase_events, "d_optimal", 0)
-            selected = _d_optimal_greedy(
-                design=design,
-                candidates=candidate_indices,
-                mandatory=mandatory,
-                budget=budget,
-                ridge=ridge,
-            )
+            candidate_rows = design[candidate_indices].float()
+            selected = candidate_indices[
+                _d_optimal_unconstrained_columns_graph(
+                    candidate_rows,
+                    budget,
+                    max(1e-4, float(ridge)),
+                )
+            ]
             _profile_record(phase_events, "d_optimal", 1)
 
             _profile_record(phase_events, "fedorov", 0)
@@ -2463,7 +1785,6 @@ def certvidfinal_compression(
                 selected=selected,
                 candidates=candidate_indices,
                 design=design,
-                mandatory=mandatory,
                 ridge=ridge,
                 steps=_cfg_int(flashvid_config, "certv3_swap_steps", 6),
                 pool_size=_cfg_int(flashvid_config, "certv3_swap_pool", 24),
@@ -2487,9 +1808,6 @@ def certvidfinal_compression(
         _profile_record(phase_events, "fusion_plan", 1)
 
         _profile_record(phase_events, "fusion_apply", 0)
-        if mandatory:
-            certificate_indices = torch.tensor(mandatory, dtype=torch.long, device=selected.device)
-            plan.fusion_alpha[torch.isin(selected, certificate_indices)] = 0.0
         output = apply_certvid_plan(flat_features, plan)
         _profile_record(phase_events, "fusion_apply", 1)
         candidates = int(candidate_indices.numel())
@@ -2577,56 +1895,21 @@ def certvidfinal_compression(
     setattr(flashvid_config, "last_certv3_target_tokens", float(budget))
     setattr(flashvid_config, "last_certv3_candidate_tokens", float(candidates))
     setattr(flashvid_config, "last_certv3_component_count", float(components))
-    setattr(flashvid_config, "last_certv3_certificate_count", float(len(mandatory)))
-    setattr(
-        flashvid_config,
-        "last_certv3_original_certificate_count",
-        float(original_certificate_count),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_certificate_budget_ratio",
-        float(effective_certificate_ratio),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_certificate_limit",
-        float(certificate_limit),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_certificate_cap_active",
-        bool(certificate_cap_active),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_qwen_certificate_cap_active",
-        bool(qwen_certificate_cap_active),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_qwen_certificate_limit",
-        float(qwen_certificate_limit),
-    )
-    free_dopt_slots = max(0, int(budget) - len(mandatory))
-    certificate_pressure = len(mandatory) / float(max(1, budget))
-    dopt_slot_ratio = free_dopt_slots / float(max(1, budget))
-    setattr(
-        flashvid_config,
-        "last_certv3_certificate_pressure",
-        float(certificate_pressure),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_free_dopt_slots",
-        float(free_dopt_slots),
-    )
-    setattr(
-        flashvid_config,
-        "last_certv3_dopt_slot_ratio",
-        float(dopt_slot_ratio),
-    )
-    setattr(flashvid_config, "last_certv3_query_seed_count", float(len(query_seeds)))
+    no_certificate_stats = {
+        "last_certv3_certificate_count": 0.0,
+        "last_certv3_original_certificate_count": 0.0,
+        "last_certv3_certificate_budget_ratio": 0.0,
+        "last_certv3_certificate_limit": 0.0,
+        "last_certv3_certificate_cap_active": True,
+        "last_certv3_qwen_certificate_cap_active": False,
+        "last_certv3_qwen_certificate_limit": 0.0,
+        "last_certv3_certificate_pressure": 0.0,
+        "last_certv3_free_dopt_slots": float(budget),
+        "last_certv3_dopt_slot_ratio": 1.0,
+        "last_certv3_query_seed_count": 0.0,
+    }
+    for name, value in no_certificate_stats.items():
+        setattr(flashvid_config, name, value)
     setattr(flashvid_config, "last_certv3_query_confidence", float(query_confidence))
     setattr(flashvid_config, "last_certv3_swap_count", float(swaps))
     setattr(flashvid_config, "last_certv3_logdet", float(logdet))
@@ -2648,46 +1931,31 @@ def certvidfinal_compression(
         "target_tokens": int(budget),
         "output_tokens": int(output.shape[0]),
         "backbone": backbone,
-        "certificate_count": int(len(mandatory)),
-        "original_certificate_count": int(original_certificate_count),
-        "certificate_pressure": float(certificate_pressure),
-        "original_certificate_pressure": float(
-            original_certificate_count / float(max(1, budget))
-        ),
-        "free_dopt_slots": int(free_dopt_slots),
-        "dopt_slot_ratio": float(dopt_slot_ratio),
-        "certificate_budget_ratio": float(effective_certificate_ratio),
-        "configured_certificate_budget_ratio": float(certificate_ratio),
-        "certificate_limit": int(certificate_limit),
-        "certificate_cap_active": bool(certificate_cap_active),
-        "qwen_certificate_policy": bool(qwen_v3_certificate_policy),
-        "qwen_certificate_cap_active": bool(qwen_certificate_cap_active),
-        "qwen_certificate_budget_ratio": float(qwen_certificate_ratio),
-        "qwen_certificate_limit": int(qwen_certificate_limit),
+        "certificate_count": 0,
+        "original_certificate_count": 0,
+        "certificate_pressure": 0.0,
+        "original_certificate_pressure": 0.0,
+        "free_dopt_slots": int(budget),
+        "dopt_slot_ratio": 1.0,
+        "certificate_budget_ratio": 0.0,
+        "configured_certificate_budget_ratio": 0.0,
+        "certificate_limit": 0,
+        "certificate_cap_active": True,
+        "qwen_certificate_policy": False,
+        "qwen_certificate_cap_active": False,
+        "qwen_certificate_budget_ratio": 0.0,
+        "qwen_certificate_limit": 0,
         "candidate_count": int(candidates),
         "component_count": int(components),
-        "query_seed_count": int(len(query_seeds)),
+        "query_seed_count": 0,
         "query_confidence": float(query_confidence),
         "swap_count": int(swaps),
         "logdet": float(logdet),
         "selection_objective": selection_objective,
-        "use_spatiotemporal_certificates": bool(use_spatiotemporal_certificates),
+        "use_spatiotemporal_certificates": False,
         "use_trajectory": bool(use_trajectory),
         "use_query": bool(use_query),
     }
-    diagnostics.update(
-        {
-            f"certificate_{key}": int(value)
-            for key, value in certificate_stats.items()
-        }
-    )
-    if qwen_v3_certificate_policy:
-        diagnostics.update(
-            {
-                f"qwen_certificate_{key}": int(value)
-                for key, value in certificate_stats.items()
-            }
-        )
     setattr(flashvid_config, "last_certv3_diagnostics", diagnostics)
     _write_certv3_diagnostics(flashvid_config, diagnostics)
     return output, plan.anchor_indices
