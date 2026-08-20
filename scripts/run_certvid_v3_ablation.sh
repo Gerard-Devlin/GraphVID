@@ -75,7 +75,6 @@ for ablation in $(split_csv "$ABLATIONS"); do
       LLM_RETENTION_RATIO="$LLM_RETENTION_RATIO" \
       OUTPUT_PATH="$ablation_dir" \
       CERTV3_BUDGET_USES_EXPANSION=True \
-      CERTV3_TOKEN_SELECTION_METHOD=attn_div_stable \
       CERTV3_SELECTION_OBJECTIVE="$selection_objective" \
       CERTV3_QUALITY_FLOOR="$quality_floor" \
       CERTV3_CERTIFICATE_BUDGET_RATIO=0.0 \

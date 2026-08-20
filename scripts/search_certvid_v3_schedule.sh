@@ -236,7 +236,6 @@ for row in "${CONFIG_ROWS[@]}"; do
     PRUNING_LAYER="$pruning_layer"
     LLM_RETENTION_RATIO="$inner_retention"
     CERTV3_BUDGET_USES_EXPANSION=True
-    CERTV3_TOKEN_SELECTION_METHOD=attn_div_stable
     BATCH_SIZE=1
     LOG_SAMPLES=0
     OUTPUT_PATH="$run_dir"

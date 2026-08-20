@@ -64,7 +64,6 @@ for slug in $(split_csv "$EXPANSIONS"); do
       PRUNING_LAYER=20 \
       LLM_RETENTION_RATIO="$inner_retention" \
       CERTV3_BUDGET_USES_EXPANSION=True \
-      CERTV3_TOKEN_SELECTION_METHOD=attn_div_stable \
       CERTV3_CERTIFICATE_BUDGET_RATIO=0.0 \
       CERTV3_SELECTION_OBJECTIVE=d_optimal \
       CERTV3_USE_SPATIOTEMPORAL_DESIGN=True \

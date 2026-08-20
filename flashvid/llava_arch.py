@@ -173,12 +173,6 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
         mm_patch_merge_type = getattr(self.config, "mm_patch_merge_type", "flat")
         image_aspect_ratio = getattr(self.config, "image_aspect_ratio", "square")
         mm_newline_position = getattr(self.config, "mm_newline_position", "one_token")
-        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
-            query_prefix_tokens = int(
-                mm_newline_position == "one_token" and "unpad" in mm_patch_merge_type
-            )
-            setattr(flashvid_config, "_v3plus_query_prefix_tokens", query_prefix_tokens)
-
         if mm_patch_merge_type == "flat":
             image_features = [x.flatten(0, 1) for x in image_features]
 
@@ -194,66 +188,41 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                 if image_idx in video_idx_in_batch:  # video operations
                     # rank0_print("Video")
                     if mm_newline_position == "grid":
-                        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
-                            from .faithvid import pack_faithvid_frame_newlines
+                        # Grid-wise
+                        image_feature = self.add_token_per_grid(image_feature)
+                        if getattr(self.config, "add_faster_video", False):
+                            faster_video_feature = self.add_token_per_grid(all_faster_video_features[image_idx])
+                            # Add a token for each frame
+                            concat_slow_fater_token = []
+                            # import pdb; pdb.set_trace()
+                            for _ in range(image_feature.shape[0]):
+                                if _ % self.config.faster_token_stride == 0:
+                                    concat_slow_fater_token.append(torch.cat((image_feature[_], self.model.faster_token[None].to(image_feature.device)), dim=0))
+                                else:
+                                    concat_slow_fater_token.append(torch.cat((faster_video_feature[_], self.model.faster_token[None].to(image_feature.device)), dim=0))
+                            # import pdb; pdb.set_trace()
+                            image_feature = torch.cat(concat_slow_fater_token)
 
-                            num_frames, num_visual_tokens = pooled_image_feature.shape[:2]
-                            image_feature = pack_faithvid_frame_newlines(
-                                flashvid_config,
-                                compressed_visual_tokens,
-                                keep_visual_indices,
-                                num_frames,
-                                num_visual_tokens,
-                                self.model.image_newline,
-                            )
-                        else:
-                            # Grid-wise
-                            image_feature = self.add_token_per_grid(image_feature)
-                            if getattr(self.config, "add_faster_video", False):
-                                faster_video_feature = self.add_token_per_grid(all_faster_video_features[image_idx])
-                                # Add a token for each frame
-                                concat_slow_fater_token = []
-                                # import pdb; pdb.set_trace()
-                                for _ in range(image_feature.shape[0]):
-                                    if _ % self.config.faster_token_stride == 0:
-                                        concat_slow_fater_token.append(torch.cat((image_feature[_], self.model.faster_token[None].to(image_feature.device)), dim=0))
-                                    else:
-                                        concat_slow_fater_token.append(torch.cat((faster_video_feature[_], self.model.faster_token[None].to(image_feature.device)), dim=0))
-                                # import pdb; pdb.set_trace()
-                                image_feature = torch.cat(concat_slow_fater_token)
-
-                                # print("!!!!!!!!!!!!")
+                            # print("!!!!!!!!!!!!")
 
                         new_image_features.append(image_feature)
                     elif mm_newline_position == "frame":
                         # Frame-wise
                         # image_feature = self.add_token_per_frame(image_feature)
                         num_frames, num_visual_tokens = pooled_image_feature.shape[:2] # (64, 169)
-                        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
-                            from .faithvid import pack_faithvid_frame_newlines
-
-                            image_feature = pack_faithvid_frame_newlines(
-                                flashvid_config,
-                                compressed_visual_tokens,
-                                keep_visual_indices,
-                                num_frames,
-                                num_visual_tokens,
-                                self.model.image_newline,
-                            )
-                        else:
-                            # * Append mm_newline_token to each frame
-                            compressed_visual_token_list = []
-                            for frame_idx in range(num_frames):
-                                start_idx = frame_idx * num_visual_tokens
-                                end_idx = start_idx + num_visual_tokens
-                                ind = torch.where((keep_visual_indices >= start_idx) & (keep_visual_indices < end_idx))[0]
-                                frame_visual_tokens = compressed_visual_tokens[ind]
-                                frame_visual_tokens = torch.cat((frame_visual_tokens, self.model.image_newline[None].to(image_feature.device)), dim=0)
-                                compressed_visual_token_list.append(frame_visual_tokens)
-                            image_feature = torch.cat(compressed_visual_token_list, dim=0)
-                            flashvid_config.vision_token_length = int(image_feature.shape[0])
-                            flashvid_config.llm_token_length = None
-                            flashvid_config.visual_token_length = image_feature.shape[0] # * Update the visual token length in the config
+                        # * Append mm_newline_token to each frame
+                        compressed_visual_token_list = []
+                        for frame_idx in range(num_frames):
+                            start_idx = frame_idx * num_visual_tokens
+                            end_idx = start_idx + num_visual_tokens
+                            ind = torch.where((keep_visual_indices >= start_idx) & (keep_visual_indices < end_idx))[0]
+                            frame_visual_tokens = compressed_visual_tokens[ind]
+                            frame_visual_tokens = torch.cat((frame_visual_tokens, self.model.image_newline[None].to(image_feature.device)), dim=0)
+                            compressed_visual_token_list.append(frame_visual_tokens)
+                        image_feature = torch.cat(compressed_visual_token_list, dim=0)
+                        flashvid_config.vision_token_length = int(image_feature.shape[0])
+                        flashvid_config.llm_token_length = None
+                        flashvid_config.visual_token_length = image_feature.shape[0] # * Update the visual token length in the config
                         # print(f"visual token length: {flashvid_config.visual_token_length}") # ? Debugging line
                         # new_image_features.append(image_feature.flatten(0, 1))
                         new_image_features.append(image_feature)
@@ -263,14 +232,6 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                         # image_feature = image_feature.flatten(0, 1)
                         if "unpad" in mm_patch_merge_type:
                             image_feature = torch.cat((image_feature, self.model.image_newline[None].to(image_feature.device)), dim=0)
-                            if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
-                                from .faithvid import append_faithvid_neutral_tokens
-
-                                append_faithvid_neutral_tokens(flashvid_config, 1)
-                        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
-                            flashvid_config.vision_token_length = int(image_feature.shape[0])
-                            flashvid_config.visual_token_length = int(image_feature.shape[0])
-                            flashvid_config.llm_token_length = None
                         new_image_features.append(image_feature)
                     elif mm_newline_position == "no_token":
                         new_image_features.append(image_feature.flatten(0, 1))

@@ -19,7 +19,6 @@ from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 from .utils import fastv_prune
 from .configuration_flashvid import FlashVidConfig
-from .faithvid_attention import faithvid_attention_forward
 
 
 def Qwen2Model_forward(
@@ -80,30 +79,13 @@ def Qwen2Model_forward(
         raise ValueError("FlashVID configuration is not set in the model.")
     flashvid_config: FlashVidConfig = getattr(self, "flashvid_config")
     is_prefill = hidden_states.shape[1] > 1
-    compression_variant = str(
-        getattr(flashvid_config, "compression_variant", "")
-    ).strip().lower()
-    v3plusplus_gradient_mode = (
-        compression_variant == "certvid_v3plusplus"
-        and str(
-            getattr(flashvid_config, "v3plusplus_inner_mode", "gradient_nms")
-        ).strip().lower()
-        == "gradient_nms"
-    )
-    if v3plusplus_gradient_mode:
-        from .v3plusplus_inner import v3plusplus_strict_enabled
-
-        v3plusplus_gradient_mode = v3plusplus_strict_enabled(flashvid_config)
-
     assert all(decoder_layer.attention_type == "full_attention" for decoder_layer in self.layers[: self.config.num_hidden_layers])
     causal_mask = causal_mask_mapping["full_attention"]
     for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
         # Only prunes visual tokens in prefilling stage.
         if is_prefill:
             if layer_idx == flashvid_config.pruning_layer - 1:
-                # Strict PlusPlus computes its own inference-objective gradient
-                # and must never depend on a legacy FastV attention row.
-                kwargs["output_attentions"] = not v3plusplus_gradient_mode
+                kwargs["output_attentions"] = True
             elif layer_idx == flashvid_config.pruning_layer:
                 kwargs["output_attentions"] = False
                 attn: torch.Tensor = attn_weights
@@ -128,9 +110,6 @@ def Qwen2Model_forward(
                     position_ids=position_ids,
                     position_embeddings=position_embeddings,
                     flashvid_config=flashvid_config,
-                    decoder_layer=decoder_layer,
-                    output_norm=self.norm,
-                    output_head=getattr(self, "_v3plusplus_output_head", None),
                 )
                 if bool(
                     getattr(
@@ -245,36 +224,21 @@ def Qwen2Attention_forward(
         )
 
     dropout = 0.0 if not self.training else self.attention_dropout
-    faith_output = faithvid_attention_forward(
+    attention_interface: Callable = eager_attention_forward
+    if self.config._attn_implementation != "eager":
+        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+    attn_output, attn_weights = attention_interface(
         self,
         query_states,
         key_states,
         value_states,
         attention_mask,
-        cache_position=cache_position,
-        scaling=self.scaling,
         dropout=dropout,
-        output_attentions=bool(kwargs.get("output_attentions", False)),
-        sliding_window=self.sliding_window,
+        scaling=self.scaling,
+        sliding_window=self.sliding_window,  # main diff with Llama
+        **kwargs,
     )
-    if faith_output is not None:
-        attn_output, attn_weights = faith_output
-    else:
-        attention_interface: Callable = eager_attention_forward
-        if self.config._attn_implementation != "eager":
-            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
-
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            dropout=dropout,
-            scaling=self.scaling,
-            sliding_window=self.sliding_window,  # main diff with Llama
-            **kwargs,
-        )
 
     prunevid_attention = None
     if kwargs.get("output_attentions", False):
@@ -371,22 +335,6 @@ def Qwen2Attention_forward(
                 ...,
                 visual_start:visual_end,
             ] = visual_scores[:, None, None].to(query_states.dtype)
-        elif (
-            flashvid_config is not None
-            and variant == "certvid_v3plus"
-            and str(getattr(flashvid_config, "v3plus_inner_mode", "structured")).strip().lower()
-            == "structured"
-        ):
-            from .v3plus_inner import capture_v3plus_multitext_attention
-
-            capture_v3plus_multitext_attention(
-                query_states=query_states,
-                key_states=key_states,
-                config=flashvid_config,
-                scaling=self.scaling,
-                num_key_value_groups=self.num_key_value_groups,
-            )
-
     if prunevid_attention is not None:
         attn_weights = prunevid_attention
     elif kwargs.get("output_attentions", False) and attn_weights is None:

@@ -329,44 +329,6 @@ def flashvid_compression(
     # A plan is prefill-local. Clearing it here prevents stale GPU tensors from
     # surviving an interrupted or fallback generation.
     setattr(flashvid_config, "_certvid_plan", None)
-    if compression_variant == "certvid_v3plus":
-        from .v3plus_inner import clear_v3plus_runtime
-
-        clear_v3plus_runtime(flashvid_config)
-    if compression_variant == "certvid_v3plusplus":
-        from .v3plusplus_inner import clear_v3plusplus_runtime
-
-        clear_v3plusplus_runtime(flashvid_config)
-    if compression_variant == "faithvid":
-        from .faithvid_attention import clear_faithvid_runtime
-
-        clear_faithvid_runtime(flashvid_config)
-    if compression_variant == "talon":
-        from .talon import talon_compression
-
-        return talon_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "fastgraphvid":
-        from .fastgraphvid import fastgraphvid_compression
-
-        return fastgraphvid_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-        )
-    if compression_variant == "apexvid":
-        from .apexvid import apexvid_compression
-
-        return apexvid_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
     if compression_variant == "certvid":
         from .certvid import certvid_compression
 
@@ -460,124 +422,6 @@ def flashvid_compression(
                 visualization_analysis,
             )
         return result
-    if compression_variant == "certvid_v3plus":
-        from .certvid_v3plus import certvid_v3plus_compression
-
-        return certvid_v3plus_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v3plusplus":
-        from .certvid_v3plusplus import certvid_v3plusplus_compression
-
-        return certvid_v3plusplus_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v6":
-        from .certvid_v6 import certvid_v6_compression
-
-        return certvid_v6_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v7":
-        from .certvid_v7 import certvid_v7_compression
-
-        return certvid_v7_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v8":
-        from .certvid_v8 import certvid_v8_compression
-
-        return certvid_v8_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v9":
-        from .certvid_v9 import certvid_v9_compression
-
-        return certvid_v9_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v10":
-        from .certvid_v10 import certvid_v10_compression
-
-        return certvid_v10_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v11":
-        from .certvid_v11 import certvid_v11_compression
-
-        return certvid_v11_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v4":
-        from .certvid_v4 import certvid_v4_compression
-
-        return certvid_v4_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_v5":
-        from .certvid_v5 import certvid_v5_compression
-
-        return certvid_v5_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "certvid_e":
-        from .certvid_e import certvid_e_compression
-
-        return certvid_e_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "faithvid":
-        from .faithvid import faithvid_compression
-
-        return faithvid_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-        )
-    if compression_variant == "prismvid":
-        from .prismvid import prismvid_compression
-
-        return prismvid_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-            deepstack_features=deepstack_features,
-        )
     if compression_variant in ("fastv", "fastvid", "visionzip", "prunevid"):
         from .baseline_adapters import baseline_compression
 
@@ -586,10 +430,11 @@ def flashvid_compression(
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
         )
-    if compression_variant not in ("flashvid", "graphvid"):
+    if compression_variant != "flashvid":
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|graphvid|fastv|fastvid|visionzip|prunevid|talon|fastgraphvid|apexvid|certvid|certvid_v2|certvid_v3|certvidfinal|certvid_v3plus|certvid_v3plusplus|certvid_v6|certvid_v7|certvid_v8|certvid_v9|certvid_v10|certvid_v11|certvid_v4|certvid_v5|certvid_e|faithvid|prismvid"
+            "expected flashvid|fastv|fastvid|visionzip|prunevid|"
+            "certvid|certvid_v2|certvid_v3|certvidfinal"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -869,26 +714,12 @@ def segment_compression(
     # 1. Apply Temporal Average Merging (TAM) to the segment features.
     if num_other_tokens > 0 and flashvid_config.temporal_threshold < 1.0:
         if num_frames > 1:
-            merge_mode = str(getattr(flashvid_config, "temporal_merge_mode", "tree") or "tree").strip().lower()
-            if str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid":
-                merge_mode = "graph"
-            if merge_mode == "graph":
-                from .graphvid import graph_spatiotemporal_compression
-
-                temp_merged_token_list, temp_merged_indices_list = graph_spatiotemporal_compression(
-                    video_features=segment_features,
-                    temporal_threshold=flashvid_config.temporal_threshold,
-                    token_mask=mask,
-                    flashvid_config=flashvid_config,
-                    cls_attention=cls_attention,
-                )
-            else:
-                temp_merged_token_list, temp_merged_indices_list = spatiotemporal_compression(
-                    video_features=segment_features,
-                    temporal_threshold=flashvid_config.temporal_threshold,
-                    token_mask=mask,
-                    flashvid_config=flashvid_config,
-                )
+            temp_merged_token_list, temp_merged_indices_list = spatiotemporal_compression(
+                video_features=segment_features,
+                temporal_threshold=flashvid_config.temporal_threshold,
+                token_mask=mask,
+                flashvid_config=flashvid_config,
+            )
             temp_merged_global_indices_list = [segment_global_indices.view(num_frames, -1)[i][temp_merged_indices] for i, temp_merged_indices in enumerate(temp_merged_indices_list)]
         else:
             # Single-frame segment, no temporal merging needed.
@@ -899,25 +730,14 @@ def segment_compression(
         temp_merged_token_list = []
         temp_merged_global_indices_list = []
 
-    is_graphvid = str(getattr(flashvid_config, "compression_variant", "flashvid")).strip().lower() == "graphvid"
     all_tokens = [selected_features.view(-1, feat_dim)]
     all_global_indices = [selected_global_indices]
     # 2. Apply Spatial Merging to the tokens after temporal merging.
     if num_other_tokens > 0: ## Only apply spatial merging when there are STTM tokens.
-        graph_final_cap = int(getattr(flashvid_config, "graph_final_tokens_per_frame", 0) or 0)
-        skip_spatial_merge = (
-            is_graphvid
-            and graph_final_cap > 0
-            and bool(getattr(flashvid_config, "graph_skip_spatial_merge_when_capped", True))
-        )
         # Calculate adaptive contextual ratio.
         num_current_retained_tokens = sum(len(tokens) for tokens in temp_merged_token_list)
         adapative_contextual_ratio = num_other_tokens / max(1, num_current_retained_tokens)
-        if skip_spatial_merge:
-            for temp_merged_tokens, temp_merged_global_indices in zip(temp_merged_token_list, temp_merged_global_indices_list):
-                all_tokens.append(temp_merged_tokens)
-                all_global_indices.append(temp_merged_global_indices)
-        elif adapative_contextual_ratio < 1.0:
+        if adapative_contextual_ratio < 1.0:
             num_frames_in_segment = len(temp_merged_token_list)
             max_num_tokens = max(len(tokens) for tokens in temp_merged_token_list)
             batched_tokens = torch.zeros((num_frames_in_segment, max_num_tokens, feat_dim), dtype=segment_features.dtype, device=segment_features.device)
@@ -979,93 +799,9 @@ def segment_compression(
 
     segment_final_tokens = torch.cat(all_tokens, dim=0)  # (num_final_tokens, feat_dim)
     segment_final_global_indices = torch.cat(all_global_indices, dim=0)  # (num_final_tokens,)
-    if is_graphvid:
-        segment_final_tokens, segment_final_global_indices = _graphvid_apply_final_cap(
-            segment_final_tokens=segment_final_tokens,
-            segment_final_global_indices=segment_final_global_indices,
-            segment_global_indices=segment_global_indices,
-            cls_attention=cls_attention,
-            num_visual_tokens=num_visual_tokens,
-            flashvid_config=flashvid_config,
-        )
     return segment_final_tokens, segment_final_global_indices
 
 
-def _graphvid_apply_final_cap(
-    segment_final_tokens: torch.Tensor,
-    segment_final_global_indices: torch.Tensor,
-    segment_global_indices: torch.Tensor,
-    cls_attention: torch.Tensor,
-    num_visual_tokens: int,
-    flashvid_config: FlashVidConfig,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Apply an optional hard final budget for GraphVID outputs.
-
-    Graph merging improves the candidate pool, but FlashVID's ADTS branch can
-    still leave the final sequence near the original FlashVID budget. This
-    budget cap keeps per-frame coverage first, then fills remaining slots by
-    attention, so GraphVID can be evaluated at a real lower-token point.
-    """
-    target_per_frame = int(getattr(flashvid_config, "graph_final_tokens_per_frame", 0) or 0)
-    if target_per_frame <= 0 or segment_final_global_indices.numel() == 0:
-        return segment_final_tokens, segment_final_global_indices
-
-    num_frames = int(cls_attention.shape[0])
-    target_total = min(
-        int(segment_final_global_indices.numel()),
-        max(1, int(target_per_frame) * max(1, num_frames)),
-    )
-    if int(segment_final_global_indices.numel()) <= target_total:
-        return segment_final_tokens, segment_final_global_indices
-
-    base_frame = int((segment_global_indices[0, 0] // max(1, num_visual_tokens)).item())
-    frame_ids = (segment_final_global_indices // max(1, num_visual_tokens)) - base_frame
-    token_ids = segment_final_global_indices % max(1, num_visual_tokens)
-    valid = (
-        (frame_ids >= 0)
-        & (frame_ids < num_frames)
-        & (token_ids >= 0)
-        & (token_ids < num_visual_tokens)
-    )
-
-    scores = torch.full(
-        (segment_final_global_indices.shape[0],),
-        -1.0e6,
-        dtype=torch.float32,
-        device=segment_final_global_indices.device,
-    )
-    if valid.any():
-        scores[valid] = cls_attention.float()[frame_ids[valid].long(), token_ids[valid].long()]
-    scores = torch.nan_to_num(scores, nan=-1.0e6, posinf=1.0e6, neginf=-1.0e6)
-
-    keep_mask = torch.zeros_like(scores, dtype=torch.bool)
-    floor_ratio = min(max(float(getattr(flashvid_config, "graph_final_frame_floor_ratio", 0.55) or 0.55), 0.0), 1.0)
-    frame_floor = min(target_per_frame, max(0, int(math.floor(target_per_frame * floor_ratio))))
-    if frame_floor > 0:
-        for frame_idx in range(num_frames):
-            loc = torch.where(frame_ids == frame_idx)[0]
-            if loc.numel() == 0:
-                continue
-            k = min(frame_floor, int(loc.numel()), max(0, target_total - int(keep_mask.sum().item())))
-            if k <= 0:
-                break
-            top = torch.topk(scores[loc], k=k, largest=True).indices
-            keep_mask[loc[top]] = True
-
-    remaining = target_total - int(keep_mask.sum().item())
-    if remaining > 0:
-        candidates = torch.where(~keep_mask)[0]
-        if candidates.numel() > 0:
-            k = min(remaining, int(candidates.numel()))
-            top = torch.topk(scores[candidates], k=k, largest=True).indices
-            keep_mask[candidates[top]] = True
-
-    selected = torch.where(keep_mask)[0]
-    if selected.numel() == 0:
-        selected = torch.topk(scores, k=target_total, largest=True).indices
-    order = segment_final_global_indices[selected].argsort()
-    selected = selected[order]
-    return segment_final_tokens[selected], segment_final_global_indices[selected]
 
 
 def segment(
@@ -1337,14 +1073,6 @@ def fastv_prune(
     if float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) >= 0.9999:
         flashvid_config.llm_token_length = getattr(flashvid_config, "visual_token_length", None)
         keep_indices = torch.arange(seq_length, device=device, dtype=torch.long)
-        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
-            from .v3plus_inner import clear_v3plus_runtime
-
-            clear_v3plus_runtime(flashvid_config)
-        elif str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plusplus":
-            from .v3plusplus_inner import clear_v3plusplus_runtime
-
-            clear_v3plusplus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, keep_indices
 
     # Obtain FlashVid arguments.
@@ -1364,14 +1092,6 @@ def fastv_prune(
     visual_global_indices = torch.where(visual_pos_masks[0])[0]
     non_visual_global_indices = torch.where(non_visual_pos_masks[0])[0]
     if visual_features.numel() == 0 or visual_global_indices.numel() == 0:
-        if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plus":
-            from .v3plus_inner import clear_v3plus_runtime
-
-            clear_v3plus_runtime(flashvid_config)
-        elif str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "certvid_v3plusplus":
-            from .v3plusplus_inner import clear_v3plusplus_runtime
-
-            clear_v3plusplus_runtime(flashvid_config)
         return hidden_states, causal_mask, position_ids, cache_position, position_embeddings, torch.arange(seq_length, device=device)
 
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
@@ -1444,62 +1164,7 @@ def fastv_prune(
         num_retained_tokens = min(num_retained_tokens, strict_inner_target)
     if strict_layer_average_budget:
         flashvid_config.last_flashvid_strict_inner_target = int(num_retained_tokens)
-    if variant == "certvid_v3plusplus":
-        from .v3plusplus_inner import (
-            clear_v3plusplus_runtime,
-            record_v3plusplus_fallback,
-            select_v3plusplus_inner_tokens,
-            v3plusplus_strict_enabled,
-        )
-
-        inner_mode = str(
-            getattr(flashvid_config, "v3plusplus_inner_mode", "gradient_nms")
-        ).strip().lower()
-        try:
-            if inner_mode == "legacy":
-                raise RuntimeError("legacy mode requested")
-            topk_indices = select_v3plusplus_inner_tokens(
-                hidden_states=hidden_states,
-                visual_global_indices=visual_global_indices,
-                budget=num_retained_tokens,
-                decoder_layer=decoder_layer,
-                output_norm=output_norm,
-                output_head=output_head,
-                position_ids=position_ids,
-                position_embeddings=position_embeddings,
-                config=flashvid_config,
-            )
-        except (RuntimeError, TypeError, ValueError) as error:
-            record_v3plusplus_fallback(
-                flashvid_config,
-                reason=f"gradient_nms_error: {error}",
-                budget=num_retained_tokens,
-            )
-            if inner_mode != "legacy" and v3plusplus_strict_enabled(flashvid_config):
-                raise RuntimeError(
-                    "CertVID V3PlusPlus strict TRIO selection failed; refusing "
-                    "to silently fall back to legacy FastV"
-                ) from error
-            if attentions is None:
-                raise RuntimeError(
-                    "CertVID V3PlusPlus fallback requires legacy attention, but "
-                    "the gradient selector failed before attention was requested"
-                ) from error
-            legacy_attention = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
-            _, topk_indices = attn_based_token_selection(
-                features=visual_features.unsqueeze(0),
-                cls_attention=legacy_attention.unsqueeze(0),
-                num_retained_tokens=num_retained_tokens,
-            )
-            topk_indices = topk_indices.squeeze(0)
-        finally:
-            clear_v3plusplus_runtime(flashvid_config)
-    else:
-        topk_indices = None
-    inner_mode = str(getattr(flashvid_config, "v3plus_inner_mode", "structured")).strip().lower()
-    if variant == "certvid_v3plusplus":
-        attn = None
-    elif variant == "prunevid":
+    if variant == "prunevid":
         if attentions is None or attentions.ndim != 4:
             raise RuntimeError("PruneVID requires four-dimensional text attention")
         # Patched model attention returns the upstream PruneVID score in a
@@ -1513,111 +1178,50 @@ def fastv_prune(
                 raise RuntimeError("PruneVID cannot locate post-visual text queries")
             prunevid_attention = attentions[:, :, text_start:, :].amax(dim=(1, 2))
         attn = prunevid_attention[visual_pos_masks]
-    elif variant == "certvid_v3plus" and inner_mode == "structured":
-        # The FA2 fallback may return either a compact last-query row or a full
-        # attention matrix. Normalize both shapes without touching legacy paths.
-        last_query_attention = torch.mean(attentions, dim=1)
-        if last_query_attention.ndim == 3:
-            last_query_attention = last_query_attention[:, -1, :]
-        elif last_query_attention.ndim != 2:
-            raise RuntimeError(
-                f"unexpected V3Plus attention shape: {tuple(attentions.shape)}"
-            )
-        attn = last_query_attention[visual_pos_masks]
     else:
         attn = torch.mean(attentions[:, :, -1, :], dim=1)[visual_pos_masks]
 
-    if variant == "certvid_v3plusplus":
-        pass
-    elif variant == "certvid_v3plus" and inner_mode == "structured":
-        from .v3plus_inner import (
-            clear_v3plus_runtime,
-            record_v3plus_fallback,
-            select_v3plus_inner_tokens,
+    if variant == "prunevid":
+        group_sizes = [
+            int(value)
+            for value in getattr(flashvid_config, "_prunevid_group_sizes", ())
+            if int(value) > 0
+        ]
+        if sum(group_sizes) != int(visual_features.shape[0]):
+            raise RuntimeError(
+                "PruneVID group metadata does not match the visual token span"
+            )
+        # Match upstream exactly: independently floor each static group and
+        # each frame's dynamic group. Do not redistribute discarded
+        # fractional quotas to improve coverage or fill the global target.
+        alpha = max(0.0, min(1.0, float(retention_ratio)))
+        quotas = [min(size, int(size * alpha)) for size in group_sizes]
+
+        selected_groups = []
+        offset = 0
+        for size, quota in zip(group_sizes, quotas):
+            if quota > 0:
+                local = torch.topk(attn[offset : offset + size], k=quota).indices
+                selected_groups.append(local + offset)
+            offset += size
+        topk_indices = (
+            torch.cat(selected_groups).sort().values
+            if selected_groups
+            else torch.empty(0, dtype=torch.long, device=attn.device)
         )
-
-        try:
-            try:
-                topk_indices = select_v3plus_inner_tokens(
-                    visual_features=visual_features,
-                    legacy_attention=attn,
-                    budget=num_retained_tokens,
-                    config=flashvid_config,
-                )
-            except (RuntimeError, TypeError, ValueError) as error:
-                record_v3plus_fallback(
-                    flashvid_config,
-                    reason=f"structured_selector_error: {error}",
-                    budget=num_retained_tokens,
-                )
-                _, topk_indices = attn_based_token_selection(
-                    features=visual_features.unsqueeze(0),
-                    cls_attention=attn.unsqueeze(0),
-                    num_retained_tokens=num_retained_tokens,
-                )
-                topk_indices = topk_indices.squeeze(0)
-        finally:
-            clear_v3plus_runtime(flashvid_config)
     else:
-        if variant == "prunevid":
-            group_sizes = [
-                int(value)
-                for value in getattr(flashvid_config, "_prunevid_group_sizes", ())
-                if int(value) > 0
-            ]
-            if sum(group_sizes) != int(visual_features.shape[0]):
-                raise RuntimeError(
-                    "PruneVID group metadata does not match the visual token span"
-                )
-            # Match upstream exactly: independently floor each static group and
-            # each frame's dynamic group. Do not redistribute discarded
-            # fractional quotas to improve coverage or fill the global target.
-            alpha = max(0.0, min(1.0, float(retention_ratio)))
-            quotas = [min(size, int(size * alpha)) for size in group_sizes]
-
-            selected_groups = []
-            offset = 0
-            for size, quota in zip(group_sizes, quotas):
-                if quota > 0:
-                    local = torch.topk(attn[offset : offset + size], k=quota).indices
-                    selected_groups.append(local + offset)
-                offset += size
-            topk_indices = (
-                torch.cat(selected_groups).sort().values
-                if selected_groups
-                else torch.empty(0, dtype=torch.long, device=attn.device)
-            )
-        else:
-            _, topk_indices = attn_based_token_selection(
-                features=visual_features.unsqueeze(0),
-                cls_attention=attn.unsqueeze(0),
-                num_retained_tokens=num_retained_tokens,
-            )
-            topk_indices = topk_indices.squeeze(0)
-        if variant == "certvid_v3plus":
-            from .v3plus_inner import clear_v3plus_runtime
-
-            clear_v3plus_runtime(flashvid_config)
+        _, topk_indices = attn_based_token_selection(
+            features=visual_features.unsqueeze(0),
+            cls_attention=attn.unsqueeze(0),
+            num_retained_tokens=num_retained_tokens,
+        )
+        topk_indices = topk_indices.squeeze(0)
     topk_indices = topk_indices.clamp(min=0, max=max(0, int(visual_global_indices.numel()) - 1))
     all_global_indices = [non_visual_global_indices, visual_global_indices[topk_indices]]
     keep_indices = torch.sort(torch.cat(all_global_indices).unique()).values
     keep_indices = keep_indices[keep_indices < seq_length]
     if keep_indices.numel() == 0:
         keep_indices = torch.arange(seq_length, device=device)
-
-    if str(getattr(flashvid_config, "compression_variant", "")).strip().lower() == "faithvid":
-        from .faithvid_attention import update_faithvid_after_inner_prune
-
-        faith_hidden_states = update_faithvid_after_inner_prune(
-            flashvid_config,
-            keep_indices,
-            visual_start=int(visual_token_start_index),
-            visual_length=int(visual_token_length),
-            hidden_states=hidden_states,
-            visual_global_indices=visual_global_indices,
-        )
-        if faith_hidden_states is not None:
-            hidden_states = faith_hidden_states
 
     # Filter
     hidden_states = hidden_states[:, keep_indices]
