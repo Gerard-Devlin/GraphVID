@@ -4,6 +4,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 RATE="${RATE:-0.01}"
+METHOD="${METHOD:-certvid_v3}"
 TASKS="${TASKS:-videomme,egoschema_subset,egoschema,longvideobench_val_v,mvbench}"
 EXPANSION="${EXPANSION:-1.30}"
 PRUNING_LAYER="${PRUNING_LAYER:-20}"
@@ -13,6 +14,11 @@ RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 ABLATIONS="${ABLATIONS:-no_doptimal,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_whitening,no_candidate_pool,no_exchange_refinement,no_fusion}"
+
+case "$METHOD" in
+  certvid_v3|certvidfinal) ;;
+  *) echo "Unsupported ablation method: $METHOD (expected certvid_v3 or certvidfinal)" >&2; exit 2 ;;
+esac
 
 mkdir -p "$OUTPUT_PATH"
 
@@ -29,6 +35,12 @@ has_result() {
 }
 
 FAILURES=0
+METHOD_ENV=()
+CERTIFICATE_LABEL="built-in-none"
+if [[ "$METHOD" == "certvid_v3" ]]; then
+  METHOD_ENV+=(CERTV3_CERTIFICATE_BUDGET_RATIO=0.0)
+  CERTIFICATE_LABEL="0.0"
+fi
 
 for ablation in $(split_csv "$ABLATIONS"); do
   selection_objective=d_optimal
@@ -59,7 +71,7 @@ for ablation in $(split_csv "$ABLATIONS"); do
   mkdir -p "$ablation_dir"
 
   for task in $(split_csv "$TASKS"); do
-    run_dir="$ablation_dir/certvid_v3_r${RATE}_${task}"
+    run_dir="$ablation_dir/${METHOD}_r${RATE}_${task}"
     task_log="$ablation_dir/${task}.log"
     if [[ "$RESUME" == "1" ]] && has_result "$run_dir"; then
       echo "[skip] ablation=$ablation task=$task result already exists"
@@ -68,12 +80,13 @@ for ablation in $(split_csv "$ABLATIONS"); do
 
     echo "================================================================"
     echo "[run] ablation=$ablation rate=$RATE task=$task"
-    echo "[run] objective=$selection_objective quality_floor=$quality_floor spatiotemporal_design=$use_spatiotemporal_design all_trajectory_dynamics=$use_trajectory query=$use_query whitening=$whitening_strength candidate_pool=$use_candidate_pool exchange_steps=$swap_steps fusion_alpha=$fusion_alpha certificate_ratio=0"
+    echo "[run] method=$METHOD objective=$selection_objective quality_floor=$quality_floor spatiotemporal_design=$use_spatiotemporal_design all_trajectory_dynamics=$use_trajectory query=$use_query whitening=$whitening_strength candidate_pool=$use_candidate_pool exchange_steps=$swap_steps fusion_alpha=$fusion_alpha certificate_ratio=$CERTIFICATE_LABEL"
     echo "================================================================"
 
     task_status=0
     if env \
-      METHODS=certvid_v3 \
+      "${METHOD_ENV[@]}" \
+      METHODS="$METHOD" \
       RATES="$RATE" \
       TASKS="$task" \
       EXPANSION="$EXPANSION" \
@@ -83,7 +96,6 @@ for ablation in $(split_csv "$ABLATIONS"); do
       CERTV3_BUDGET_USES_EXPANSION=True \
       CERTV3_SELECTION_OBJECTIVE="$selection_objective" \
       CERTV3_QUALITY_FLOOR="$quality_floor" \
-      CERTV3_CERTIFICATE_BUDGET_RATIO=0.0 \
       CERTV3_USE_SPATIOTEMPORAL_DESIGN="$use_spatiotemporal_design" \
       CERTV3_USE_TRAJECTORY="$use_trajectory" \
       CERTV3_USE_QUERY="$use_query" \
@@ -91,7 +103,7 @@ for ablation in $(split_csv "$ABLATIONS"); do
       CERTV3_USE_CANDIDATE_POOL="$use_candidate_pool" \
       CERTV3_SWAP_STEPS="$swap_steps" \
       CERTV3_FUSION_ALPHA="$fusion_alpha" \
-      CERTV3_DIAGNOSTICS_JSONL="$run_dir/certvid_v3_diagnostics_rank{rank}.jsonl" \
+      CERTV3_DIAGNOSTICS_JSONL="$run_dir/${METHOD}_diagnostics_rank{rank}.jsonl" \
       bash scripts/llava_ov.sh 2>&1 | tee "$task_log"
     then
       if has_result "$run_dir"; then
@@ -114,14 +126,16 @@ for ablation in $(split_csv "$ABLATIONS"); do
 
   "$PYTHON_BIN" playground/summarize_certvid_v3_ablation.py \
     --root "$OUTPUT_PATH" \
-    --rate "$RATE" || true
+    --rate "$RATE" \
+    --method "$METHOD" || true
 done
 
 echo "================================================================"
 echo "[summary] failures=$FAILURES"
 "$PYTHON_BIN" playground/summarize_certvid_v3_ablation.py \
   --root "$OUTPUT_PATH" \
-  --rate "$RATE"
+  --rate "$RATE" \
+  --method "$METHOD"
 echo "[summary] results=$OUTPUT_PATH"
 echo "================================================================"
 

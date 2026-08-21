@@ -105,8 +105,14 @@ def _task_metric(path: Path, task: str) -> float | None:
     return None
 
 
-def _load_metric(root: Path, ablation: str, rate: str, task: str) -> float | None:
-    run_dir = root / ablation / f"certvid_v3_r{rate}_{task}"
+def _load_metric(
+    root: Path,
+    ablation: str,
+    rate: str,
+    task: str,
+    method: str,
+) -> float | None:
+    run_dir = root / ablation / f"{method}_r{rate}_{task}"
     for path in _result_files(run_dir):
         value = _task_metric(path, task)
         if value is not None:
@@ -165,6 +171,7 @@ def build_table(
     root: Path,
     rate: str,
     configurations: list[tuple[str, str]] = ABLATIONS,
+    method: str = "certvid_v3",
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     manual_results = _manual_results(root)
@@ -176,11 +183,13 @@ def build_table(
             "videomme_short": duration["short"],
             "videomme_medium": duration["medium"],
             "videomme_long": duration["long"],
-            "videomme_overall": _load_metric(root, slug, rate, "videomme"),
-            "egoschema_subset": _load_metric(root, slug, rate, "egoschema_subset"),
-            "egoschema_total": _load_metric(root, slug, rate, "egoschema"),
-            "longvideobench": _load_metric(root, slug, rate, "longvideobench_val_v"),
-            "mvbench": _load_metric(root, slug, rate, "mvbench"),
+            "videomme_overall": _load_metric(root, slug, rate, "videomme", method),
+            "egoschema_subset": _load_metric(root, slug, rate, "egoschema_subset", method),
+            "egoschema_total": _load_metric(root, slug, rate, "egoschema", method),
+            "longvideobench": _load_metric(
+                root, slug, rate, "longvideobench_val_v", method
+            ),
+            "mvbench": _load_metric(root, slug, rate, "mvbench", method),
         }
         for metric, value in manual_results.get(slug, {}).items():
             if metric in row and metric not in {"method", "retention_ratio"}:
@@ -288,6 +297,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--rate", default="0.10")
+    parser.add_argument(
+        "--method",
+        choices=("certvid_v3", "certvidfinal"),
+        default="certvid_v3",
+    )
     parser.add_argument("--mode", choices=("components", "expansion"), default="components")
     args = parser.parse_args()
     if args.mode == "expansion":
@@ -298,7 +312,7 @@ def main() -> None:
         stem = "table1_component_ablation"
     write_outputs(
         args.root,
-        build_table(args.root, args.rate, configurations),
+        build_table(args.root, args.rate, configurations, method=args.method),
         stem=stem,
     )
 
