@@ -1643,6 +1643,11 @@ def certvid_v3_compression(
     )
     use_trajectory = _cfg_bool(flashvid_config, "certv3_use_trajectory", True)
     use_query = _cfg_bool(flashvid_config, "certv3_use_query", True)
+    use_candidate_pool = _cfg_bool(
+        flashvid_config,
+        "certv3_use_candidate_pool",
+        True,
+    )
 
     if budget >= total_tokens:
         plan = _identity_plan(total_tokens, video_features.device)
@@ -1868,17 +1873,28 @@ def certvid_v3_compression(
                 certificate_cap_active = True
                 if qwen_v3_certificate_policy:
                     qwen_certificate_cap_active = True
-        candidate_indices = _candidate_pool(
-            budget=budget,
-            quality=quality,
-            component_ids=component_ids,
-            temporal_ids=temporal_ids,
-            spatial_ids=spatial_ids,
-            query_relevance=query_relevance,
-            mandatory=mandatory,
-            multiplier=_cfg_float(flashvid_config, "certv3_candidate_multiplier", 2.5),
-            use_trajectory=use_trajectory,
-        )
+        if use_candidate_pool:
+            candidate_indices = _candidate_pool(
+                budget=budget,
+                quality=quality,
+                component_ids=component_ids,
+                temporal_ids=temporal_ids,
+                spatial_ids=spatial_ids,
+                query_relevance=query_relevance,
+                mandatory=mandatory,
+                multiplier=_cfg_float(
+                    flashvid_config,
+                    "certv3_candidate_multiplier",
+                    2.5,
+                ),
+                use_trajectory=use_trajectory,
+            )
+        else:
+            candidate_indices = torch.arange(
+                total_tokens,
+                dtype=torch.long,
+                device=video_features.device,
+            )
         _profile_record(phase_events, "certificates_candidates", 1)
 
         _profile_record(phase_events, "design_whitening", 0)
@@ -2168,6 +2184,7 @@ def certvid_v3_compression(
         "use_spatiotemporal_certificates": bool(use_spatiotemporal_certificates),
         "use_trajectory": bool(use_trajectory),
         "use_query": bool(use_query),
+        "use_candidate_pool": bool(use_candidate_pool),
     }
     diagnostics.update(
         {

@@ -12,7 +12,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-ABLATIONS="${ABLATIONS:-no_doptimal,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_fusion}"
+ABLATIONS="${ABLATIONS:-no_doptimal,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_whitening,no_candidate_pool,no_exchange_refinement,no_fusion}"
 
 mkdir -p "$OUTPUT_PATH"
 
@@ -37,6 +37,9 @@ for ablation in $(split_csv "$ABLATIONS"); do
   use_query=True
   fusion_alpha=0.12
   quality_floor=0.15
+  whitening_strength=0.50
+  use_candidate_pool=True
+  swap_steps=6
 
   case "$ablation" in
     full) ;;
@@ -45,6 +48,9 @@ for ablation in $(split_csv "$ABLATIONS"); do
     no_spatiotemporal) use_spatiotemporal_design=False ;;
     no_all_trajectory_dynamics|no_trajectory) use_trajectory=False ;;
     no_query) use_query=False ;;
+    no_whitening) whitening_strength=0.0 ;;
+    no_candidate_pool) use_candidate_pool=False ;;
+    no_exchange_refinement) swap_steps=0 ;;
     no_fusion) fusion_alpha=0.0 ;;
     *) echo "Unknown ablation: $ablation" >&2; exit 2 ;;
   esac
@@ -62,7 +68,7 @@ for ablation in $(split_csv "$ABLATIONS"); do
 
     echo "================================================================"
     echo "[run] ablation=$ablation rate=$RATE task=$task"
-    echo "[run] objective=$selection_objective quality_floor=$quality_floor spatiotemporal_design=$use_spatiotemporal_design all_trajectory_dynamics=$use_trajectory query=$use_query fusion_alpha=$fusion_alpha certificate_ratio=0"
+    echo "[run] objective=$selection_objective quality_floor=$quality_floor spatiotemporal_design=$use_spatiotemporal_design all_trajectory_dynamics=$use_trajectory query=$use_query whitening=$whitening_strength candidate_pool=$use_candidate_pool exchange_steps=$swap_steps fusion_alpha=$fusion_alpha certificate_ratio=0"
     echo "================================================================"
 
     task_status=0
@@ -81,6 +87,9 @@ for ablation in $(split_csv "$ABLATIONS"); do
       CERTV3_USE_SPATIOTEMPORAL_DESIGN="$use_spatiotemporal_design" \
       CERTV3_USE_TRAJECTORY="$use_trajectory" \
       CERTV3_USE_QUERY="$use_query" \
+      CERTV3_WHITENING_STRENGTH="$whitening_strength" \
+      CERTV3_USE_CANDIDATE_POOL="$use_candidate_pool" \
+      CERTV3_SWAP_STEPS="$swap_steps" \
       CERTV3_FUSION_ALPHA="$fusion_alpha" \
       CERTV3_DIAGNOSTICS_JSONL="$run_dir/certvid_v3_diagnostics_rank{rank}.jsonl" \
       bash scripts/llava_ov.sh 2>&1 | tee "$task_log"

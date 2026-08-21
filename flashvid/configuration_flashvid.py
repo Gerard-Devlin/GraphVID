@@ -119,6 +119,7 @@ class FlashVidConfig:
     certv3_use_spatiotemporal_design: bool = field(default=True)
     certv3_use_trajectory: bool = field(default=True)
     certv3_use_query: bool = field(default=True)
+    certv3_use_candidate_pool: bool = field(default=True)
 
     # Dynamic Video Segmentation (DySeg).
     do_segment: bool = field(default=True)

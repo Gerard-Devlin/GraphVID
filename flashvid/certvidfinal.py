@@ -1589,6 +1589,11 @@ def _certvidfinal_v3_compression(
         )
     use_trajectory = _cfg_bool(flashvid_config, "certv3_use_trajectory", True)
     use_query = _cfg_bool(flashvid_config, "certv3_use_query", True)
+    use_candidate_pool = _cfg_bool(
+        flashvid_config,
+        "certv3_use_candidate_pool",
+        True,
+    )
 
     if budget >= total_tokens:
         plan = _identity_plan(total_tokens, video_features.device)
@@ -1758,15 +1763,22 @@ def _certvidfinal_v3_compression(
                 int(math.ceil(budget * max(1.0, candidate_multiplier))),
             ),
         )
-        candidate_indices = _candidate_pool_without_certificates(
-            quality=quality,
-            component_ids=component_ids,
-            temporal_ids=temporal_ids,
-            spatial_ids=spatial_ids,
-            query_relevance=query_relevance,
-            limit=candidate_limit,
-            use_trajectory=use_trajectory,
-        )
+        if use_candidate_pool:
+            candidate_indices = _candidate_pool_without_certificates(
+                quality=quality,
+                component_ids=component_ids,
+                temporal_ids=temporal_ids,
+                spatial_ids=spatial_ids,
+                query_relevance=query_relevance,
+                limit=candidate_limit,
+                use_trajectory=use_trajectory,
+            )
+        else:
+            candidate_indices = torch.arange(
+                total_tokens,
+                dtype=torch.long,
+                device=video_features.device,
+            )
         _profile_record(phase_events, "certificates_candidates", 1)
 
         _profile_record(phase_events, "design_whitening", 0)
@@ -2022,6 +2034,7 @@ def _certvidfinal_v3_compression(
         "selection_objective": selection_objective,
         "use_trajectory": bool(use_trajectory),
         "use_query": bool(use_query),
+        "use_candidate_pool": bool(use_candidate_pool),
     }
     setattr(flashvid_config, "last_certv3_diagnostics", diagnostics)
     _write_certv3_diagnostics(flashvid_config, diagnostics)

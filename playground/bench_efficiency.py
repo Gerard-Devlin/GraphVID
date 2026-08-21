@@ -531,7 +531,13 @@ def token_audit(
         budget_ok = outer_tokens == raw_tokens and inner_tokens == raw_tokens
     elif spec.budget_contract == "outer":
         audited_tokens = outer_tokens
-        budget_ok = outer_tokens <= target_floor
+        # VisionZip's global allocator is exact. FastVID intentionally keeps
+        # its released grouped flooring/DTM behavior and may under-fill.
+        budget_ok = (
+            outer_tokens == target_floor
+            if method == "visionzip"
+            else outer_tokens <= target_floor
+        )
     elif spec.budget_contract == "post_prune":
         audited_tokens = inner_tokens
         # FastV is a direct global Top-K at the pruning layer, so unlike

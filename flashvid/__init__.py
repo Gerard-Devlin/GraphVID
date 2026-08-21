@@ -194,6 +194,7 @@ def flashvid(
     certv3_use_spatiotemporal_design: bool = True,
     certv3_use_trajectory: bool = True,
     certv3_use_query: bool = True,
+    certv3_use_candidate_pool: bool = True,
     # 2.5) Experimental compression params
     compression_variant: str = "flashvid",
     adapter_budget_uses_expansion: bool = False,
@@ -405,6 +406,7 @@ def flashvid(
         certv3_use_spatiotemporal_design=certv3_use_spatiotemporal_design,
         certv3_use_trajectory=certv3_use_trajectory,
         certv3_use_query=certv3_use_query,
+        certv3_use_candidate_pool=certv3_use_candidate_pool,
         adapter_budget_uses_expansion=adapter_budget_uses_expansion,
         fastvid_DySeg_c=fastvid_DySeg_c,
         fastvid_DySeg_tau=fastvid_DySeg_tau,
