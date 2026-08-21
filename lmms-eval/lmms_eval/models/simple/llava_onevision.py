@@ -248,6 +248,7 @@ class Llava_OneVision(lmms):
         certv3_use_spatiotemporal_design: bool = True,
         certv3_use_trajectory: bool = True,
         certv3_use_query: bool = True,
+        certv3_use_candidate_pool: bool = True,
         # CertVID V3Plus inner-selector parameters
         # CertVID V6 parameters
         # CertVID V8 parameters
@@ -423,6 +424,7 @@ class Llava_OneVision(lmms):
                 certv3_use_spatiotemporal_design=certv3_use_spatiotemporal_design,
                 certv3_use_trajectory=certv3_use_trajectory,
                 certv3_use_query=certv3_use_query,
+                certv3_use_candidate_pool=certv3_use_candidate_pool,
                 expansion=expansion,
                 pruning_layer=pruning_layer,
                 llm_retention_ratio=llm_retention_ratio,
