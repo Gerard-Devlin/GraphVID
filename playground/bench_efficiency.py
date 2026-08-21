@@ -334,7 +334,12 @@ def apply_method(model, method: str, retention_ratio: float):
         "compression_variant": spec.variant,
         "expansion": spec.expansion,
         "pruning_layer": spec.pruning_layer,
-        "llm_retention_ratio": spec.inner_retention,
+        # FastV applies the requested budget directly at its pruning layer.
+        # Hybrid methods instead use a fixed inner ratio paired with expansion
+        # to satisfy their layer-average retention contract.
+        "llm_retention_ratio": (
+            retention_ratio if method == "fastv" else spec.inner_retention
+        ),
         "token_selection_method": spec.token_selection_method,
         "do_segment": True,
         "segment_threshold": 0.9,
@@ -529,7 +534,9 @@ def token_audit(
         budget_ok = outer_tokens <= target_floor
     elif spec.budget_contract == "post_prune":
         audited_tokens = inner_tokens
-        budget_ok = inner_tokens <= target_floor
+        # FastV is a direct global Top-K at the pruning layer, so unlike
+        # grouping-based adapters it must realize the requested floor exactly.
+        budget_ok = inner_tokens == target_floor
     else:
         audited_tokens = layer_average
         budget_ok = layer_average <= target_float + 1e-6
