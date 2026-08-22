@@ -329,9 +329,12 @@ def apply_method(model, method: str, retention_ratio: float):
     from flashvid import flashvid
 
     spec = METHOD_SPECS[method]
+    variant = spec.variant
+    if method == "ours":
+        variant = os.getenv("EFFICIENCY_OURS_VARIANT", variant)
     kwargs: dict[str, Any] = {
         "retention_ratio": retention_ratio,
-        "compression_variant": spec.variant,
+        "compression_variant": variant,
         "expansion": spec.expansion,
         "pruning_layer": spec.pruning_layer,
         # FastV applies the requested budget directly at its pruning layer.
