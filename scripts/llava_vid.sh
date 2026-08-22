@@ -182,9 +182,15 @@ method_args() {
       printf 'compression_variant=flashvid,token_selection_method=%s,strict_token_budget=%s' \
         "$FLASHVID_TOKEN_SELECTION_METHOD" "$STRICT_TOKEN_BUDGET"
       ;;
-    certvid_v3|certvidfinal)
+    certvid_v3)
       printf 'compression_variant=%s,' "$method"
       certv3_args
+      ;;
+    certvidfinal)
+      local certv3_model_args
+      certv3_model_args="compression_variant=$method,$(certv3_args)"
+      certv3_model_args="${certv3_model_args/,certv3_certificate_budget_ratio=$CERTV3_CERTIFICATE_BUDGET_RATIO/}"
+      printf '%s' "$certv3_model_args"
       ;;
     *)
       echo "Unsupported LLaVA-Video method: $method" >&2

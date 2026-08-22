@@ -231,8 +231,8 @@ def flashvid(
 ) -> nn.Module:
     """Apply the selected training-free video-token compression method.
 
-    CertVID V1, V2, V3, and the exact ``certvidfinal`` V3 alias share this
-    entry point with the retained baseline methods.
+    CertVID V1, V2, V3, and the fixed ``certvidfinal`` method share this entry
+    point with the retained baseline methods.
     """
 
     variant = str(compression_variant).strip().lower()

@@ -1,9 +1,4 @@
-"""Self-contained CertVID implementation frozen to the paper configuration.
-
-The numerical path is CertVID V3 with hard-certificate ratio fixed to zero.
-V1 plan/feature primitives and V2 trajectory primitives are inlined here;
-the reference V1/V2/V3 modules remain untouched.
-"""
+"""Self-contained no-certificate, no-trajectory CertVID final method."""
 
 from __future__ import annotations
 
@@ -91,104 +86,6 @@ def _final_v1_spatial_layout(
     col_bin = torch.div(cols * spatial_bins, max(1, width), rounding_mode="floor").clamp_max(spatial_bins - 1)
     cells = row_bin * spatial_bins + col_bin
     return coords, cells.long()
-
-def _final_v1_temporal_signals(
-    metric_frames: torch.Tensor,
-    coords: torch.Tensor,
-    spatial_penalty: float,
-    spatial_distance: Optional[torch.Tensor] = None,
-) -> tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
-    frame_count, tokens_per_frame, _ = metric_frames.shape
-    device = metric_frames.device
-    frame_reps = F.normalize(metric_frames.mean(dim=1), p=2, dim=-1, eps=1e-6)
-    frame_event = torch.zeros(frame_count, dtype=torch.float32, device=device)
-    token_novelty = torch.ones((frame_count, tokens_per_frame), dtype=torch.float32, device=device)
-    matches: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
-
-    if spatial_distance is None:
-        spatial_distance = torch.cdist(coords.float(), coords.float(), p=2)
-    for frame_idx in range(1, frame_count):
-        current = metric_frames[frame_idx]
-        previous = metric_frames[frame_idx - 1]
-        raw_similarity = current @ previous.transpose(0, 1)
-        match_score = raw_similarity - float(max(0.0, spatial_penalty)) * spatial_distance
-        best_score, best_previous = match_score.max(dim=1)
-        best_current = match_score.argmax(dim=0)
-        current_ids = torch.arange(tokens_per_frame, device=device)
-        mutual = best_current[best_previous] == current_ids
-        matched_similarity = raw_similarity[current_ids, best_previous]
-        token_novelty[frame_idx] = (1.0 - matched_similarity).clamp(0.0, 2.0) * 0.5
-        frame_event[frame_idx] = 1.0 - torch.sum(frame_reps[frame_idx] * frame_reps[frame_idx - 1]).clamp(-1.0, 1.0)
-        matches.append((best_previous, mutual, matched_similarity))
-
-    if frame_count > 2:
-        incoming = frame_reps[1:-1] - frame_reps[:-2]
-        outgoing = frame_reps[2:] - frame_reps[1:-1]
-        curvature = 1.0 - F.cosine_similarity(incoming, outgoing, dim=-1, eps=1e-6)
-        frame_event[1:-1] = torch.maximum(frame_event[1:-1], curvature.clamp(0.0, 2.0))
-    frame_event = _final_v1_minmax(frame_event, dim=0)
-    token_novelty[0] = frame_event[0]
-    return frame_event, _final_v1_minmax(token_novelty, dim=-1), matches
-
-def _final_v1_build_components(
-    frame_count: int,
-    tokens_per_frame: int,
-    frame_event: torch.Tensor,
-    matches: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    threshold: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    total_tokens = frame_count * tokens_per_frame
-    parent = list(range(total_tokens))
-    size = [1] * total_tokens
-
-    def find(node: int) -> int:
-        while parent[node] != node:
-            parent[node] = parent[parent[node]]
-            node = parent[node]
-        return node
-
-    def union(left: int, right: int) -> None:
-        root_left, root_right = find(left), find(right)
-        if root_left == root_right:
-            return
-        if size[root_left] < size[root_right]:
-            root_left, root_right = root_right, root_left
-        parent[root_right] = root_left
-        size[root_left] += size[root_right]
-
-    if frame_count > 1:
-        cut_threshold = float(torch.quantile(frame_event.float(), 0.90).item())
-        frame_event_cpu = frame_event.detach().float().cpu().tolist()
-        current_links: list[torch.Tensor] = []
-        previous_links: list[torch.Tensor] = []
-        for frame_idx, (best_previous, mutual, similarity) in enumerate(matches, start=1):
-            if float(frame_event_cpu[frame_idx]) > max(0.65, cut_threshold):
-                continue
-            valid = mutual & (similarity >= float(threshold))
-            current_tokens = torch.where(valid)[0]
-            if current_tokens.numel() == 0:
-                continue
-            current_links.append(current_tokens + frame_idx * tokens_per_frame)
-            previous_links.append(
-                best_previous[current_tokens] + (frame_idx - 1) * tokens_per_frame
-            )
-
-        if current_links:
-            current_cpu = torch.cat(current_links).detach().cpu().tolist()
-            previous_cpu = torch.cat(previous_links).detach().cpu().tolist()
-            for current_token, previous_token in zip(current_cpu, previous_cpu):
-                union(int(current_token), int(previous_token))
-
-    roots = [find(node) for node in range(total_tokens)]
-    root_to_component: dict[int, int] = {}
-    component_ids: list[int] = []
-    for root in roots:
-        if root not in root_to_component:
-            root_to_component[root] = len(root_to_component)
-        component_ids.append(root_to_component[root])
-    component_count = len(root_to_component)
-    component_sizes = torch.bincount(torch.tensor(component_ids, dtype=torch.long), minlength=component_count)
-    return torch.tensor(component_ids, dtype=torch.long), component_sizes
 
 def _final_v1_question_atoms(
     question_features: Optional[torch.Tensor],
@@ -331,186 +228,6 @@ def _final_v1apply_certvid_plan(flat_features: torch.Tensor, plan: CertVidPlan) 
     alpha = fusion_alpha.unsqueeze(1)
     output = anchors + alpha * (pooled - anchors)
     return torch.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0).to(dtype=flat_features.dtype)
-
-# V2 trajectory primitives required by V3.
-
-_final_v2_EXACT_CUDA_GRAPH_ENV = "CERTV3_USE_EXACT_CUDA_GRAPHS"
-
-_final_v2_TRAJECTORY_GRAPH_CACHE: dict[tuple[object, ...], dict[str, object]] = {}
-
-def _final_v2_exact_cuda_graph_enabled(tensor: torch.Tensor) -> bool:
-    value = os.environ.get(_final_v2_EXACT_CUDA_GRAPH_ENV, "").strip().lower()
-    return tensor.is_cuda and value in {"1", "true", "yes", "on"}
-
-def _final_v2_trajectory_signals_eager(
-    metric_frames: torch.Tensor,
-    coords: torch.Tensor,
-    spatial_penalty: float,
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-]:
-    """Measure bidirectional novelty and second-order motion without forcing coverage."""
-    spatial_distance = torch.cdist(coords.float(), coords.float(), p=2)
-    frame_event, forward_novelty, matches = _final_v1_temporal_signals(
-        metric_frames,
-        coords,
-        spatial_penalty,
-        spatial_distance,
-    )
-    frame_count, tokens_per_frame, _ = metric_frames.shape
-    backward_novelty = torch.zeros_like(forward_novelty)
-    curvature = torch.zeros_like(forward_novelty)
-    next_matches: list[torch.Tensor] = []
-    for frame_idx in range(frame_count - 1):
-        current = metric_frames[frame_idx]
-        following = metric_frames[frame_idx + 1]
-        raw_similarity = current @ following.transpose(0, 1)
-        match_score = raw_similarity - float(max(0.0, spatial_penalty)) * spatial_distance
-        best_following = match_score.argmax(dim=1)
-        token_ids = torch.arange(tokens_per_frame, device=metric_frames.device)
-        matched_similarity = raw_similarity[token_ids, best_following]
-        backward_novelty[frame_idx] = (1.0 - matched_similarity).clamp(0.0, 2.0) * 0.5
-        next_matches.append(best_following)
-
-    if frame_count > 1:
-        backward_novelty[-1] = forward_novelty[-1]
-    for frame_idx in range(1, frame_count - 1):
-        previous_indices = matches[frame_idx - 1][0]
-        following_indices = next_matches[frame_idx]
-        current = metric_frames[frame_idx]
-        incoming = current - metric_frames[frame_idx - 1][previous_indices]
-        outgoing = metric_frames[frame_idx + 1][following_indices] - current
-        direction_change = 1.0 - F.cosine_similarity(incoming, outgoing, dim=-1, eps=1e-6)
-        motion_gate = torch.sqrt(incoming.norm(dim=-1) * outgoing.norm(dim=-1)).clamp(0.0, 1.0)
-        curvature[frame_idx] = direction_change.clamp(0.0, 2.0) * 0.5 * motion_gate
-
-    novelty = _final_v1_minmax(0.5 * forward_novelty + 0.5 * backward_novelty, dim=-1)
-    curvature = _final_v1_minmax(curvature, dim=-1)
-    return frame_event, forward_novelty, novelty, curvature, matches
-
-def _final_v2_trajectory_signals(
-    metric_frames: torch.Tensor,
-    coords: torch.Tensor,
-    spatial_penalty: float,
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-]:
-    """Run the unchanged trajectory program eagerly or from an exact CUDA graph."""
-    if not _final_v2_exact_cuda_graph_enabled(metric_frames):
-        return _final_v2_trajectory_signals_eager(metric_frames, coords, spatial_penalty)
-
-    device_index = metric_frames.device.index
-    key = (
-        device_index,
-        tuple(metric_frames.shape),
-        metric_frames.dtype,
-        tuple(coords.shape),
-        coords.dtype,
-        float(spatial_penalty),
-    )
-    cached = _final_v2_TRAJECTORY_GRAPH_CACHE.get(key)
-    if cached is None:
-        static_metric = metric_frames.detach().clone()
-        static_coords = coords.detach().clone()
-        try:
-            warmup_stream = torch.cuda.Stream(device=metric_frames.device)
-            warmup_stream.wait_stream(torch.cuda.current_stream(metric_frames.device))
-            with torch.cuda.stream(warmup_stream):
-                _final_v2_trajectory_signals_eager(
-                    static_metric,
-                    static_coords,
-                    spatial_penalty,
-                )
-            torch.cuda.current_stream(metric_frames.device).wait_stream(warmup_stream)
-
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
-                static_output = _final_v2_trajectory_signals_eager(
-                    static_metric,
-                    static_coords,
-                    spatial_penalty,
-                )
-            cached = {
-                "graph": graph,
-                "metric": static_metric,
-                "output": static_output,
-            }
-            print(
-                "[CertVID V3] captured trajectory CUDA graph "
-                f"for shape={tuple(metric_frames.shape)}"
-            )
-        except RuntimeError as error:
-            # Unsupported CUDA/runtime combinations retain the original path.
-            cached = {"disabled": True}
-            print(
-                "[CertVID V3] trajectory CUDA graph unavailable; "
-                f"using eager path: {error}"
-            )
-        _final_v2_TRAJECTORY_GRAPH_CACHE[key] = cached
-
-    if bool(cached.get("disabled", False)):
-        return _final_v2_trajectory_signals_eager(metric_frames, coords, spatial_penalty)
-
-    static_metric = cached["metric"]
-    assert isinstance(static_metric, torch.Tensor)
-    static_metric.copy_(metric_frames)
-    graph = cached["graph"]
-    assert isinstance(graph, torch.cuda.CUDAGraph)
-    graph.replay()
-    return cached["output"]  # type: ignore[return-value]
-
-def _final_v2_component_support(
-    metric_flat: torch.Tensor,
-    component_ids: torch.Tensor,
-    component_sizes: torch.Tensor,
-    frame_ids: torch.Tensor,
-    frame_count: int,
-) -> torch.Tensor:
-    """Reward persistent but non-static trajectories."""
-    component_count = int(component_sizes.numel())
-    feature_dim = int(metric_flat.shape[-1])
-    sums = torch.zeros((component_count, feature_dim), dtype=torch.float32, device=metric_flat.device)
-    sums.index_add_(0, component_ids, metric_flat.float())
-    means = F.normalize(
-        sums / component_sizes.float().clamp_min(1.0).unsqueeze(1),
-        p=2,
-        dim=-1,
-        eps=1e-6,
-    )
-    variation_token = (1.0 - torch.sum(metric_flat * means[component_ids], dim=-1)).clamp(0.0, 2.0) * 0.5
-    variation_sum = torch.zeros(component_count, dtype=torch.float32, device=metric_flat.device)
-    variation_sum.index_add_(0, component_ids, variation_token)
-    variation = variation_sum / component_sizes.float().clamp_min(1.0)
-
-    first = torch.full((component_count,), frame_count, dtype=torch.long, device=metric_flat.device)
-    last = torch.full((component_count,), -1, dtype=torch.long, device=metric_flat.device)
-    first.scatter_reduce_(
-        0,
-        component_ids,
-        frame_ids,
-        reduce="amin",
-        include_self=True,
-    )
-    last.scatter_reduce_(
-        0,
-        component_ids,
-        frame_ids,
-        reduce="amax",
-        include_self=True,
-    )
-    span = (last - first + 1).clamp_min(1).float() / max(1, frame_count)
-    mass = torch.log1p(component_sizes.float())
-    mass = mass / mass.max().clamp_min(1e-6)
-    component_score = _final_v1_minmax(0.42 * span + 0.28 * mass + 0.30 * variation, dim=0)
-    return component_score[component_ids]
 
 # V3 selection, refinement, fusion, and diagnostics.
 
@@ -733,12 +450,10 @@ def _best_token_per_group(
 def _candidate_pool_without_certificates(
     *,
     quality: torch.Tensor,
-    component_ids: torch.Tensor,
     temporal_ids: torch.Tensor,
     spatial_ids: torch.Tensor,
     query_relevance: torch.Tensor,
     limit: int,
-    use_trajectory: bool,
 ) -> torch.Tensor:
     """Exact no-certificate offer stream without host transfers or Python sets."""
     total_tokens = int(quality.numel())
@@ -757,15 +472,6 @@ def _candidate_pool_without_certificates(
             query_relevance.reshape(-1),
             query_groups,
             query_tokens,
-            total_tokens,
-        )
-        offer_streams.append(best[_stable_score_token_order(scores, best)])
-
-    if use_trajectory:
-        best, scores = _best_token_per_group(
-            quality,
-            component_ids,
-            token_ids,
             total_tokens,
         )
         offer_streams.append(best[_stable_score_token_order(scores, best)])
@@ -791,88 +497,6 @@ def _candidate_pool_without_certificates(
     first.scatter_reduce_(0, offers, positions, reduce="amin", include_self=True)
     candidates = torch.argsort(first, stable=True)[:limit]
     return torch.sort(candidates).values
-
-def _build_components_on_device(
-    frame_count: int,
-    tokens_per_frame: int,
-    frame_event: torch.Tensor,
-    matches: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    threshold: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build the same adjacent-frame components without a GPU-to-CPU round trip."""
-    total_tokens = frame_count * tokens_per_frame
-    device = frame_event.device
-    token_ids = torch.arange(total_tokens, dtype=torch.long, device=device)
-    if frame_count <= 1:
-        return token_ids, torch.ones(total_tokens, dtype=torch.long, device=device)
-
-    best_previous = torch.stack([entry[0] for entry in matches])
-    mutual = torch.stack([entry[1] for entry in matches])
-    similarity = torch.stack([entry[2] for entry in matches])
-    cut_threshold = torch.quantile(frame_event.float(), 0.90).clamp_min(0.65)
-    valid = (
-        mutual
-        & (similarity >= float(threshold))
-        & (frame_event[1:] <= cut_threshold).unsqueeze(1)
-    )
-
-    local_ids = torch.arange(tokens_per_frame, device=device).unsqueeze(0)
-    frame_offsets = (
-        torch.arange(1, frame_count, device=device).unsqueeze(1)
-        * tokens_per_frame
-    )
-    current = local_ids + frame_offsets
-    previous = best_previous + frame_offsets - tokens_per_frame
-    parents = token_ids.clone()
-    parents[current.reshape(-1)] = torch.where(
-        valid,
-        previous,
-        current,
-    ).reshape(-1)
-
-    # Every edge points to the immediately preceding frame, so ceil(log2(T))
-    # pointer jumps are sufficient to reach the exact connected-component root.
-    jumps = max(1, int(math.ceil(math.log2(max(2, frame_count)))))
-    for _ in range(jumps):
-        parents = parents[parents]
-
-    sentinel = total_tokens
-    minimum_member = torch.full(
-        (total_tokens,),
-        sentinel,
-        dtype=torch.long,
-        device=device,
-    )
-    minimum_member.scatter_reduce_(
-        0,
-        parents,
-        token_ids,
-        reduce="amin",
-        include_self=True,
-    )
-    component_key = minimum_member[parents]
-    _, component_ids = torch.unique(
-        component_key,
-        sorted=True,
-        return_inverse=True,
-    )
-    component_sizes = torch.bincount(component_ids)
-
-    if _exact_optimization_audit_enabled():
-        reference_ids, reference_sizes = _final_v1_build_components(
-            frame_count,
-            tokens_per_frame,
-            frame_event,
-            matches,
-            threshold,
-        )
-        if not torch.equal(component_ids.cpu(), reference_ids) or not torch.equal(
-            component_sizes.cpu(),
-            reference_sizes,
-        ):
-            raise RuntimeError("device component construction differs from the reference path")
-
-    return component_ids, component_sizes
 
 def _score_only_select(
     *,
@@ -1548,7 +1172,7 @@ def _certvidfinal_v3_compression(
     *,
     analysis_sink: Optional[MutableMapping[str, Any]] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Select the paper's no-certificate D-optimal visual coreset."""
+    """Select the paper's no-certificate, no-trajectory D-optimal coreset."""
     phase_events: Optional[
         dict[str, tuple[torch.cuda.Event, torch.cuda.Event]]
     ] = {} if _profile_enabled(video_features) else None
@@ -1587,7 +1211,6 @@ def _certvidfinal_v3_compression(
             "certv3_selection_objective must be 'd_optimal' or 'score_only', "
             f"got {selection_objective!r}"
         )
-    use_trajectory = _cfg_bool(flashvid_config, "certv3_use_trajectory", True)
     use_query = _cfg_bool(flashvid_config, "certv3_use_query", True)
     use_candidate_pool = _cfg_bool(
         flashvid_config,
@@ -1609,10 +1232,9 @@ def _certvidfinal_v3_compression(
         _profile_record(phase_events, "metric_layout", 0)
         metric_dim = max(32, _final_v1_cfg_int(flashvid_config, "certv3_metric_dim", 96))
         metric_flat = _final_v1_metric_features(video_features, metric_dim)
-        metric_frames = metric_flat.view(frame_count, tokens_per_frame, -1)
         height, width = _final_v1_grid_hw(tokens_per_frame, flashvid_config)
         spatial_bins = max(1, _final_v1_cfg_int(flashvid_config, "certv3_spatial_bins", 3))
-        coords, frame_spatial_ids = _final_v1_spatial_layout(
+        _, frame_spatial_ids = _final_v1_spatial_layout(
             tokens_per_frame,
             height,
             width,
@@ -1621,57 +1243,32 @@ def _certvidfinal_v3_compression(
         )
         _profile_record(phase_events, "metric_layout", 1)
 
-        _profile_record(phase_events, "trajectory_components", 0)
-        if use_trajectory:
-            frame_event, _, novelty_2d, curvature_2d, matches = _final_v2_trajectory_signals(
-                metric_frames,
-                coords,
-                _final_v1_cfg_float(flashvid_config, "certv3_spatial_penalty", 0.08),
-            )
-            component_ids, component_sizes = _build_components_on_device(
-                frame_count,
-                tokens_per_frame,
-                frame_event,
-                matches,
-                _final_v1_cfg_float(flashvid_config, "certv3_track_threshold", 0.82),
-            )
-        else:
-            # The complete trajectory-dynamics ablation removes every signal
-            # derived from cross-frame matching, including frame-level events.
-            frame_event = torch.zeros(
-                frame_count,
-                dtype=torch.float32,
-                device=video_features.device,
-            )
-            novelty_2d = torch.zeros(
-                (frame_count, tokens_per_frame),
-                dtype=torch.float32,
-                device=video_features.device,
-            )
-            curvature_2d = torch.zeros_like(novelty_2d)
-            component_ids = torch.arange(
-                total_tokens,
-                dtype=torch.long,
-                device=video_features.device,
-            )
-            component_sizes = torch.ones(
-                total_tokens,
-                dtype=torch.long,
-                device=video_features.device,
-            )
-        frame_ids = torch.arange(frame_count, device=video_features.device).repeat_interleave(tokens_per_frame)
-        component_value = (
-            _final_v2_component_support(
-                metric_flat,
-                component_ids,
-                component_sizes,
-                frame_ids,
-                frame_count,
-            )
-            if use_trajectory
-            else torch.zeros(total_tokens, dtype=torch.float32, device=video_features.device)
+        # Final intentionally excludes all cross-frame trajectory/event signals.
+        frame_event = torch.zeros(
+            frame_count,
+            dtype=torch.float32,
+            device=video_features.device,
         )
-        _profile_record(phase_events, "trajectory_components", 1)
+        novelty_2d = torch.zeros(
+            (frame_count, tokens_per_frame),
+            dtype=torch.float32,
+            device=video_features.device,
+        )
+        curvature_2d = torch.zeros_like(novelty_2d)
+        component_ids = torch.arange(
+            total_tokens,
+            dtype=torch.long,
+            device=video_features.device,
+        )
+        frame_ids = torch.arange(
+            frame_count,
+            device=video_features.device,
+        ).repeat_interleave(tokens_per_frame)
+        component_value = torch.zeros(
+            total_tokens,
+            dtype=torch.float32,
+            device=video_features.device,
+        )
 
         _profile_record(phase_events, "quality_signals", 0)
         temporal_count = min(frame_count, max(1, _final_v1_cfg_int(flashvid_config, "certv3_temporal_bins", 12)))
@@ -1766,12 +1363,10 @@ def _certvidfinal_v3_compression(
         if use_candidate_pool:
             candidate_indices = _candidate_pool_without_certificates(
                 quality=quality,
-                component_ids=component_ids,
                 temporal_ids=temporal_ids,
                 spatial_ids=spatial_ids,
                 query_relevance=query_relevance,
                 limit=candidate_limit,
-                use_trajectory=use_trajectory,
             )
         else:
             candidate_indices = torch.arange(
@@ -1884,7 +1479,7 @@ def _certvidfinal_v3_compression(
         output = _final_v1apply_certvid_plan(flat_features, plan)
         _profile_record(phase_events, "fusion_apply", 1)
         candidates = int(candidate_indices.numel())
-        components = int(component_sizes.numel())
+        components = total_tokens
         if analysis_sink is not None:
             # CertVID-HR consumes these tensors immediately and never stores
             # them on the persistent model config. Existing V3 callers keep
@@ -1906,57 +1501,6 @@ def _certvidfinal_v3_compression(
                     "ridge": float(ridge),
                 }
             )
-            if bool(
-                getattr(
-                    flashvid_config,
-                    "_capture_visualization_trajectory",
-                    False,
-                )
-            ):
-                match_previous = (
-                    torch.stack([entry[0] for entry in matches], dim=0)
-                    if matches
-                    else torch.empty(
-                        (0, tokens_per_frame),
-                        dtype=torch.long,
-                        device=video_features.device,
-                    )
-                )
-                match_mutual = (
-                    torch.stack([entry[1] for entry in matches], dim=0)
-                    if matches
-                    else torch.empty(
-                        (0, tokens_per_frame),
-                        dtype=torch.bool,
-                        device=video_features.device,
-                    )
-                )
-                match_similarity = (
-                    torch.stack([entry[2] for entry in matches], dim=0)
-                    if matches
-                    else torch.empty(
-                        (0, tokens_per_frame),
-                        dtype=torch.float32,
-                        device=video_features.device,
-                    )
-                )
-                analysis_sink.update(
-                    {
-                        "component_sizes": component_sizes,
-                        "component_support": component_value,
-                        "frame_event": frame_event,
-                        "novelty": novelty,
-                        "curvature": curvature,
-                        "spatial_coords": coords,
-                        "match_previous": match_previous,
-                        "match_mutual": match_mutual,
-                        "match_similarity": match_similarity,
-                        "frame_count": int(frame_count),
-                        "tokens_per_frame": int(tokens_per_frame),
-                        "grid_height": int(height),
-                        "grid_width": int(width),
-                    }
-                )
 
     setattr(flashvid_config, "_certvid_plan", plan)
     flashvid_config.vision_token_length = int(output.shape[0])
@@ -2032,7 +1576,7 @@ def _certvidfinal_v3_compression(
         "swap_count": int(swaps),
         "logdet": float(logdet),
         "selection_objective": selection_objective,
-        "use_trajectory": bool(use_trajectory),
+        "use_trajectory": False,
         "use_query": bool(use_query),
         "use_candidate_pool": bool(use_candidate_pool),
     }
@@ -2065,7 +1609,7 @@ def certvidfinal_compression(
     *,
     analysis_sink: Optional[MutableMapping[str, Any]] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run the exact V3 selection path used by the no-certificate experiments."""
+    """Run the fixed no-certificate, no-trajectory final selection path."""
     variant = getattr(
         flashvid_config,
         "compression_variant",
