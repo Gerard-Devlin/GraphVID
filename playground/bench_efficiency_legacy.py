@@ -27,6 +27,7 @@ SEPARATOR = "=" * 64
 @dataclass
 class BenchmarkArgs:
     model_path: str = field(default="lmms-lab/llava-onevision-qwen2-7b-ov")
+    model_name: str | None = field(default=None)
     dataset_jsonl: str = field(default="videomme.jsonl")
     limit: int | None = field(default=None)
     shuffle: bool = field(default=False)
@@ -46,8 +47,8 @@ def load_video(video_path: str, max_frames_num: int) -> np.ndarray:
     return vr.get_batch(frame_idx.tolist()).asnumpy()
 
 
-def get_model(model_path: str):
-    model_name = get_model_name_from_path(model_path)
+def get_model(model_path: str, model_name: str | None = None):
+    model_name = model_name or get_model_name_from_path(model_path)
     overwrite_config = (
         {
             "mm_spatial_pool_mode": "average",
@@ -514,6 +515,7 @@ def _print_header(args: BenchmarkArgs) -> None:
     print("  FlashVID Video-MME Benchmark")
     print(SEPARATOR)
     print(f"  Model      : {args.model_path}")
+    print(f"  Model name : {args.model_name or '(inferred from path)'}")
     print(f"  Dataset    : {args.dataset_jsonl}")
     print(f"  Limit      : {args.limit}")
     print(f"  Shuffle    : {args.shuffle}")
@@ -591,7 +593,7 @@ def run_dataset_benchmark(args: BenchmarkArgs) -> None:
         random.shuffle(samples)
 
     print(f"Loaded {len(samples)} samples from {args.dataset_jsonl}.\n")
-    tokenizer, model, image_processor = get_model(args.model_path)
+    tokenizer, model, image_processor = get_model(args.model_path, args.model_name)
 
     print("Benchmarking Baseline ...")
     run_dataset_phase(
