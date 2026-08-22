@@ -299,7 +299,7 @@ def main() -> None:
     parser.add_argument("--rate", default="0.10")
     parser.add_argument(
         "--method",
-        choices=("certvid_v3", "certvidfinal"),
+        choices=("certvid_v3", "certvidfinal2"),
         default="certvid_v3",
     )
     parser.add_argument("--mode", choices=("components", "expansion"), default="components")

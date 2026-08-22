@@ -76,7 +76,7 @@ METHOD_SPECS = {
     "fastvid": MethodSpec("fastvid", 1.0, 28, 1.0, "outer"),
     "flashvid": MethodSpec("flashvid", 1.25, 20, 0.3, "layer_average"),
     "ours": MethodSpec(
-        "certvidfinal",
+        "certvidfinal2",
         1.30,
         20,
         0.1923076923,

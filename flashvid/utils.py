@@ -347,9 +347,9 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant in {"certvid_v3", "certvidfinal"}:
-        if compression_variant == "certvidfinal":
-            from .certvidfinal import certvidfinal_compression as certvid_compression
+    if compression_variant in {"certvid_v3", "certvidfinal2"}:
+        if compression_variant == "certvidfinal2":
+            from .certvidfinal2 import certvidfinal2_compression as certvid_compression
         else:
             from .certvid_v3 import certvid_v3_compression as certvid_compression
 
@@ -434,7 +434,7 @@ def flashvid_compression(
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
             "expected flashvid|fastv|fastvid|visionzip|prunevid|"
-            "certvid|certvid_v2|certvid_v3|certvidfinal"
+            "certvid|certvid_v2|certvid_v3|certvidfinal2"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -1096,7 +1096,7 @@ def fastv_prune(
 
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
     strict_layer_average_budget = bool(
-        variant in ("flashvid", "certvid_v3", "certvidfinal")
+        variant in ("flashvid", "certvid_v3", "certvidfinal2")
         and getattr(flashvid_config, "strict_token_budget", False)
     )
     if variant == "prunevid":

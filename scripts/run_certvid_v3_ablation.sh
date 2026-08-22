@@ -16,8 +16,8 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 ABLATIONS="${ABLATIONS:-no_doptimal,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_whitening,no_candidate_pool,no_exchange_refinement,no_fusion}"
 
 case "$METHOD" in
-  certvid_v3|certvidfinal) ;;
-  *) echo "Unsupported ablation method: $METHOD (expected certvid_v3 or certvidfinal)" >&2; exit 2 ;;
+  certvid_v3|certvidfinal2) ;;
+  *) echo "Unsupported ablation method: $METHOD (expected certvid_v3 or certvidfinal2)" >&2; exit 2 ;;
 esac
 
 mkdir -p "$OUTPUT_PATH"
