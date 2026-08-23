@@ -1,7 +1,7 @@
 """Fixed CertVID V3 configuration used by the final paper model.
 
 Final2 intentionally delegates to the reference V3 implementation.  It fixes
-hard certificates and trajectory/event dynamics off while preserving every
+hard certificates off while preserving every
 other V3 selection, refinement, fusion, and diagnostic path.
 """
 
