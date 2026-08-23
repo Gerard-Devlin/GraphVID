@@ -25,6 +25,7 @@ from .certvid import (
     apply_certvid_plan,
 )
 from .certvid_v2 import _component_support, _trajectory_signals
+from .certvid_v3_ablation_selectors import select_ablation_objective
 from .configuration_flashvid import FlashVidConfig
 
 
@@ -1633,9 +1634,17 @@ def certvid_v3_compression(
     # ablation by what it removes rather than by the resulting ranking rule.
     if selection_objective == "quality_topk":
         selection_objective = "score_only"
-    if selection_objective not in {"d_optimal", "score_only"}:
+    valid_selection_objectives = {
+        "d_optimal",
+        "score_only",
+        "k_dpp_map",
+        "farthest_first",
+        "fps_kcenter",
+    }
+    if selection_objective not in valid_selection_objectives:
         raise ValueError(
-            "certv3_selection_objective must be 'd_optimal' or 'score_only', "
+            "certv3_selection_objective must be one of "
+            f"{sorted(valid_selection_objectives)}, "
             f"got {selection_objective!r}"
         )
     use_spatiotemporal_certificates = _cfg_bool(
@@ -1957,7 +1966,7 @@ def certvid_v3_compression(
             swaps = 0
             logdet = _selection_logdet(design, selected, ridge)
             _profile_record(phase_events, "d_optimal", 1)
-        else:
+        elif selection_objective == "d_optimal":
             _profile_record(phase_events, "d_optimal", 0)
             selected = _d_optimal_greedy(
                 design=design,
@@ -1979,6 +1988,21 @@ def certvid_v3_compression(
                 pool_size=_cfg_int(flashvid_config, "certv3_swap_pool", 24),
                 margin=_cfg_float(flashvid_config, "certv3_swap_margin", 1e-4),
             )
+            _profile_record(phase_events, "fedorov", 1)
+        else:
+            _profile_record(phase_events, "d_optimal", 0)
+            selected = select_ablation_objective(
+                selection_objective,
+                design=design,
+                quality=quality,
+                candidates=candidate_indices,
+                mandatory=mandatory,
+                budget=budget,
+            )
+            swaps = 0
+            logdet = _selection_logdet(design, selected, ridge)
+            _profile_record(phase_events, "d_optimal", 1)
+            _profile_record(phase_events, "fedorov", 0)
             _profile_record(phase_events, "fedorov", 1)
 
         _profile_record(phase_events, "fusion_plan", 0)

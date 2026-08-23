@@ -13,7 +13,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-ABLATIONS="${ABLATIONS:-no_doptimal,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_whitening,no_candidate_pool,no_exchange_refinement,no_fusion}"
+ABLATIONS="${ABLATIONS:-no_doptimal,selector_kdpp_map,selector_farthest_first,selector_fps_kcenter,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_whitening,no_candidate_pool,no_exchange_refinement,no_fusion}"
 
 case "$METHOD" in
   certvid_v3|certvidfinal2) ;;
@@ -56,6 +56,9 @@ for ablation in $(split_csv "$ABLATIONS"); do
   case "$ablation" in
     full) ;;
     no_doptimal) selection_objective=score_only ;;
+    selector_kdpp_map|kdpp_map) selection_objective=k_dpp_map; swap_steps=0 ;;
+    selector_farthest_first|farthest_first) selection_objective=farthest_first; swap_steps=0 ;;
+    selector_fps_kcenter|fps_kcenter) selection_objective=fps_kcenter; swap_steps=0 ;;
     no_quality_aware_weighting) quality_floor=1.0 ;;
     no_spatiotemporal) use_spatiotemporal_design=False ;;
     no_all_trajectory_dynamics|no_trajectory) use_trajectory=False ;;
