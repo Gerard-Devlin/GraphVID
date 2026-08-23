@@ -186,7 +186,7 @@ method_args() {
       printf 'compression_variant=%s,' "$method"
       certv3_args
       ;;
-    certvidfinal2)
+    certvid_v3origin|certvidfinal2)
       local certv3_model_args
       certv3_model_args="compression_variant=$method,$(certv3_args)"
       certv3_model_args="${certv3_model_args/,certv3_certificate_budget_ratio=$CERTV3_CERTIFICATE_BUDGET_RATIO/}"

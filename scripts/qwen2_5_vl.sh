@@ -224,7 +224,7 @@ common_flash_args() {
       pruning_layer="$FLASHVID_PRUNING_LAYER"
       llm_retention_ratio="$FLASHVID_LLM_RETENTION_RATIO"
       ;;
-    certvid_v3|certvidfinal2)
+    certvid_v3|certvid_v3origin|certvidfinal2)
       expansion="$CERTV3_EXPANSION"
       pruning_layer="$CERTV3_PRUNING_LAYER"
       llm_retention_ratio="$CERTV3_LLM_RETENTION_RATIO"
@@ -266,8 +266,9 @@ method_flash_args() {
         "$COMPLEMENTARY_SEGMENT" "$FLASHVID_TOKEN_SELECTION_METHOD" \
         "$ALPHA" "$TEMPORAL_THRESHOLD"
       ;;
-    certvid_v3|certvidfinal2)
-      printf 'compression_variant=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv3_certificate_budget_ratio=%s' \
+    certvid_v3|certvid_v3origin|certvidfinal2)
+      local certv3_model_args
+      printf -v certv3_model_args 'compression_variant=%s,certv3_budget_uses_expansion=%s,certv3_query_atoms=%s,certv3_temporal_bins=%s,certv3_spatial_bins=%s,certv3_candidate_multiplier=%s,certv3_query_weight=%s,certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s,certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv3_certificate_budget_ratio=%s' \
         "$method" \
         "$CERTV3_BUDGET_USES_EXPANSION" \
         "$CERTV3_QUERY_ATOMS" "$CERTV3_TEMPORAL_BINS" "$CERTV3_SPATIAL_BINS" \
@@ -279,6 +280,10 @@ method_flash_args() {
         "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" \
         "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" \
         "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTV3_CERTIFICATE_BUDGET_RATIO"
+      if [[ "$method" == "certvid_v3origin" || "$method" == "certvidfinal2" ]]; then
+        certv3_model_args="${certv3_model_args/,certv3_certificate_budget_ratio=$CERTV3_CERTIFICATE_BUDGET_RATIO/}"
+      fi
+      printf '%s' "$certv3_model_args"
       ;;
     *)
       echo "Unsupported Qwen2.5 method: $method" >&2

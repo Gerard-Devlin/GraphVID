@@ -347,20 +347,39 @@ def flashvid_compression(
             flashvid_config=flashvid_config,
             question_features=question_features,
         )
-    if compression_variant in {"certvid_v3", "certvidfinal2"}:
+    if compression_variant in {"certvid_v3", "certvid_v3origin", "certvidfinal2"}:
         if compression_variant == "certvidfinal2":
             from .certvidfinal2 import certvidfinal2_compression as certvid_compression
+        elif compression_variant == "certvid_v3origin":
+            from .certvid_v3origin import certvid_v3_compression as certvid_compression
         else:
             from .certvid_v3 import certvid_v3_compression as certvid_compression
 
         analysis_sink = {} if capture_design else None
-        result = certvid_compression(
-            video_features=video_features,
-            cls_attention=cls_attention,
-            flashvid_config=flashvid_config,
-            question_features=question_features,
-            analysis_sink=analysis_sink,
-        )
+        original_variant = compression_variant
+        original_exact_graphs = None
+        if original_variant == "certvid_v3origin":
+            # The archived implementation contains internal V3 identity checks.
+            # Present its historical identity only for the duration of the call,
+            # and prevent newer helper modules from enabling CUDA-graph speedups.
+            flashvid_config.compression_variant = "certvid_v3"
+            original_exact_graphs = os.environ.pop(
+                "CERTV3_USE_EXACT_CUDA_GRAPHS",
+                None,
+            )
+        try:
+            result = certvid_compression(
+                video_features=video_features,
+                cls_attention=cls_attention,
+                flashvid_config=flashvid_config,
+                question_features=question_features,
+                analysis_sink=analysis_sink,
+            )
+        finally:
+            if original_variant == "certvid_v3origin":
+                flashvid_config.compression_variant = original_variant
+                if original_exact_graphs is not None:
+                    os.environ["CERTV3_USE_EXACT_CUDA_GRAPHS"] = original_exact_graphs
         if capture_layer_attention:
             from .attention_visualization import (
                 initialize_certvid_attention_capture,
@@ -434,7 +453,7 @@ def flashvid_compression(
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
             "expected flashvid|fastv|fastvid|visionzip|prunevid|"
-            "certvid|certvid_v2|certvid_v3|certvidfinal2"
+            "certvid|certvid_v2|certvid_v3|certvid_v3origin|certvidfinal2"
         )
 
     retention_ratio = _resolve_effective_retention_ratio(
@@ -1096,7 +1115,7 @@ def fastv_prune(
 
     variant = str(getattr(flashvid_config, "compression_variant", "")).strip().lower()
     strict_layer_average_budget = bool(
-        variant in ("flashvid", "certvid_v3", "certvidfinal2")
+        variant in ("flashvid", "certvid_v3", "certvid_v3origin", "certvidfinal2")
         and getattr(flashvid_config, "strict_token_budget", False)
     )
     if variant == "prunevid":

@@ -231,8 +231,8 @@ def flashvid(
 ) -> nn.Module:
     """Apply the selected training-free video-token compression method.
 
-    CertVID V1, V2, V3, and the fixed ``certvidfinal2`` method share this entry
-    point with the retained baseline methods.
+    CertVID V1, V2, V3, the archived ``certvid_v3origin``, and the fixed
+    ``certvidfinal2`` method share this entry point with the retained baselines.
     """
 
     variant = str(compression_variant).strip().lower()
@@ -306,6 +306,7 @@ def flashvid(
         "certvid",
         "certvid_v2",
         "certvid_v3",
+        "certvid_v3origin",
         "certvidfinal2",
     }
     if variant not in supported_variants:
@@ -438,7 +439,12 @@ def flashvid(
     )
     # Qwen-family FlashVID runs default to strict accounting. LLaVA FlashVID
     # and CertVID V3 can opt in explicitly without changing established runs.
-    strict_capable_variant = variant in ("flashvid", "certvid_v3", "certvidfinal2")
+    strict_capable_variant = variant in (
+        "flashvid",
+        "certvid_v3",
+        "certvid_v3origin",
+        "certvidfinal2",
+    )
     automatic_strict_budget = bool(
         variant == "flashvid"
         and type(model)
