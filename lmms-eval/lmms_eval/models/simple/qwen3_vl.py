@@ -302,6 +302,8 @@ class Qwen3_VL(lmms):
         certv3_fusion_alpha: float = 0.12,
         certv3_assignment_temperature: float = 0.07,
         certv3_certificate_budget_ratio: float = 1.0,
+        certv3_selection_objective: str = "d_optimal",
+        certv3_use_trajectory: bool = True,
         # CertVID V8 parameters
         adapter_budget_uses_expansion: bool = True,
         external_budget_uses_expansion: bool = True,
@@ -479,6 +481,8 @@ class Qwen3_VL(lmms):
                 certv3_fusion_alpha=certv3_fusion_alpha,
                 certv3_assignment_temperature=certv3_assignment_temperature,
                 certv3_certificate_budget_ratio=certv3_certificate_budget_ratio,
+                certv3_selection_objective=certv3_selection_objective,
+                certv3_use_trajectory=certv3_use_trajectory,
                 adapter_budget_uses_expansion=adapter_budget_uses_expansion,
                 fastvid_DySeg_c=fastvid_DySeg_c,
                 fastvid_DySeg_tau=fastvid_DySeg_tau,
