@@ -544,34 +544,17 @@ def Qwen3VLModel_forward(
         cache_position = cache_position[keep_global_indexes]
         visual_pos_masks = visual_pos_masks[:, keep_global_indexes]
 
-    if _use_original_qwen3vl_text_stack(flashvid_config):
-        inputs_embeds = _prefuse_deepstack_visual_embeds(
-            inputs_embeds=inputs_embeds,
-            visual_pos_masks=visual_pos_masks,
-            deepstack_visual_embeds=deepstack_visual_embeds,
-        )
-        outputs = _call_qwen3vl_original_text_stack(
-            self.language_model,
-            input_ids=None,
-            position_ids=position_ids,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            cache_position=cache_position,
-            **kwargs,
-        )
-    else:
-        outputs = self.language_model(
-            input_ids=None,
-            position_ids=position_ids,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            cache_position=cache_position,
-            visual_pos_masks=visual_pos_masks,
-            deepstack_visual_embeds=deepstack_visual_embeds,
-            **kwargs,
-        )
+    outputs = self.language_model(
+        input_ids=None,
+        position_ids=position_ids,
+        attention_mask=attention_mask,
+        past_key_values=past_key_values,
+        inputs_embeds=inputs_embeds,
+        cache_position=cache_position,
+        visual_pos_masks=visual_pos_masks,
+        deepstack_visual_embeds=deepstack_visual_embeds,
+        **kwargs,
+    )
 
     return Qwen3VLModelOutputWithPast(
         last_hidden_state=outputs.last_hidden_state,
