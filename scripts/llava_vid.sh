@@ -94,6 +94,12 @@ CERTV3_SWAP_MARGIN="${CERTV3_SWAP_MARGIN:-0.0001}"
 CERTV3_FUSION_ALPHA="${CERTV3_FUSION_ALPHA:-0.12}"
 CERTV3_ASSIGNMENT_TEMPERATURE="${CERTV3_ASSIGNMENT_TEMPERATURE:-0.07}"
 CERTV3_CERTIFICATE_BUDGET_RATIO="${CERTV3_CERTIFICATE_BUDGET_RATIO:-1.0}"
+CERTV3_SELECTION_OBJECTIVE="${CERTV3_SELECTION_OBJECTIVE:-d_optimal}"
+CERTV3_USE_SPATIOTEMPORAL_CERTIFICATES="${CERTV3_USE_SPATIOTEMPORAL_CERTIFICATES:-True}"
+CERTV3_USE_SPATIOTEMPORAL_DESIGN="${CERTV3_USE_SPATIOTEMPORAL_DESIGN:-True}"
+CERTV3_USE_TRAJECTORY="${CERTV3_USE_TRAJECTORY:-True}"
+CERTV3_USE_QUERY="${CERTV3_USE_QUERY:-True}"
+CERTV3_USE_CANDIDATE_POOL="${CERTV3_USE_CANDIDATE_POOL:-True}"
 
 
 split_csv() {
@@ -156,8 +162,8 @@ certv3_args() {
     "$CERTV3_EVENT_NOVELTY_WEIGHT" "$CERTV3_EVENT_CURVATURE_WEIGHT" "$CERTV3_EVENT_FRAME_WEIGHT" "$CERTV3_EVENT_DETAIL_WEIGHT" "$CERTV3_EVENT_QUERY_WEIGHT"
   printf ',certv3_track_threshold=%s,certv3_spatial_penalty=%s,certv3_metric_dim=%s,certv3_frame_coverage_ratio=%s,certv3_cell_coverage_ratio=%s,certv3_query_threshold=%s,certv3_query_per_atom=%s' \
     "$CERTV3_TRACK_THRESHOLD" "$CERTV3_SPATIAL_PENALTY" "$CERTV3_METRIC_DIM" "$CERTV3_FRAME_COVERAGE_RATIO" "$CERTV3_CELL_COVERAGE_RATIO" "$CERTV3_QUERY_THRESHOLD" "$CERTV3_QUERY_PER_ATOM"
-  printf ',certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv3_certificate_budget_ratio=%s' \
-    "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTV3_CERTIFICATE_BUDGET_RATIO"
+  printf ',certv3_structural_weight=%s,certv3_whitening_strength=%s,certv3_quality_floor=%s,certv3_ridge=%s,certv3_swap_steps=%s,certv3_swap_pool=%s,certv3_swap_margin=%s,certv3_fusion_alpha=%s,certv3_assignment_temperature=%s,certv3_certificate_budget_ratio=%s,certv3_selection_objective=%s,certv3_use_spatiotemporal_certificates=%s,certv3_use_spatiotemporal_design=%s,certv3_use_trajectory=%s,certv3_use_query=%s,certv3_use_candidate_pool=%s' \
+    "$CERTV3_STRUCTURAL_WEIGHT" "$CERTV3_WHITENING_STRENGTH" "$CERTV3_QUALITY_FLOOR" "$CERTV3_RIDGE" "$CERTV3_SWAP_STEPS" "$CERTV3_SWAP_POOL" "$CERTV3_SWAP_MARGIN" "$CERTV3_FUSION_ALPHA" "$CERTV3_ASSIGNMENT_TEMPERATURE" "$CERTV3_CERTIFICATE_BUDGET_RATIO" "$CERTV3_SELECTION_OBJECTIVE" "$CERTV3_USE_SPATIOTEMPORAL_CERTIFICATES" "$CERTV3_USE_SPATIOTEMPORAL_DESIGN" "$CERTV3_USE_TRAJECTORY" "$CERTV3_USE_QUERY" "$CERTV3_USE_CANDIDATE_POOL"
 }
 
 method_args() {

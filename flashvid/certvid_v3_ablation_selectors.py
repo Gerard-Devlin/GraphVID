@@ -1,4 +1,9 @@
-"""Alternative fixed-budget selectors used only by CertVID V3 ablations."""
+"""Canonical fixed-budget baselines used only by CertVID V3 ablations.
+
+These selectors intentionally operate on the raw visual metric features.  They
+must not inherit CertVID's quality weighting, whitening, structural axes, or
+candidate pool; otherwise they cease to be independent selector baselines.
+"""
 
 from __future__ import annotations
 
@@ -25,12 +30,17 @@ def _mandatory_columns(candidates: torch.Tensor, mandatory: list[int]) -> list[i
 
 
 def _validate_inputs(
-    design: torch.Tensor,
+    features: torch.Tensor,
     candidates: torch.Tensor,
     mandatory: list[int],
     budget: int,
 ) -> tuple[torch.Tensor, list[int]]:
-    rows = design[candidates].float()
+    rows = torch.nan_to_num(
+        features[candidates].float(),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
     budget = int(budget)
     if budget < 0 or int(candidates.numel()) < budget:
         raise RuntimeError(
@@ -44,31 +54,48 @@ def _validate_inputs(
 
 def _kdpp_map_select(
     *,
-    design: torch.Tensor,
+    features: torch.Tensor,
     candidates: torch.Tensor,
     mandatory: list[int],
     budget: int,
-    quality: torch.Tensor,
 ) -> torch.Tensor:
-    """Greedy fixed-cardinality DPP MAP via conditional kernel diagonals."""
-    del quality
-    rows, mandatory_columns = _validate_inputs(design, candidates, mandatory, budget)
+    """Greedy k-DPP MAP with an RBF kernel over raw visual features."""
+    rows, mandatory_columns = _validate_inputs(features, candidates, mandatory, budget)
     count = int(rows.shape[0])
     budget = int(budget)
     if budget == 0:
         return candidates[:0]
 
-    # The V3 design rows already contain the quality mass. This kernel therefore
-    # changes only the set objective, not any upstream feature or weight.
-    residual_diagonal = rows.square().sum(dim=1).clamp_min(1e-12)
+    rows = F.normalize(rows, p=2, dim=-1, eps=1e-6)
+
+    # Estimate the RBF scale from an evenly spaced subset without materializing
+    # the full N x N kernel.  A pure RBF kernel has unit diagonal, so singleton
+    # gains do not smuggle CertVID quality scores into this baseline.
+    sample_count = min(count, 256)
+    sample_ids = torch.linspace(
+        0,
+        count - 1,
+        steps=sample_count,
+        device=rows.device,
+    ).round().long().unique()
+    sample = rows[sample_ids]
+    sample_distance = torch.cdist(sample, sample, p=2).square()
+    positive = sample_distance[sample_distance > 1e-8]
+    bandwidth_sq = (
+        positive.median()
+        if int(positive.numel()) > 0
+        else torch.tensor(1.0, device=rows.device)
+    ).clamp_min(1e-6)
+
+    residual_diagonal = torch.ones(count, dtype=torch.float32, device=rows.device)
     factors = torch.zeros((budget, count), dtype=torch.float32, device=rows.device)
     active = torch.ones(count, dtype=torch.bool, device=rows.device)
     selected_columns: list[torch.Tensor] = []
 
     def add(column: torch.Tensor) -> None:
         step = len(selected_columns)
-        row = rows[column]
-        cross = rows @ row
+        squared_distance = (rows - rows[column]).square().sum(dim=1)
+        cross = torch.exp(-0.5 * squared_distance / bandwidth_sq)
         if step:
             previous = factors[:step]
             cross = cross - previous[:, column] @ previous
@@ -82,6 +109,11 @@ def _kdpp_map_select(
 
     for column in mandatory_columns:
         add(torch.tensor(column, dtype=torch.long, device=rows.device))
+
+    if not selected_columns:
+        # All singleton RBF gains are equal; index order is the deterministic
+        # tie-break used by this baseline.
+        add(torch.zeros((), dtype=torch.long, device=rows.device))
 
     while len(selected_columns) < budget:
         gains = residual_diagonal.masked_fill(~active, float("-inf"))
@@ -138,37 +170,38 @@ def _max_min_select(
 
 def _farthest_first_select(
     *,
-    design: torch.Tensor,
+    features: torch.Tensor,
     candidates: torch.Tensor,
     mandatory: list[int],
     budget: int,
-    quality: torch.Tensor,
 ) -> torch.Tensor:
-    """Cosine farthest-first traversal seeded by the strongest quality token."""
-    rows, mandatory_columns = _validate_inputs(design, candidates, mandatory, budget)
+    """Cosine farthest-first traversal over raw visual features."""
+    rows, mandatory_columns = _validate_inputs(features, candidates, mandatory, budget)
     unit_rows = F.normalize(rows, p=2, dim=-1, eps=1e-6)
-    candidate_quality = quality[candidates].float()
+    # Classical farthest-first allows an arbitrary initial center.  Candidate
+    # order gives a deterministic seed without using CertVID quality.
+    seed_score = torch.zeros(int(candidates.numel()), device=rows.device)
+    if int(seed_score.numel()) > 0:
+        seed_score[0] = 1.0
     return _max_min_select(
         rows=unit_rows,
         candidates=candidates,
         mandatory_columns=mandatory_columns,
         budget=budget,
-        seed_score=candidate_quality,
+        seed_score=seed_score,
         distance_to=lambda column: (1.0 - unit_rows @ unit_rows[column]).clamp_min(0.0),
     )
 
 
 def _fps_kcenter_select(
     *,
-    design: torch.Tensor,
+    features: torch.Tensor,
     candidates: torch.Tensor,
     mandatory: list[int],
     budget: int,
-    quality: torch.Tensor,
 ) -> torch.Tensor:
-    """Deterministic Euclidean FPS/k-center with a centroid-farthest seed."""
-    del quality
-    rows, mandatory_columns = _validate_inputs(design, candidates, mandatory, budget)
+    """Euclidean FPS/k-center over unnormalized raw visual features."""
+    rows, mandatory_columns = _validate_inputs(features, candidates, mandatory, budget)
     centroid = rows.mean(dim=0, keepdim=True)
     seed_score = (rows - centroid).square().sum(dim=1)
     squared_norm = rows.square().sum(dim=1)
@@ -200,8 +233,7 @@ _SELECTORS = {
 def select_ablation_objective(
     objective: str,
     *,
-    design: torch.Tensor,
-    quality: torch.Tensor,
+    features: torch.Tensor,
     candidates: torch.Tensor,
     mandatory: list[int],
     budget: int,
@@ -212,8 +244,7 @@ def select_ablation_objective(
     except KeyError as error:
         raise ValueError(f"unknown CertVID V3 ablation selector: {objective!r}") from error
     selected = selector(
-        design=design,
-        quality=quality,
+        features=features,
         candidates=candidates,
         mandatory=mandatory,
         budget=budget,

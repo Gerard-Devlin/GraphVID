@@ -1991,10 +1991,18 @@ def certvid_v3_compression(
             _profile_record(phase_events, "fedorov", 1)
         else:
             _profile_record(phase_events, "d_optimal", 0)
+            # Canonical selector baselines intentionally bypass CertVID's
+            # quality-filtered pool and enriched/whitened design matrix.  They
+            # receive every token in the raw visual metric space at the same
+            # exact output budget as D-optimal selection.
+            candidate_indices = torch.arange(
+                total_tokens,
+                dtype=torch.long,
+                device=video_features.device,
+            )
             selected = select_ablation_objective(
                 selection_objective,
-                design=design,
-                quality=quality,
+                features=metric_flat,
                 candidates=candidate_indices,
                 mandatory=mandatory,
                 budget=budget,

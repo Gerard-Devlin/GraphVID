@@ -13,6 +13,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-$PWD/logs/lmms_eval/certvid_v3_ablation}"
 RESUME="${RESUME:-1}"
 FAIL_FAST="${FAIL_FAST:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+MODEL_SCRIPT="${MODEL_SCRIPT:-scripts/llava_ov.sh}"
 ABLATIONS="${ABLATIONS:-no_doptimal,selector_kdpp_map,selector_farthest_first,selector_fps_kcenter,no_quality_aware_weighting,no_spatiotemporal,no_all_trajectory_dynamics,no_query,no_whitening,no_candidate_pool,no_exchange_refinement,no_fusion}"
 
 case "$METHOD" in
@@ -107,7 +108,7 @@ for ablation in $(split_csv "$ABLATIONS"); do
       CERTV3_SWAP_STEPS="$swap_steps" \
       CERTV3_FUSION_ALPHA="$fusion_alpha" \
       CERTV3_DIAGNOSTICS_JSONL="$run_dir/${METHOD}_diagnostics_rank{rank}.jsonl" \
-      bash scripts/llava_ov.sh 2>&1 | tee "$task_log"
+      bash "$MODEL_SCRIPT" 2>&1 | tee "$task_log"
     then
       if has_result "$run_dir"; then
         echo "[completed] ablation=$ablation task=$task"
