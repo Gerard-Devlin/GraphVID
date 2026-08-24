@@ -212,3 +212,8 @@ analysis_pull
 
 # Private paper draft and submission materials
 /paper/
+
+# Temporary upstream audit repositories
+/.audit_flashvid_upstream/
+/.tmp_vcast_audit/
+/.tmp_vidcom2_audit/
