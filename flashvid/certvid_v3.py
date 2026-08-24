@@ -1647,6 +1647,44 @@ def certvid_v3_compression(
             f"{sorted(valid_selection_objectives)}, "
             f"got {selection_objective!r}"
         )
+    pure_ablation_objectives = {"k_dpp_map", "farthest_first", "fps_kcenter"}
+    if budget < total_tokens and selection_objective in pure_ablation_objectives:
+        # These are deliberately plain selector baselines, not variants of
+        # CertVID's enriched design. They use the same exact output budget but
+        # bypass certificates, quality/query/trajectory signals, whitening,
+        # candidate filtering, exchange refinement, and residual fusion.
+        all_indices = torch.arange(total_tokens, device=flat_features.device)
+        selected = select_ablation_objective(
+            selection_objective,
+            features=flat_features,
+            candidates=all_indices,
+            mandatory=[],
+            budget=budget,
+        )
+        selected = torch.sort(selected).values
+        output = flat_features[selected]
+        diagnostics = {
+            "identity": False,
+            "retention_ratio": float(
+                _cfg_float(flashvid_config, "retention_ratio", 0.10)
+            ),
+            "effective_outer_ratio": float(ratio),
+            "raw_tokens": int(total_tokens),
+            "target_tokens": int(budget),
+            "output_tokens": int(output.shape[0]),
+            "candidate_count": int(total_tokens),
+            "certificate_count": 0,
+            "selection_objective": selection_objective,
+            "pure_selector_ablation": True,
+            "residual_fusion": False,
+        }
+        setattr(flashvid_config, "last_certv3_target_tokens", float(budget))
+        setattr(flashvid_config, "last_certv3_candidate_count", float(total_tokens))
+        setattr(flashvid_config, "last_certv3_certificate_count", 0.0)
+        setattr(flashvid_config, "last_certv3_swap_count", 0.0)
+        setattr(flashvid_config, "last_certv3_diagnostics", diagnostics)
+        _write_certv3_diagnostics(flashvid_config, diagnostics)
+        return output, selected
     use_spatiotemporal_certificates = _cfg_bool(
         flashvid_config, "certv3_use_spatiotemporal_certificates", True
     )
@@ -1990,28 +2028,9 @@ def certvid_v3_compression(
             )
             _profile_record(phase_events, "fedorov", 1)
         else:
-            _profile_record(phase_events, "d_optimal", 0)
-            # Canonical selector baselines intentionally bypass CertVID's
-            # quality-filtered pool and enriched/whitened design matrix.  They
-            # receive every token in the raw visual metric space at the same
-            # exact output budget as D-optimal selection.
-            candidate_indices = torch.arange(
-                total_tokens,
-                dtype=torch.long,
-                device=video_features.device,
+            raise AssertionError(
+                f"pure selector {selection_objective!r} must return before V3 feature construction"
             )
-            selected = select_ablation_objective(
-                selection_objective,
-                features=metric_flat,
-                candidates=candidate_indices,
-                mandatory=mandatory,
-                budget=budget,
-            )
-            swaps = 0
-            logdet = _selection_logdet(design, selected, ridge)
-            _profile_record(phase_events, "d_optimal", 1)
-            _profile_record(phase_events, "fedorov", 0)
-            _profile_record(phase_events, "fedorov", 1)
 
         _profile_record(phase_events, "fusion_plan", 0)
         selected = torch.sort(selected).values
