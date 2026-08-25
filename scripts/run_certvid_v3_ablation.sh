@@ -57,9 +57,9 @@ for ablation in $(split_csv "$ABLATIONS"); do
   case "$ablation" in
     full) ;;
     no_doptimal) selection_objective=score_only ;;
-    selector_kdpp_map|kdpp_map) selection_objective=k_dpp_map; swap_steps=0; use_candidate_pool=False ;;
-    selector_farthest_first|farthest_first) selection_objective=farthest_first; swap_steps=0; use_candidate_pool=False ;;
-    selector_fps_kcenter|fps_kcenter) selection_objective=fps_kcenter; swap_steps=0; use_candidate_pool=False ;;
+    selector_kdpp_map|kdpp_map) selection_objective=k_dpp_map; swap_steps=0 ;;
+    selector_farthest_first|farthest_first) selection_objective=farthest_first; swap_steps=0 ;;
+    selector_fps_kcenter|fps_kcenter) selection_objective=fps_kcenter; swap_steps=0 ;;
     no_quality_aware_weighting) quality_floor=1.0 ;;
     no_spatiotemporal) use_spatiotemporal_design=False ;;
     no_all_trajectory_dynamics|no_trajectory) use_trajectory=False ;;
