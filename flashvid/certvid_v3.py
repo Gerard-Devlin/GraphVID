@@ -1678,6 +1678,18 @@ def certvid_v3_compression(
             "pure_selector_ablation": True,
             "residual_fusion": False,
         }
+        # Keep the runtime state identical to the standard V3 return path so
+        # the layer-level inner pruner sees the actual compressed span.
+        flashvid_config.vision_token_length = int(output.shape[0])
+        flashvid_config.visual_token_length = int(output.shape[0])
+        flashvid_config.llm_token_length = None
+        setattr(flashvid_config, "last_adapter_variant", "certvid_v3")
+        setattr(flashvid_config, "last_adapter_raw_tokens", float(total_tokens))
+        setattr(
+            flashvid_config,
+            "last_adapter_output_tokens",
+            float(output.shape[0]),
+        )
         setattr(flashvid_config, "last_certv3_target_tokens", float(budget))
         setattr(flashvid_config, "last_certv3_candidate_count", float(total_tokens))
         setattr(flashvid_config, "last_certv3_certificate_count", 0.0)
