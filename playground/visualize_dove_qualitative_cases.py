@@ -33,9 +33,8 @@ OPTION_RE = re.compile(r"^\s*([A-E])\s*[.)]\s*(.*?)\s*$")
 DEFAULT_QUESTION_IDS = ("052-3", "116-3", "141-2", "208-3", "264-2", "460-3")
 
 INK = "#1E242B"
-CORRECT = "#3F7D55"
-WRONG = "#B74848"
-DOVE = "#BD4444"
+CORRECT = "#00A53C"
+WRONG = "#C90000"
 
 
 @dataclass(frozen=True)
@@ -67,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         help="Ordered comma-separated question IDs. Empty means the first N rows.",
     )
     parser.add_argument("--num-examples", type=int, default=6)
-    parser.add_argument("--filmstrip-frames", type=int, default=10)
+    parser.add_argument("--filmstrip-frames", type=int, default=8)
     parser.add_argument("--dpi", type=int, default=300)
     return parser.parse_args()
 
@@ -241,58 +240,39 @@ def sample_frames(video_path: Path, count: int) -> list[Image.Image]:
     return [Image.fromarray(frame).convert("RGB") for frame in batch]
 
 
-def _fit_frame(frame: Image.Image, size: tuple[int, int]) -> Image.Image:
-    canvas = Image.new("RGB", size, "black")
-    fitted = ImageOps.contain(frame, size, Image.Resampling.LANCZOS)
-    x = (size[0] - fitted.width) // 2
-    y = (size[1] - fitted.height) // 2
-    canvas.paste(fitted, (x, y))
-    return canvas
-
-
-def make_filmstrip(
-    frames: Iterable[Image.Image], width: int = 2400, height: int = 310
-) -> Image.Image:
+def make_filmstrip(frames: Iterable[Image.Image]) -> Image.Image:
+    """Use the same filmstrip geometry as the other paper visualizations."""
     frames = list(frames)
     if not frames:
         raise ValueError("filmstrip requires at least one frame")
 
-    outer = 8
-    band = 31
-    gap = 5
-    image = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, width - 1, height - 1), fill="black", outline=INK, width=3)
+    tile_width, tile_height = 360, 210
+    gap, rail = 10, 36
+    side_margin = 12
+    width = side_margin * 2 + len(frames) * tile_width + (len(frames) - 1) * gap
+    height = tile_height + rail * 2
+    strip = Image.new("RGB", (width, height), "black")
 
-    content_y = band + outer
-    content_h = height - 2 * (band + outer)
-    content_x = outer
-    content_w = width - 2 * outer
-    cell_w = (content_w - gap * (len(frames) - 1)) // len(frames)
-
-    for index, frame in enumerate(frames):
-        x = content_x + index * (cell_w + gap)
-        fitted = _fit_frame(frame, (cell_w, content_h))
-        image.paste(fitted, (x, content_y))
-        draw.rectangle(
-            (x, content_y, x + cell_w - 1, content_y + content_h - 1),
-            outline="#DCE3E8",
-            width=2,
+    for position, frame in enumerate(frames):
+        x0 = side_margin + position * (tile_width + gap)
+        tile = ImageOps.fit(
+            frame.convert("RGB"),
+            (tile_width, tile_height),
+            method=Image.Resampling.LANCZOS,
         )
+        strip.paste(tile, (x0, rail))
 
-    hole_w = 22
-    hole_h = 14
-    hole_gap = 14
-    holes = max(1, (width - 2 * outer + hole_gap) // (hole_w + hole_gap))
-    used = holes * hole_w + (holes - 1) * hole_gap
-    start_x = (width - used) // 2
-    for index in range(holes):
-        x = start_x + index * (hole_w + hole_gap)
-        for y in (8, height - 8 - hole_h):
-            draw.rounded_rectangle(
-                (x, y, x + hole_w, y + hole_h), radius=3, fill="white"
-            )
-    return image
+    draw = ImageDraw.Draw(strip)
+    hole_width, hole_height, hole_gap = 20, 14, 12
+    x = 8
+    while x + hole_width < width:
+        draw.rectangle((x, 8, x + hole_width, 8 + hole_height), fill="white")
+        draw.rectangle(
+            (x, height - 8 - hole_height, x + hole_width, height - 8),
+            fill="white",
+        )
+        x += hole_width + hole_gap
+    return strip
 
 
 def _wrap(text: str, width: int) -> str:
@@ -301,25 +281,25 @@ def _wrap(text: str, width: int) -> str:
 
 def _draw_question(ax: plt.Axes, case: QualitativeCase) -> None:
     ax.text(
-        0.012,
-        0.93,
+        0.014,
+        0.96,
         "Question:",
         transform=ax.transAxes,
         ha="left",
         va="top",
-        fontsize=12.0,
+        fontsize=14.2,
         fontweight="bold",
         fontstyle="italic",
         color=INK,
     )
     ax.text(
-        0.090,
-        0.93,
-        _wrap(case.question, 105),
+        0.105,
+        0.96,
+        _wrap(case.question, 98),
         transform=ax.transAxes,
         ha="left",
         va="top",
-        fontsize=11.8,
+        fontsize=13.6,
         fontstyle="italic",
         color=INK,
         linespacing=1.12,
@@ -332,35 +312,69 @@ def _draw_question(ax: plt.Axes, case: QualitativeCase) -> None:
         color = CORRECT if label == case.answer else INK
         weight = "bold" if label == case.answer else "normal"
         ax.text(
-            0.020,
+            0.025,
             y,
-            _wrap(f'"{label}. {text}"', 67),
+            _wrap(f'"{label}. {text}"' + ("," if index < 3 else ""), 63),
             transform=ax.transAxes,
             ha="left",
             va="bottom",
-            fontsize=10.5,
+            fontsize=12.2,
             fontweight=weight,
             color=color,
             linespacing=1.06,
         )
 
     ax.plot(
-        [0.545, 0.545],
-        [0.015, 0.66],
+        [0.525, 0.525],
+        [0.005, 0.68],
         transform=ax.transAxes,
         color=INK,
-        linewidth=0.9,
+        linewidth=0.8,
         clip_on=False,
     )
 
 
+def _draw_status_mark(ax: plt.Axes, x: float, y: float, correct: bool) -> None:
+    color = "#4F962F" if correct else WRONG
+    if correct:
+        ax.plot(
+            [x - 0.013, x - 0.003, x + 0.020],
+            [y, y - 0.035, y + 0.050],
+            transform=ax.transAxes,
+            color=color,
+            linewidth=4.4,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            clip_on=False,
+        )
+    else:
+        ax.plot(
+            [x - 0.013, x + 0.013],
+            [y - 0.044, y + 0.044],
+            transform=ax.transAxes,
+            color=color,
+            linewidth=4.2,
+            solid_capstyle="round",
+            clip_on=False,
+        )
+        ax.plot(
+            [x - 0.013, x + 0.013],
+            [y + 0.044, y - 0.044],
+            transform=ax.transAxes,
+            color=color,
+            linewidth=4.2,
+            solid_capstyle="round",
+            clip_on=False,
+        )
+
+
 def _draw_answer_cards(ax: plt.Axes, case: QualitativeCase) -> None:
     placements = {
-        "FastV": (0.625, 0.54),
-        "VisionZip": (0.785, 0.54),
-        "FastVID": (0.935, 0.54),
-        "FlashVID": (0.700, 0.20),
-        "DOVE": (0.865, 0.20),
+        "FastV": (0.615, 0.53),
+        "VisionZip": (0.770, 0.53),
+        "FastVID": (0.920, 0.53),
+        "FlashVID": (0.615, 0.18),
+        "DOVE": (0.770, 0.18),
     }
     for method, (x, y) in placements.items():
         prediction = case.predictions[method]
@@ -373,21 +387,22 @@ def _draw_answer_cards(ax: plt.Axes, case: QualitativeCase) -> None:
             transform=ax.transAxes,
             ha="center",
             va="bottom",
-            fontsize=11.1,
-            fontweight="bold",
-            color=DOVE if method == "DOVE" else INK,
+            fontsize=13.2,
+            fontweight="bold" if method == "DOVE" else "normal",
+            color=INK,
         )
         ax.text(
-            x,
-            y - 0.035,
-            f'"{prediction}."',
+            x - 0.010,
+            y - 0.040,
+            f'"{prediction}.."',
             transform=ax.transAxes,
             ha="center",
             va="top",
-            fontsize=12.0,
-            fontweight="bold",
+            fontsize=13.8,
+            fontstyle="italic",
             color=color,
         )
+        _draw_status_mark(ax, x + 0.052, y - 0.105, correct)
 
 
 def draw_info_panel(ax: plt.Axes, case: QualitativeCase) -> None:
@@ -411,16 +426,16 @@ def render_figure(
     dpi: int,
 ) -> None:
     count = len(cases)
-    figure = plt.figure(figsize=(13.9, 3.02 * count), facecolor="white")
+    figure = plt.figure(figsize=(15.4, 4.05 * count), facecolor="white")
     grid = figure.add_gridspec(
         2 * count,
         1,
-        height_ratios=[0.72, 1.08] * count,
-        hspace=0.035,
-        left=0.025,
-        right=0.975,
-        top=0.992,
-        bottom=0.012,
+        height_ratios=[0.56, 1.00] * count,
+        hspace=0.018,
+        left=0.020,
+        right=0.980,
+        top=0.994,
+        bottom=0.006,
     )
 
     for index, case in enumerate(cases):
