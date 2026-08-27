@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Render VideoMME qualitative wins as publication-ready filmstrip panels.
+"""Export VideoMME filmstrips and a LaTeX qualitative-comparison fragment.
 
 The input is the strict-win CSV produced by ``find_videomme_win_cases.py``.
-Each example contains a uniformly sampled video filmstrip, the multiple-choice
-question, and the predictions from four baselines and DOVE. The script exports
-one six-example figure and one standalone figure per example as both PDF and
-PNG. No model inference is performed.
+Python only renders uniformly sampled filmstrips. Questions, options, method
+predictions, and correctness marks are emitted as LaTeX so their typography is
+controlled by the paper template. No model inference is performed.
 """
 
 from __future__ import annotations
@@ -15,15 +14,10 @@ import csv
 import json
 import os
 import re
-import textwrap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw, ImageOps
 
@@ -31,11 +25,6 @@ from PIL import Image, ImageDraw, ImageOps
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
 OPTION_RE = re.compile(r"^\s*([A-E])\s*[.)]\s*(.*?)\s*$")
 DEFAULT_QUESTION_IDS = ("052-3", "116-3", "141-2", "208-3", "264-2", "460-3")
-
-INK = "#1E242B"
-CORRECT = "#00A53C"
-WRONG = "#C90000"
-
 
 @dataclass(frozen=True)
 class QualitativeCase:
@@ -68,6 +57,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-examples", type=int, default=6)
     parser.add_argument("--filmstrip-frames", type=int, default=8)
     parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument(
+        "--tex-output",
+        default="",
+        help="LaTeX fragment path. Defaults to OUTPUT_DIR/dove_qualitative_cases.tex.",
+    )
+    parser.add_argument(
+        "--tex-image-prefix",
+        default="figures/appendix/dove_cases",
+        help="Image path prefix written into the LaTeX fragment.",
+    )
     return parser.parse_args()
 
 
@@ -275,202 +274,101 @@ def make_filmstrip(frames: Iterable[Image.Image]) -> Image.Image:
     return strip
 
 
-def _wrap(text: str, width: int) -> str:
-    return "\n".join(textwrap.wrap(text, width=width, break_long_words=False))
-
-
-def _draw_question(ax: plt.Axes, case: QualitativeCase) -> None:
-    ax.text(
-        0.014,
-        0.96,
-        "Question:",
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=14.2,
-        fontweight="bold",
-        fontstyle="italic",
-        color=INK,
-    )
-    ax.text(
-        0.105,
-        0.96,
-        _wrap(case.question, 98),
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=13.6,
-        fontstyle="italic",
-        color=INK,
-        linespacing=1.12,
-    )
-
-    option_items = list(case.options.items())
-    y_positions = (0.59, 0.41, 0.23, 0.05)
-    for index, (label, text) in enumerate(option_items[:4]):
-        y = y_positions[index]
-        color = CORRECT if label == case.answer else INK
-        weight = "bold" if label == case.answer else "normal"
-        ax.text(
-            0.025,
-            y,
-            _wrap(f'"{label}. {text}"' + ("," if index < 3 else ""), 63),
-            transform=ax.transAxes,
-            ha="left",
-            va="bottom",
-            fontsize=12.2,
-            fontweight=weight,
-            color=color,
-            linespacing=1.06,
-        )
-
-    ax.plot(
-        [0.525, 0.525],
-        [0.005, 0.68],
-        transform=ax.transAxes,
-        color=INK,
-        linewidth=0.8,
-        clip_on=False,
-    )
-
-
-def _draw_status_mark(ax: plt.Axes, x: float, y: float, correct: bool) -> None:
-    color = "#4F962F" if correct else WRONG
-    if correct:
-        ax.plot(
-            [x - 0.013, x - 0.003, x + 0.020],
-            [y, y - 0.035, y + 0.050],
-            transform=ax.transAxes,
-            color=color,
-            linewidth=4.4,
-            solid_capstyle="round",
-            solid_joinstyle="round",
-            clip_on=False,
-        )
-    else:
-        ax.plot(
-            [x - 0.013, x + 0.013],
-            [y - 0.044, y + 0.044],
-            transform=ax.transAxes,
-            color=color,
-            linewidth=4.2,
-            solid_capstyle="round",
-            clip_on=False,
-        )
-        ax.plot(
-            [x - 0.013, x + 0.013],
-            [y + 0.044, y - 0.044],
-            transform=ax.transAxes,
-            color=color,
-            linewidth=4.2,
-            solid_capstyle="round",
-            clip_on=False,
-        )
-
-
-def _draw_answer_cards(ax: plt.Axes, case: QualitativeCase) -> None:
-    placements = {
-        "FastV": (0.615, 0.53),
-        "VisionZip": (0.770, 0.53),
-        "FastVID": (0.920, 0.53),
-        "FlashVID": (0.615, 0.18),
-        "DOVE": (0.770, 0.18),
+def _tex_escape(text: str) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
     }
-    for method, (x, y) in placements.items():
-        prediction = case.predictions[method]
-        correct = prediction == case.answer
-        color = CORRECT if correct else WRONG
-        ax.text(
-            x,
-            y,
-            method,
-            transform=ax.transAxes,
-            ha="center",
-            va="bottom",
-            fontsize=13.2,
-            fontweight="bold" if method == "DOVE" else "normal",
-            color=INK,
-        )
-        ax.text(
-            x - 0.010,
-            y - 0.040,
-            f'"{prediction}.."',
-            transform=ax.transAxes,
-            ha="center",
-            va="top",
-            fontsize=13.8,
-            fontstyle="italic",
-            color=color,
-        )
-        _draw_status_mark(ax, x + 0.052, y - 0.105, correct)
+    return "".join(replacements.get(character, character) for character in text)
 
 
-def draw_info_panel(ax: plt.Axes, case: QualitativeCase) -> None:
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
-    _draw_question(ax, case)
-    _draw_answer_cards(ax, case)
+def _tex_prediction(case: QualitativeCase, method: str) -> str:
+    prediction = _tex_escape(case.predictions[method])
+    macro = "DOVECorrectPrediction" if case.predictions[method] == case.answer else "DOVEWrongPrediction"
+    return rf"\{macro}{{{prediction}}}"
 
 
-def draw_filmstrip_axis(ax: plt.Axes, filmstrip: Image.Image) -> None:
-    ax.imshow(filmstrip)
-    ax.set_aspect("auto")
-    ax.axis("off")
+def _tex_case(case: QualitativeCase, image_prefix: str) -> str:
+    image_name = f"dove_filmstrip_{case.question_id.replace('/', '_')}.png"
+    image_path = f"{image_prefix.rstrip('/')}/{image_name}" if image_prefix else image_name
+    options: list[str] = []
+    for index, (label, text) in enumerate(case.options.items()):
+        punctuation = "," if index < len(case.options) - 1 else ""
+        option = f"``{_tex_escape(label)}. {_tex_escape(text)}''{punctuation}"
+        if label == case.answer:
+            option = rf"\DOVECorrectOption{{{option}}}"
+        options.append(option)
+    option_lines = " \\\\[0.18em]\n".join(options)
+
+    return rf"""\noindent
+\begin{{minipage}}{{\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{{{image_path}}}
+    \par\vspace{{0.10em}}
+    \raggedright
+    {{\large\bfseries\itshape Question:}}
+    {{\large\itshape {_tex_escape(case.question)}}}
+    \par\vspace{{0.45em}}
+
+    \noindent
+    \begin{{minipage}}[t]{{0.505\linewidth}}
+    \vspace{{0pt}}\raggedright
+    {option_lines}
+    \end{{minipage}}%
+    \hfill
+    \begin{{minipage}}[t]{{0.012\linewidth}}
+    \vspace{{0pt}}\centering\rule{{0.45pt}}{{7.2em}}
+    \end{{minipage}}%
+    \hfill
+    \begin{{minipage}}[t]{{0.445\linewidth}}
+    \vspace{{0pt}}\centering
+    \begin{{tabular*}}{{\linewidth}}[t]{{@{{\extracolsep{{\fill}}}}ccc@{{}}}}
+    FastV & VisionZip & FastVID \\
+    {_tex_prediction(case, 'FastV')} & {_tex_prediction(case, 'VisionZip')} & {_tex_prediction(case, 'FastVID')} \\[0.30em]
+    FlashVID & \textbf{{DOVE}} & \\
+    {_tex_prediction(case, 'FlashVID')} & {_tex_prediction(case, 'DOVE')} &
+    \end{{tabular*}}
+    \end{{minipage}}
+\end{{minipage}}"""
 
 
-def render_figure(
-    cases: list[QualitativeCase],
-    filmstrips: dict[str, Image.Image],
-    output_stem: Path,
-    dpi: int,
+def write_tex_fragment(
+    cases: list[QualitativeCase], output_path: Path, image_prefix: str
 ) -> None:
-    count = len(cases)
-    figure = plt.figure(figsize=(15.4, 4.05 * count), facecolor="white")
-    grid = figure.add_gridspec(
-        2 * count,
-        1,
-        height_ratios=[0.56, 1.00] * count,
-        hspace=0.018,
-        left=0.020,
-        right=0.980,
-        top=0.994,
-        bottom=0.006,
-    )
-
-    for index, case in enumerate(cases):
-        filmstrip_ax = figure.add_subplot(grid[2 * index])
-        panel_ax = figure.add_subplot(grid[2 * index + 1])
-        draw_filmstrip_axis(filmstrip_ax, filmstrips[case.question_id])
-        draw_info_panel(panel_ax, case)
-
-    output_stem.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(
-        output_stem.with_suffix(".pdf"),
-        bbox_inches="tight",
-        pad_inches=0.035,
-        facecolor="white",
-    )
-    figure.savefig(
-        output_stem.with_suffix(".png"),
-        dpi=dpi,
-        bbox_inches="tight",
-        pad_inches=0.035,
-        facecolor="white",
-    )
-    plt.close(figure)
-
-
-def configure_matplotlib() -> None:
-    plt.rcParams.update(
-        {
-            "font.family": "serif",
-            "font.serif": ["Times New Roman", "Liberation Serif", "DejaVu Serif"],
-            "pdf.fonttype": 42,
-            "ps.fonttype": 42,
-            "axes.unicode_minus": False,
-        }
-    )
+    header = r"""% Auto-generated by playground/visualize_dove_qualitative_cases.py.
+% Required packages: graphicx, xcolor, amssymb.
+\definecolor{doveWrong}{HTML}{C90000}
+\definecolor{doveCorrect}{HTML}{00A53C}
+\newcommand{\DOVEWrongPrediction}[1]{{\color{doveWrong}\emph{``#1..''}\,\raisebox{-0.15ex}{\scalebox{1.55}{$\times$}}}}
+\newcommand{\DOVECorrectPrediction}[1]{{\color{doveCorrect}\emph{``#1..''}\,\raisebox{-0.10ex}{\scalebox{1.45}{$\checkmark$}}}}
+\newcommand{\DOVECorrectOption}[1]{{\color{doveCorrect}\bfseries #1}}
+"""
+    blocks: list[str] = [header.rstrip()]
+    for page_index, start in enumerate(range(0, len(cases), 3), start=1):
+        page_cases = cases[start : start + 3]
+        body = "\n\n\\vspace{0.75em}\n\n".join(
+            _tex_case(case, image_prefix) for case in page_cases
+        )
+        blocks.append(
+            rf"""\begin{{figure*}}[p]
+    \centering
+{body}
+    \caption{{\textbf{{Qualitative comparison on VideoMME at 1\% retention.}}
+    DOVE answers each question correctly, while all four competing video-token
+    compression methods produce incorrect predictions.}}
+    \label{{fig:dove_qualitative_{page_index}}}
+\end{{figure*}}"""
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -480,14 +378,17 @@ def main() -> None:
     if args.filmstrip_frames <= 1:
         raise ValueError("--filmstrip-frames must be greater than one")
 
-    configure_matplotlib()
     all_cases = read_cases(Path(args.cases_csv).expanduser().resolve())
     cases = choose_cases(all_cases, args.question_ids, args.num_examples)
     video_map = discover_video_map(Path(args.video_root).expanduser().resolve())
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    tex_output = (
+        Path(args.tex_output).expanduser().resolve()
+        if args.tex_output
+        else output_dir / "dove_qualitative_cases.tex"
+    )
 
-    filmstrips: dict[str, Image.Image] = {}
     metadata: list[dict[str, object]] = []
     for case in cases:
         video_path = video_map.get(case.video_id)
@@ -498,27 +399,30 @@ def main() -> None:
             )
         print(f"[{case.question_id}] sampling {video_path}", flush=True)
         frames = sample_frames(video_path, args.filmstrip_frames)
-        filmstrips[case.question_id] = make_filmstrip(frames)
-        metadata.append({**asdict(case), "video_path": str(video_path)})
-
-    render_figure(
-        cases,
-        filmstrips,
-        output_dir / "dove_qualitative_comparison",
-        args.dpi,
-    )
-    for case in cases:
-        render_figure(
-            [case],
-            filmstrips,
-            output_dir / f"dove_case_{case.question_id.replace('/', '_')}",
-            args.dpi,
+        strip = make_filmstrip(frames)
+        safe_id = case.question_id.replace("/", "_")
+        png_path = output_dir / f"dove_filmstrip_{safe_id}.png"
+        strip.save(
+            png_path,
+            format="PNG",
+            optimize=True,
+            dpi=(float(args.dpi), float(args.dpi)),
         )
+        metadata.append(
+            {
+                **asdict(case),
+                "video_path": str(video_path),
+                "filmstrip_png": str(png_path),
+            }
+        )
+
+    write_tex_fragment(cases, tex_output, args.tex_image_prefix)
 
     (output_dir / "selected_cases.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"Wrote combined PDF/PNG and {len(cases)} standalone pairs to {output_dir}")
+    print(f"Wrote {len(cases)} filmstrip PNG files to {output_dir}")
+    print(f"LaTeX fragment: {tex_output}")
 
 
 if __name__ == "__main__":
