@@ -25,7 +25,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyBboxPatch
 from PIL import Image, ImageDraw, ImageOps
 
 
@@ -34,13 +33,8 @@ OPTION_RE = re.compile(r"^\s*([A-E])\s*[.)]\s*(.*?)\s*$")
 DEFAULT_QUESTION_IDS = ("052-3", "116-3", "141-2", "208-3", "264-2", "460-3")
 
 INK = "#1E242B"
-MUTED = "#66717D"
-PANEL_EDGE = "#B7C1CA"
-GRID = "#E9EDF0"
 CORRECT = "#3F7D55"
-CORRECT_BG = "#EDF6EF"
 WRONG = "#B74848"
-WRONG_BG = "#FBEEEE"
 DOVE = "#BD4444"
 
 
@@ -305,134 +299,94 @@ def _wrap(text: str, width: int) -> str:
     return "\n".join(textwrap.wrap(text, width=width, break_long_words=False))
 
 
-def _add_rounded_panel(ax: plt.Axes) -> None:
-    ax.add_patch(
-        FancyBboxPatch(
-            (0.004, 0.025),
-            0.992,
-            0.95,
-            boxstyle="round,pad=0.004,rounding_size=0.022",
-            transform=ax.transAxes,
-            linewidth=1.15,
-            edgecolor=PANEL_EDGE,
-            facecolor="white",
-            zorder=0,
-        )
-    )
-
-
 def _draw_question(ax: plt.Axes, case: QualitativeCase) -> None:
     ax.text(
-        0.022,
-        0.87,
-        "Question",
+        0.012,
+        0.93,
+        "Question:",
         transform=ax.transAxes,
         ha="left",
         va="top",
-        fontsize=10.7,
+        fontsize=12.0,
         fontweight="bold",
+        fontstyle="italic",
         color=INK,
     )
     ax.text(
-        0.105,
-        0.87,
-        _wrap(case.question, 67),
+        0.090,
+        0.93,
+        _wrap(case.question, 105),
         transform=ax.transAxes,
         ha="left",
         va="top",
-        fontsize=10.2,
-        fontweight="bold",
+        fontsize=11.8,
+        fontstyle="italic",
         color=INK,
-        linespacing=1.18,
+        linespacing=1.12,
     )
 
     option_items = list(case.options.items())
-    y_positions = (0.52, 0.25)
+    y_positions = (0.59, 0.41, 0.23, 0.05)
     for index, (label, text) in enumerate(option_items[:4]):
-        column = index % 2
-        row = index // 2
-        x = 0.03 + 0.255 * column
-        y = y_positions[row]
+        y = y_positions[index]
         color = CORRECT if label == case.answer else INK
         weight = "bold" if label == case.answer else "normal"
         ax.text(
-            x,
+            0.020,
             y,
-            _wrap(f"{label}. {text}", 37),
+            _wrap(f'"{label}. {text}"', 67),
             transform=ax.transAxes,
             ha="left",
-            va="center",
-            fontsize=9.2,
+            va="bottom",
+            fontsize=10.5,
             fontweight=weight,
             color=color,
-            linespacing=1.12,
+            linespacing=1.06,
         )
 
     ax.plot(
         [0.545, 0.545],
-        [0.12, 0.88],
+        [0.015, 0.66],
         transform=ax.transAxes,
-        color=GRID,
-        linewidth=1.1,
+        color=INK,
+        linewidth=0.9,
         clip_on=False,
     )
 
 
-def _prediction_text(case: QualitativeCase, prediction: str) -> str:
-    option_text = case.options.get(prediction, "")
-    return f"{prediction}. {option_text}" if option_text else prediction
-
-
 def _draw_answer_cards(ax: plt.Axes, case: QualitativeCase) -> None:
     placements = {
-        "FastV": (0.565, 0.55, 0.132, 0.31),
-        "VisionZip": (0.706, 0.55, 0.132, 0.31),
-        "FastVID": (0.847, 0.55, 0.132, 0.31),
-        "FlashVID": (0.636, 0.16, 0.155, 0.31),
-        "DOVE": (0.806, 0.16, 0.155, 0.31),
+        "FastV": (0.625, 0.54),
+        "VisionZip": (0.785, 0.54),
+        "FastVID": (0.935, 0.54),
+        "FlashVID": (0.700, 0.20),
+        "DOVE": (0.865, 0.20),
     }
-    for method, (x, y, width, height) in placements.items():
+    for method, (x, y) in placements.items():
         prediction = case.predictions[method]
         correct = prediction == case.answer
         color = CORRECT if correct else WRONG
-        background = CORRECT_BG if correct else WRONG_BG
-        edge = DOVE if method == "DOVE" else color
-        line_width = 1.8 if method == "DOVE" else 1.0
-
-        ax.add_patch(
-            FancyBboxPatch(
-                (x, y),
-                width,
-                height,
-                boxstyle="round,pad=0.006,rounding_size=0.016",
-                transform=ax.transAxes,
-                linewidth=line_width,
-                edgecolor=edge,
-                facecolor=background,
-            )
-        )
         ax.text(
-            x + width / 2,
-            y + height * 0.73,
+            x,
+            y,
             method,
             transform=ax.transAxes,
             ha="center",
-            va="center",
-            fontsize=9.8 if method != "VisionZip" else 9.2,
+            va="bottom",
+            fontsize=11.1,
             fontweight="bold",
             color=DOVE if method == "DOVE" else INK,
         )
         ax.text(
-            x + width / 2,
-            y + height * 0.32,
-            _wrap(_prediction_text(case, prediction), 19),
+            x,
+            y - 0.035,
+            f'"{prediction}."',
             transform=ax.transAxes,
             ha="center",
-            va="center",
-            fontsize=8.7,
-            fontweight="bold" if correct else "normal",
+            va="top",
+            fontsize=12.0,
+            fontweight="bold",
             color=color,
-            linespacing=1.05,
         )
 
 
@@ -440,7 +394,6 @@ def draw_info_panel(ax: plt.Axes, case: QualitativeCase) -> None:
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
-    _add_rounded_panel(ax)
     _draw_question(ax, case)
     _draw_answer_cards(ax, case)
 
@@ -462,8 +415,8 @@ def render_figure(
     grid = figure.add_gridspec(
         2 * count,
         1,
-        height_ratios=[0.78, 1.26] * count,
-        hspace=0.055,
+        height_ratios=[0.72, 1.08] * count,
+        hspace=0.035,
         left=0.025,
         right=0.975,
         top=0.992,
