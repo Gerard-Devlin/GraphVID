@@ -25,6 +25,14 @@ import torch
 from PIL import Image, ImageDraw, ImageEnhance
 
 
+# LLaVA registers several unused conversation templates at import time. One of
+# them probes a remote Llama-3 tokenizer even though this script uses Qwen 1.5.
+# Keep all model resolution local and make that unrelated probe fail instantly.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+os.environ.setdefault("HF_EVALUATE_OFFLINE", "1")
+
 ROOT = Path(__file__).resolve().parents[1]
 PLAYGROUND = ROOT / "playground"
 if str(ROOT) not in sys.path:
