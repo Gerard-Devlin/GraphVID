@@ -1,3 +1,5 @@
+from typing import Optional
+
 from torch import nn
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,

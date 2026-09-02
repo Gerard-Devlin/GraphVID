@@ -80,10 +80,12 @@ run_stage() {
   echo "GPUs: $CUDA_VISIBLE_DEVICES"
   echo "Log: $log_path"
   echo "============================================================"
-  if "$@" 2>&1 | tee "$log_path"; then
+  "$@" 2>&1 | tee "$log_path"
+  local status="${PIPESTATUS[0]}"
+  if [[ "$status" -eq 0 ]]; then
     echo "COMPLETED: $name"
   else
-    echo "FAILED: $name"
+    echo "FAILED: $name (exit=$status)"
     FAILURES=$((FAILURES + 1))
   fi
   sleep "${STAGE_PAUSE_SECONDS:-15}"
