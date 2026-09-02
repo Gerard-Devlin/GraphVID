@@ -33,6 +33,11 @@ def SigLipVisionTower_forward(self: SigLipVisionTower, images: torch.Tensor):
         image_features = image_forward_outs.hidden_states[-1].to(images.dtype)
         cls_attentions = image_forward_outs.attentions[-1].to(images.dtype)
 
+    if variant == "cdpruner":
+        self._cdpruner_image_embeds = self.vision_tower.vision_model.post_layernorm(
+            image_features
+        ).to(images.dtype)
+
     if variant == "fastvid":
         vision_model = self.vision_tower.vision_model
         normalized = vision_model.post_layernorm(image_features)

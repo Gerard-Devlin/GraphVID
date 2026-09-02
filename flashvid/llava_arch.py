@@ -144,25 +144,48 @@ def LlavaMetaForCausalLM_prepare_inputs_labels_for_multimodal(
                             "_visionzip_metric",
                             self.get_2dPool(raw_metric),
                         )
+                relevance_visual_features = None
+                if variant == "cdpruner":
+                    from .baseline_adapters.cdpruner import encode_siglip_text
+
+                    raw_relevance_features = getattr(
+                        vision_tower,
+                        "_cdpruner_image_embeds",
+                        None,
+                    )
+                    vision_tower._cdpruner_image_embeds = None
+                    if raw_relevance_features is None:
+                        raise RuntimeError(
+                            "CDPruner SigLIP image relevance features were not captured"
+                        )
+                    relevance_visual_features = self.get_2dPool(
+                        raw_relevance_features
+                    )
+                    question_features = encode_siglip_text(
+                        vision_tower,
+                        getattr(flashvid_config, "_certvid_query_text", ""),
+                    )
                 # LLaVA represents the image placeholder with the negative ID -200,
                 # which cannot be passed directly to the language embedding table.
-                question_input_ids = input_ids.clone()
-                embed_tokens = self.get_model().embed_tokens
-                invalid_embedding_ids = (question_input_ids < 0) | (
-                    question_input_ids >= embed_tokens.num_embeddings
-                )
-                question_input_ids.masked_fill_(invalid_embedding_ids, 0)
-                question_features = extract_question_features(
-                    input_ids=input_ids,
-                    inputs_embeds=embed_tokens(question_input_ids),
-                    attention_mask=attention_mask,
-                    invalid_token_ids=[IMAGE_TOKEN_INDEX],
-                )
+                else:
+                    question_input_ids = input_ids.clone()
+                    embed_tokens = self.get_model().embed_tokens
+                    invalid_embedding_ids = (question_input_ids < 0) | (
+                        question_input_ids >= embed_tokens.num_embeddings
+                    )
+                    question_input_ids.masked_fill_(invalid_embedding_ids, 0)
+                    question_features = extract_question_features(
+                        input_ids=input_ids,
+                        inputs_embeds=embed_tokens(question_input_ids),
+                        attention_mask=attention_mask,
+                        invalid_token_ids=[IMAGE_TOKEN_INDEX],
+                    )
                 compressed_visual_tokens, keep_visual_indices = flashvid_compression(
                     video_features=pooled_image_feature,
                     cls_attention=pooled_cls_attentions,
                     flashvid_config=flashvid_config,
                     question_features=question_features,
+                    relevance_visual_features=relevance_visual_features,
                 )
                 image_features.append(compressed_visual_tokens)
             else:

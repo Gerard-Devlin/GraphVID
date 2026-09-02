@@ -70,6 +70,40 @@ AutoConfig.register("llava_llama", LlavaConfig)
 AutoConfig.register("llava_qwen", LlavaQwenConfig)
 
 
+def _flashvid_runtime_config(model):
+    for candidate in (model, getattr(model, "model", None)):
+        config = getattr(candidate, "flashvid_config", None)
+        if config is not None:
+            return config
+    return None
+
+
+def _doc_value(doc, *names):
+    if not isinstance(doc, dict):
+        return None
+    for name in names:
+        value = doc.get(name)
+        if value is not None and str(value).strip():
+            return value
+    return None
+
+
+def _publish_cdpruner_question(model, doc, context):
+    config = _flashvid_runtime_config(model)
+    if config is None or str(
+        getattr(config, "compression_variant", "")
+    ).strip().lower() != "cdpruner":
+        return None
+    question = _doc_value(doc, "question", "query", "instruction", "input")
+    config._certvid_query_text = str(question if question is not None else context)
+    return config
+
+
+def _clear_cdpruner_question(config) -> None:
+    if config is not None:
+        config._certvid_query_text = ""
+
+
 @register_model("llava_vid")
 class LlavaVid(lmms):
     """
@@ -131,6 +165,7 @@ class LlavaVid(lmms):
         prunevid_tau: float = 0.80,
         prunevid_temporal_segment_ratio: float = 0.25,
         prunevid_cluster_ratio: float = 0.50,
+        cdpruner_text_model_path: Optional[str] = None,
         # CertVID V3 selector parameters.
         certv3_budget_uses_expansion: bool = True,
         certv3_query_atoms: int = 8,
@@ -306,6 +341,7 @@ class LlavaVid(lmms):
                 prunevid_tau=prunevid_tau,
                 prunevid_temporal_segment_ratio=prunevid_temporal_segment_ratio,
                 prunevid_cluster_ratio=prunevid_cluster_ratio,
+                cdpruner_text_model_path=cdpruner_text_model_path,
                 certv3_budget_uses_expansion=certv3_budget_uses_expansion,
                 certv3_query_atoms=certv3_query_atoms,
                 certv3_temporal_bins=certv3_temporal_bins,
@@ -595,7 +631,8 @@ class LlavaVid(lmms):
             #     continue
             # encode, pad, and truncate contexts for this batch
             # import pdb;pdb.set_trace()
-            visuals = doc_to_visual(self.task_dict[task][split][doc_id])
+            sample_doc = self.task_dict[task][split][doc_id]
+            visuals = doc_to_visual(sample_doc)
             # visuals = [visuals]
             # visuals = self.flatten(visuals)
             if os.path.isdir(visuals[0]):
@@ -698,20 +735,28 @@ class LlavaVid(lmms):
                 gen_kwargs["num_beams"] = 1
 
             # import pdb;pdb.set_trace()
-            with torch.inference_mode():
-                output_ids = self.model.generate(
-                    inputs=input_ids,
-                    images=videos,
-                    attention_mask=attention_masks,
-                    modalities="video",
-                    use_cache=self.use_cache,
-                    stopping_criteria=[stopping_criteria],
-                    do_sample=True if gen_kwargs["temperature"] > 0 else False,
-                    temperature=gen_kwargs["temperature"],
-                    top_p=gen_kwargs["top_p"],
-                    num_beams=gen_kwargs["num_beams"],
-                    max_new_tokens=gen_kwargs["max_new_tokens"],
-                )
+            runtime_config = _publish_cdpruner_question(
+                self.model,
+                sample_doc,
+                contexts,
+            )
+            try:
+                with torch.inference_mode():
+                    output_ids = self.model.generate(
+                        inputs=input_ids,
+                        images=videos,
+                        attention_mask=attention_masks,
+                        modalities="video",
+                        use_cache=self.use_cache,
+                        stopping_criteria=[stopping_criteria],
+                        do_sample=True if gen_kwargs["temperature"] > 0 else False,
+                        temperature=gen_kwargs["temperature"],
+                        top_p=gen_kwargs["top_p"],
+                        num_beams=gen_kwargs["num_beams"],
+                        max_new_tokens=gen_kwargs["max_new_tokens"],
+                    )
+            finally:
+                _clear_cdpruner_question(runtime_config)
                 # output_ids_2 = self.model.generate(inputs=input_ids, images=videos, attention_mask=attention_masks, modalities="video", do_sample=False, max_new_tokens=50,stopping_criteria=[stopping_criteria])
                 # output_ids = self.model.generate(inputs=input_ids, images=videos, attention_mask=attention_masks, modalities="video", do_sample=True, temperature=0.2, max_new_tokens=50,use_cache=True)
 

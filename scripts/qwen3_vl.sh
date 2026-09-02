@@ -277,7 +277,7 @@ common_flash_args() {
     expansion="1.0"
     pruning_layer="$FASTV_PRUNING_LAYER"
     llm_retention_ratio="$retention_ratio"
-  elif [[ "$method" == "fastvid" || "$method" == "visionzip" ]]; then
+  elif [[ "$method" == "fastvid" || "$method" == "visionzip" || "$method" == "cdpruner" ]]; then
     expansion="1.0"
     llm_retention_ratio="1.0"
   elif [[ "$method" == "prunevid" ]]; then
@@ -314,6 +314,9 @@ method_flash_args() {
     prunevid)
       printf 'compression_variant=prunevid,adapter_budget_uses_expansion=False,prunevid_tau=%s,prunevid_temporal_segment_ratio=%s,prunevid_cluster_ratio=%s' \
         "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
+      ;;
+    cdpruner)
+      printf 'compression_variant=cdpruner,adapter_budget_uses_expansion=False'
       ;;
     flashvid)
       printf 'compression_variant=flashvid,token_selection_method=%s' "$FLASHVID_TOKEN_SELECTION_METHOD"

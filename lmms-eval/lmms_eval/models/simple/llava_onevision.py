@@ -171,6 +171,7 @@ class Llava_OneVision(lmms):
         prunevid_tau: float = 0.80,
         prunevid_temporal_segment_ratio: float = 0.25,
         prunevid_cluster_ratio: float = 0.50,
+        cdpruner_text_model_path: Optional[str] = None,
         # CertVID parameters
         cert_budget_uses_expansion: bool = True,
         cert_query_atoms: int = 6,
@@ -350,6 +351,7 @@ class Llava_OneVision(lmms):
                 prunevid_tau=prunevid_tau,
                 prunevid_temporal_segment_ratio=prunevid_temporal_segment_ratio,
                 prunevid_cluster_ratio=prunevid_cluster_ratio,
+                cdpruner_text_model_path=cdpruner_text_model_path,
                 cert_budget_uses_expansion=cert_budget_uses_expansion,
                 cert_query_atoms=cert_query_atoms,
                 cert_temporal_bins=cert_temporal_bins,

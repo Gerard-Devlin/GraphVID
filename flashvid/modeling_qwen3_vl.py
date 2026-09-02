@@ -460,22 +460,44 @@ def Qwen3VLModel_forward(
                 "_fastvid_frame_global_features",
                 video_features.float().mean(dim=1),
             )
-        question_features = extract_question_features(
-            input_ids=input_ids,
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            invalid_token_ids=[
-                getattr(self.config, "video_token_id", None),
-                getattr(self.config, "image_token_id", None),
-                getattr(self.config, "vision_start_token_id", None),
-                getattr(self.config, "vision_end_token_id", None),
-            ],
-        )
+        relevance_visual_features = None
+        if compression_variant == "cdpruner":
+            raw_query_token_ids = getattr(
+                flashvid_config,
+                "_cdpruner_query_token_ids",
+                None,
+            )
+            if not raw_query_token_ids:
+                raise ValueError(
+                    "Qwen3 CDPruner requires token IDs from the raw user question"
+                )
+            raw_query_token_ids = torch.tensor(
+                raw_query_token_ids,
+                dtype=torch.long,
+                device=inputs_embeds.device,
+            )
+            question_features = self.get_input_embeddings()(
+                raw_query_token_ids
+            ).mean(dim=0, keepdim=True)
+            relevance_visual_features = video_features
+        else:
+            question_features = extract_question_features(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                invalid_token_ids=[
+                    getattr(self.config, "video_token_id", None),
+                    getattr(self.config, "image_token_id", None),
+                    getattr(self.config, "vision_start_token_id", None),
+                    getattr(self.config, "vision_end_token_id", None),
+                ],
+            )
         compressed_video_tokens, keep_visual_global_indices = flashvid_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
             question_features=question_features,
+            relevance_visual_features=relevance_visual_features,
         )
 
         non_visual_token_indexes = torch.where(
@@ -490,7 +512,27 @@ def Qwen3VLModel_forward(
         flashvid_config.vision_token_length = int(compressed_video_tokens.shape[0])
         flashvid_config.llm_token_length = None
         flashvid_config.visual_token_length = compressed_video_tokens.shape[0] # ! NOTE
-        if compression_variant in {
+        if compression_variant == "cdpruner":
+            from .baseline_adapters.cdpruner import (
+                merge_qwen3_visual_deepstack,
+                select_qwen3_deepstack,
+            )
+
+            selected_deepstack_video = select_qwen3_deepstack(
+                deepstack_video_embeds,
+                keep_visual_global_indices,
+            )
+            if image_mask is not None:
+                deepstack_visual_embeds = merge_qwen3_visual_deepstack(
+                    deepstack_image_embeds=deepstack_image_embeds,
+                    selected_video_embeds=selected_deepstack_video,
+                    image_mask=image_mask,
+                    video_mask=video_mask,
+                    keep_video_indices=keep_visual_global_indices,
+                )
+            else:
+                deepstack_visual_embeds = selected_deepstack_video
+        elif compression_variant in {
             "certvid",
             "certvid_v2",
             "certvid_v3",
@@ -660,9 +702,15 @@ def Qwen3VLTextModel_forward(
         "certvid_v3origin",
         "certvidfinal2",
     }
+    is_cdpruner = str(
+        getattr(flashvid_config, "compression_variant", "flashvid")
+    ).strip().lower() == "cdpruner"
     enable_inner_pruning = is_prefill and (
-        not is_certvid
-        or float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
+        not is_cdpruner
+        and (
+            not is_certvid
+            or float(getattr(flashvid_config, "llm_retention_ratio", 1.0)) < 0.9999
+        )
     )
 
     # decoder layers

@@ -157,7 +157,7 @@ def _doc_value(doc, *names):
     return None
 
 
-def _publish_certvid_sample(config, doc, doc_id, context, task):
+def _publish_certvid_sample(config, doc, doc_id, context, task, tokenizer=None):
     if config is None:
         return
     sample_id = _doc_value(doc, "id", "question_id", "uid", "video_id")
@@ -170,7 +170,27 @@ def _publish_certvid_sample(config, doc, doc_id, context, task):
         "duration",
     )
     config._debug_sample_id = str(sample_id if sample_id is not None else doc_id)
-    config._certvid_query_text = str(question if question is not None else context)
+    raw_question = str(question if question is not None else context)
+    config._certvid_query_text = raw_question
+    config._cdpruner_query_token_ids = None
+    is_cdpruner = str(
+        getattr(config, "compression_variant", "")
+    ).strip().lower() == "cdpruner"
+    if is_cdpruner and (question is None or not str(question).strip()):
+        raise ValueError(
+            "Qwen3 CDPruner requires the dataset's raw user question field; "
+            "it will not use the formatted prompt as a fallback"
+        )
+    if tokenizer is not None and is_cdpruner:
+        encoded = tokenizer(
+            str(question),
+            add_special_tokens=False,
+            return_attention_mask=False,
+        )
+        token_ids = encoded["input_ids"]
+        if token_ids and isinstance(token_ids[0], list):
+            token_ids = token_ids[0]
+        config._cdpruner_query_token_ids = tuple(int(value) for value in token_ids)
     config._certvid_eval_category = None if category is None else str(category)
     config._certvid_task_name = str(task)
 
@@ -182,6 +202,7 @@ def _clear_certvid_sample(config) -> None:
     config._certvid_query_text = ""
     config._certvid_eval_category = None
     config._certvid_task_name = None
+    config._cdpruner_query_token_ids = None
 
 
 @register_model("qwen3_vl")
@@ -818,6 +839,7 @@ class Qwen3_VL(lmms):
                 doc_ids[0],
                 contexts[0],
                 task,
+                self.tokenizer,
             )
             try:
                 cont = self.model.generate(

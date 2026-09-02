@@ -48,6 +48,7 @@ PRUNEVID_SELECTED_LAYER="${PRUNEVID_SELECTED_LAYER:-10}"
 PRUNEVID_TAU="${PRUNEVID_TAU:-0.80}"
 PRUNEVID_TEMPORAL_SEGMENT_RATIO="${PRUNEVID_TEMPORAL_SEGMENT_RATIO:-0.25}"
 PRUNEVID_CLUSTER_RATIO="${PRUNEVID_CLUSTER_RATIO:-0.50}"
+CDPRUNER_TEXT_MODEL_PATH="${CDPRUNER_TEXT_MODEL_PATH:-}"
 
 MAX_FRAMES_NUM="${MAX_FRAMES_NUM:-32}"
 CONV_TEMPLATE="${CONV_TEMPLATE:-qwen_1_5}"
@@ -183,7 +184,7 @@ common_compression_args() {
       pruning_layer="$FASTV_PRUNING_LAYER"
       inner_ratio="$rate"
       ;;
-    fastvid|visionzip)
+    fastvid|visionzip|cdpruner)
       expansion="1.0"
       inner_ratio="1.0"
       ;;
@@ -214,6 +215,12 @@ method_args() {
     prunevid)
       printf 'compression_variant=prunevid,adapter_budget_uses_expansion=False,prunevid_tau=%s,prunevid_temporal_segment_ratio=%s,prunevid_cluster_ratio=%s' \
         "$PRUNEVID_TAU" "$PRUNEVID_TEMPORAL_SEGMENT_RATIO" "$PRUNEVID_CLUSTER_RATIO"
+      ;;
+    cdpruner)
+      printf 'compression_variant=cdpruner,adapter_budget_uses_expansion=False'
+      if [[ -n "$CDPRUNER_TEXT_MODEL_PATH" ]]; then
+        printf ',cdpruner_text_model_path=%s' "$CDPRUNER_TEXT_MODEL_PATH"
+      fi
       ;;
     flashvid)
       printf 'compression_variant=flashvid,token_selection_method=%s,strict_token_budget=%s' \

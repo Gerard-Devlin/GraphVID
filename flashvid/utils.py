@@ -298,6 +298,7 @@ def flashvid_compression(
     flashvid_config: FlashVidConfig,
     question_features: Optional[torch.Tensor] = None,
     deepstack_features: Optional[list[torch.Tensor]] = None,
+    relevance_visual_features: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_frames, num_visual_tokens, feat_dim = video_features.shape
     capture_layer_attention = bool(
@@ -441,18 +442,20 @@ def flashvid_compression(
                 visualization_analysis,
             )
         return result
-    if compression_variant in ("fastv", "fastvid", "visionzip", "prunevid"):
+    if compression_variant in ("fastv", "fastvid", "visionzip", "prunevid", "cdpruner"):
         from .baseline_adapters import baseline_compression
 
         return baseline_compression(
             video_features=video_features,
             cls_attention=cls_attention,
             flashvid_config=flashvid_config,
+            question_features=question_features,
+            relevance_visual_features=relevance_visual_features,
         )
     if compression_variant != "flashvid":
         raise ValueError(
             f"unsupported compression_variant={compression_variant!r}, "
-            "expected flashvid|fastv|fastvid|visionzip|prunevid|"
+            "expected flashvid|fastv|fastvid|visionzip|prunevid|cdpruner|"
             "certvid|certvid_v2|certvid_v3|certvid_v3origin|certvidfinal2"
         )
 

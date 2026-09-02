@@ -208,6 +208,7 @@ def flashvid(
     prunevid_tau: float = 0.80,
     prunevid_temporal_segment_ratio: float = 0.25,
     prunevid_cluster_ratio: float = 0.50,
+    cdpruner_text_model_path: Optional[str] = None,
     question_aware_reweighting: bool = False,
     question_reweight_beta: float = 0.35,
     # Shared memory/adaptive params.
@@ -303,6 +304,7 @@ def flashvid(
         "fastvid",
         "visionzip",
         "prunevid",
+        "cdpruner",
         "certvid",
         "certvid_v2",
         "certvid_v3",
@@ -419,6 +421,7 @@ def flashvid(
         prunevid_tau=prunevid_tau,
         prunevid_temporal_segment_ratio=prunevid_temporal_segment_ratio,
         prunevid_cluster_ratio=prunevid_cluster_ratio,
+        cdpruner_text_model_path=cdpruner_text_model_path,
         compression_variant=variant,
         question_aware_reweighting=question_aware_reweighting,
         question_reweight_beta=question_reweight_beta,
@@ -496,6 +499,13 @@ def flashvid(
     setattr(model, "flashvid_config", flashvid_config)
     setattr(model.model, "flashvid_config", flashvid_config)
     setattr(model.config, "flashvid_bypass_active", False)
+    if variant == "cdpruner" and type(model) is LlavaQwenForCausalLM:
+        from .baseline_adapters.cdpruner import load_siglip_text_tower
+
+        load_siglip_text_tower(
+            model.get_vision_tower(),
+            model_path=cdpruner_text_model_path,
+        )
     if type(model) in (Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration):
         setattr(model.model.language_model, "flashvid_config", flashvid_config)
         setattr(model.model.visual, "flashvid_config", flashvid_config)

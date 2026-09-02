@@ -20,6 +20,7 @@ class FlashVidConfig:
     prunevid_tau: float = field(default=0.80)
     prunevid_temporal_segment_ratio: float = field(default=0.25)
     prunevid_cluster_ratio: float = field(default=0.50)
+    cdpruner_text_model_path: Optional[str] = field(default=None)
 
     # 1) Token Selection Method. Defaults to ADTS.
     alpha: float = field(default=0.7) # Ratio of ADTS tokens.
