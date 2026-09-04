@@ -14,7 +14,9 @@ from lmms_eval.models.model_utils.reasoning_model_utils import (
 )
 from lmms_eval.models.simple.qwen3_vl import (
     Qwen3_VL as Qwen3_VLSimple,
+    _clear_certvid_sample,
     _parse_qwen_nframes_limit,
+    _publish_certvid_sample,
     _set_video_frame_limit,
 )
 from lmms_eval.protocol import ChatMessages
@@ -151,19 +153,32 @@ class Qwen3_VL(Qwen3_VLSimple):
                 current_gen_kwargs["top_p"] = None
                 current_gen_kwargs["top_k"] = None
 
-            start_time = time.time()
-            cont = self.model.generate(
-                **inputs,
-                eos_token_id=self.tokenizer.eos_token_id,
-                pad_token_id=pad_token_id,
-                do_sample=current_gen_kwargs["do_sample"],
-                temperature=current_gen_kwargs["temperature"],
-                top_p=current_gen_kwargs["top_p"],
-                num_beams=current_gen_kwargs["num_beams"],
-                max_new_tokens=current_gen_kwargs["max_new_tokens"],
-                top_k=current_gen_kwargs.get("top_k", None),
-                use_cache=self.use_cache,
+            sample_doc = self.task_dict[task[0]][split[0]][doc_id[0]]
+            runtime_config = getattr(self.model, "flashvid_config", None)
+            _publish_certvid_sample(
+                runtime_config,
+                sample_doc,
+                doc_id[0],
+                ctx[0],
+                task[0],
+                self.tokenizer,
             )
+            start_time = time.time()
+            try:
+                cont = self.model.generate(
+                    **inputs,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    pad_token_id=pad_token_id,
+                    do_sample=current_gen_kwargs["do_sample"],
+                    temperature=current_gen_kwargs["temperature"],
+                    top_p=current_gen_kwargs["top_p"],
+                    num_beams=current_gen_kwargs["num_beams"],
+                    max_new_tokens=current_gen_kwargs["max_new_tokens"],
+                    top_k=current_gen_kwargs.get("top_k", None),
+                    use_cache=self.use_cache,
+                )
+            finally:
+                _clear_certvid_sample(runtime_config)
             end_time = time.time()
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]

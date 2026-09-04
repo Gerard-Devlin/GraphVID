@@ -32,7 +32,13 @@ if not _has_qwen_vl:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
 
 
-NATIVE_QWEN3_BASELINE_ADAPTERS = ("fastv", "fastvid", "visionzip", "prunevid")
+NATIVE_QWEN3_BASELINE_ADAPTERS = (
+    "fastv",
+    "fastvid",
+    "visionzip",
+    "prunevid",
+    "cdpruner",
+)
 SUPPORTED_QWEN3_BASELINE_ADAPTERS = NATIVE_QWEN3_BASELINE_ADAPTERS
 VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 

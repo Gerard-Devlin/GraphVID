@@ -361,6 +361,7 @@ for retention_ratio in $(split_csv "$RATES"); do
         --dynamo_backend no
         -m lmms_eval
         --model qwen3_vl
+        --force_simple
         --model_args "$model_args"
         --tasks "$task"
         --batch_size "$BATCH_SIZE"
